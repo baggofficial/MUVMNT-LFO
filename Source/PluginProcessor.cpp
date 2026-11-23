@@ -165,8 +165,66 @@ void FreeLfoProcessor::setEnvelope(const Envelope& e, int slot)
     sl.version.fetch_add(1, std::memory_order_release);
 }
 
+FreeLfoProcessor::UndoState FreeLfoProcessor::captureUndoState() const
+{
+    UndoState s;
+    for (int i = 0; i < numSlots; ++i) s.env[(size_t) i] = getEnvelope(i);
+    s.bezier = apvts.getRawParameterValue("bezier")->load() > 0.5f;
+    return s;
+}
+
+void FreeLfoProcessor::pushUndo(UndoState before)
+{
+    undoStack.push_back(std::move(before));
+    while (undoStack.size() > maxUndo) undoStack.pop_front();
+    redoStack.clear();
+}
+
+void FreeLfoProcessor::applyUndoState(const UndoState& s)
+{
+    restoringUndo = true; // setting the Bezier switch must not convert the curves a second time
+    if (auto* prm = apvts.getParameter("bezier"))
+        if ((prm->getValue() > 0.5f) != s.bezier)
+        {
+            prm->beginChangeGesture();
+            prm->setValueNotifyingHost(s.bezier ? 1.f : 0.f);
+            prm->endChangeGesture();
+        }
+    for (int i = 0; i < numSlots; ++i) setEnvelope(s.env[(size_t) i], i);
+    restoringUndo = false;
+}
+
+void FreeLfoProcessor::applyCurve(Envelope e, int slot)
+{
+    if (apvts.getRawParameterValue("bezier")->load() > 0.5f) e.convertToBezier(); else e = e.simplifiedCopy();
+    pushUndo(captureUndoState());
+    setEnvelope(e, slot);
+}
+
+bool FreeLfoProcessor::undo()
+{
+    if (undoStack.empty()) return false;
+    redoStack.push_back(captureUndoState());
+    const auto s = std::move(undoStack.back());
+    undoStack.pop_back();
+    applyUndoState(s);
+    return true;
+}
+
+bool FreeLfoProcessor::redo()
+{
+    if (redoStack.empty()) return false;
+    undoStack.push_back(captureUndoState());
+    const auto s = std::move(redoStack.back());
+    redoStack.pop_back();
+    applyUndoState(s);
+    return true;
+}
+
 void FreeLfoProcessor::convertCurveMode(bool toBezier)
 {
+    if (restoringUndo) return;
+    { auto before = captureUndoState(); before.bezier = !toBezier; pushUndo(std::move(before)); }
     for (int slot = 0; slot < numSlots; ++slot)
     {
         Envelope e = getEnvelope(slot);

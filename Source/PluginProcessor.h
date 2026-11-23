@@ -1,4 +1,5 @@
 #pragma once
+#include <deque>
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <array>
 #include <atomic>
@@ -40,6 +41,20 @@ public:
     void setEnvelope(const Envelope& e, int slot = 0);
     // Bezier handles <-> simple bend, applied to every curve (single + the three bands) when the user flips the switch
     void convertCurveMode(bool toBezier);
+    // Undo / redo for the curves (message thread only). One entry is a snapshot of all four curves plus the
+    // Bezier switch, so an entry costs well under 2 KB; the history is capped at maxUndo entries (about 100 KB).
+    struct UndoState { std::array<Envelope, numSlots> env; bool bezier = true; };
+    static constexpr size_t maxUndo = 50;
+    UndoState captureUndoState() const;
+    void pushUndo(UndoState before);          // call just before a change; a new change clears the redo history
+    bool canUndo() const { return !undoStack.empty(); }
+    bool canRedo() const { return !redoStack.empty(); }
+    size_t undoDepth() const { return undoStack.size(); }
+    // Replace one curve with a preset / pasted curve: converted to the current style (Bezier handles or simple
+    // bend), recorded for undo.
+    void applyCurve(Envelope e, int slot);
+    bool undo();
+    bool redo();
     static const char* bandSuffix(int band) { return band == 0 ? "L" : band == 1 ? "M" : "H"; }
 
     juce::AudioProcessorValueTreeState apvts;
@@ -132,6 +147,10 @@ private:
     BandCtl band[3] {};
     std::atomic<float> *pMb = nullptr, *pBands = nullptr, *pXLow = nullptr, *pXHigh = nullptr,
                        *pLink = nullptr, *pSlopeLow = nullptr, *pSlopeHigh = nullptr;
+
+    std::deque<UndoState> undoStack, redoStack;
+    bool restoringUndo = false;
+    void applyUndoState(const UndoState&);
 
     std::atomic<float>* pSoloBand[3] = { nullptr, nullptr, nullptr };
     Crossover crossover;

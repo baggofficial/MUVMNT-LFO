@@ -88,11 +88,68 @@ public:
     }
 };
 
+// Curved arrow: undo (points left) or redo (points right). Greyed out when there is nothing to undo / redo.
+class HistoryButton : public juce::Button
+{
+public:
+    explicit HistoryButton(bool isRedo) : juce::Button(isRedo ? "redo" : "undo"), redo(isRedo)
+    {
+        setTooltip(isRedo ? "Redo (Shift+Ctrl/Cmd+Z)" : "Undo (Ctrl/Cmd+Z)");
+    }
+
+    void paintButton(juce::Graphics& g, bool over, bool down) override
+    {
+        auto b = getLocalBounds().toFloat().reduced(6.f, 7.f);
+        const float a = !isEnabled() ? 0.28f : down ? 1.f : over ? 0.95f : 0.7f;
+        g.setColour(paper::text.withAlpha(a));
+        juce::Path arc;
+        const auto ctr = b.getCentre();
+        const float r = juce::jmin(b.getWidth(), b.getHeight()) * 0.5f;
+        const float pi = juce::MathConstants<float>::pi;
+        // an open arc over the top, ending in an arrowhead on one side
+        arc.addCentredArc(ctr.x, ctr.y + 1.f, r, r, 0.f, -0.5f * pi, 0.95f * pi, true);
+        g.strokePath(arc, juce::PathStrokeType(1.6f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded),
+                     redo ? juce::AffineTransform() : juce::AffineTransform::scale(-1.f, 1.f, ctr.x, ctr.y));
+        const float tipX = ctr.x + (redo ? -1.f : 1.f) * 0.0f, tipY = ctr.y + 1.f + r;
+        juce::Path head;
+        const float dir = redo ? -1.f : 1.f;
+        head.addTriangle(tipX - dir * 3.5f, tipY - 3.5f, tipX - dir * 3.5f, tipY + 3.5f, tipX + dir * 1.5f, tipY);
+        g.fillPath(head);
+    }
+
+private:
+    bool redo;
+};
+
+// The Bezier-handles switch as an icon: a curve with two handles. Accent colour when on, grey when off.
+class BezierToggle : public juce::ToggleButton
+{
+public:
+    BezierToggle() { setClickingTogglesState(true); setTooltip("Bezier handles (off = simple one-diamond bends)"); setMouseCursor(juce::MouseCursor::PointingHandCursor); }
+    void paint(juce::Graphics& g) override
+    {
+        auto b = getLocalBounds().toFloat().reduced(4.f);
+        const bool on = getToggleState();
+        const auto c = on ? paper::accent : paper::sub.withAlpha(isMouseOver() ? 0.9f : 0.6f);
+        g.setColour(c);
+        const juce::Point<float> a(b.getX(), b.getBottom() - 2.f), z(b.getRight(), b.getY() + 2.f);
+        const juce::Point<float> ha(b.getX() + b.getWidth() * 0.45f, b.getBottom() - 2.f), hz(b.getRight() - b.getWidth() * 0.45f, b.getY() + 2.f);
+        g.drawLine(a.x, a.y, ha.x, ha.y, 1.1f);
+        g.drawLine(z.x, z.y, hz.x, hz.y, 1.1f);
+        juce::Path curve;
+        curve.startNewSubPath(a);
+        curve.cubicTo(ha, hz, z);
+        g.strokePath(curve, juce::PathStrokeType(1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.fillEllipse(ha.x - 1.8f, ha.y - 1.8f, 3.6f, 3.6f);
+        g.fillEllipse(hz.x - 1.8f, hz.y - 1.8f, 3.6f, 3.6f);
+        g.fillRoundedRectangle(a.x - 2.2f, a.y - 2.2f, 4.4f, 4.4f, 1.f);
+        g.fillRoundedRectangle(z.x - 2.2f, z.y - 2.2f, 4.4f, 4.4f, 1.f);
+    }
+};
+
 class PaperLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
-    PaperLookAndFeel() { applyColours(); }
-
     // (re)load the theme colours; call after paper::setDark(), then sendLookAndFeelChange() on the editor
     void applyColours()
     {

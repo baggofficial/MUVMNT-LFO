@@ -70,6 +70,7 @@ public:
     ~MultibandPanel() override { stopTimer(); }
 
     void resized() override;
+    int currentSlot() const { return curve.getSlot(); }
     void resetCurve() { curve.resetCurve(); }
     void selectBand(int band); // which band's curve is edited (also used by the headless snapshot tool)
     void setSnap(bool on) { curve.snapToGrid = on; }

@@ -37,7 +37,7 @@ static juce::Point<int> loadSizePreference()
 {
     if (!usePrefs()) return { 960, 610 };
     juce::PropertiesFile f(uiPrefsOptions());
-    return { juce::jlimit(760, 2000, f.getIntValue("width", 960)), juce::jlimit(500, 1300, f.getIntValue("height", 610)) };
+    return { juce::jlimit(880, 2000, f.getIntValue("width", 960)), juce::jlimit(500, 1300, f.getIntValue("height", 610)) };
 }
 
 static void saveSizePreference(int w, int h)
@@ -65,7 +65,7 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     setLookAndFeel(&laf);
     proc.editorOpen.store(true);
     setResizable(true, true);
-    setResizeLimits(760, 500, 2000, 1300);
+    setResizeLimits(880, 500, 2000, 1300);
     const auto size = loadSizePreference();
     setSize(size.x, size.y);
     addAndMakeVisible(curve);
@@ -116,6 +116,21 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     addAndMakeVisible(reset);
 
     addAndMakeVisible(themeBtn);
+    setWantsKeyboardFocus(true);
+    addAndMakeVisible(presetBtn);
+    presetBtn.onClick = [this] {
+        const int slot = multibandOn() ? mbPanel.currentSlot() : 0;
+        if (presetPopup != nullptr) { presetPopup.reset(); return; }
+        juce::Component::SafePointer<FreeLfoEditor> safe(this);
+        presetPopup = PresetMenu::open(*this, presetBtn, proc, slot, [safe] { if (safe != nullptr) safe->repaint(); },
+                                       [safe] { juce::MessageManager::callAsync([safe] { if (safe != nullptr) safe->presetPopup.reset(); }); });
+    };
+    addAndMakeVisible(undoBtn);
+    addAndMakeVisible(redoBtn);
+    undoBtn.setEnabled(false);
+    redoBtn.setEnabled(false);
+    undoBtn.onClick = [this] { proc.undo(); undoBtn.setEnabled(proc.canUndo()); redoBtn.setEnabled(proc.canRedo()); };
+    redoBtn.onClick = [this] { proc.redo(); undoBtn.setEnabled(proc.canUndo()); redoBtn.setEnabled(proc.canRedo()); };
     themeBtn.onClick = [this] { setDarkMode(!paper::dark); };
 
     // Tabs: Single = the original one-curve LFO (bit-exact pass-through), Multiband = per-band curves
@@ -240,12 +255,12 @@ void FreeLfoEditor::resized()
     tabSingle.setBounds(top.removeFromLeft(74).reduced(0, 4));
     tabMulti.setBounds(top.removeFromLeft(96).reduced(0, 4));
     top.removeFromLeft(14);
-    if (!mb) mode.setBounds(top.removeFromLeft(90).reduced(0, 4));
+    if (!mb) mode.setBounds(top.removeFromLeft(80).reduced(0, 4));
     else
     {
-        mbPanel.modeBox.setBounds(top.removeFromLeft(90).reduced(0, 4));
+        mbPanel.modeBox.setBounds(top.removeFromLeft(80).reduced(0, 4));
         top.removeFromLeft(8);
-        mbPanel.bandsBox.setBounds(top.removeFromLeft(100).reduced(0, 4));
+        mbPanel.bandsBox.setBounds(top.removeFromLeft(92).reduced(0, 4));
         top.removeFromLeft(6);
         mbPanel.linkBtn.setBounds(top.removeFromLeft(30).withSizeKeepingCentre(22, 22));
     }
@@ -256,11 +271,16 @@ void FreeLfoEditor::resized()
     top.removeFromRight(12);
     themeBtn.setBounds(top.removeFromRight(24).withSizeKeepingCentre(22, 22));
     top.removeFromRight(gap);
+    redoBtn.setBounds(top.removeFromRight(26).withSizeKeepingCentre(26, 26));
+    undoBtn.setBounds(top.removeFromRight(26).withSizeKeepingCentre(26, 26));
+    top.removeFromRight(6);
+    presetBtn.setBounds(top.removeFromRight(52));
+    top.removeFromRight(gap);
     gridBox.setBounds(top.removeFromRight(46).reduced(0, 5));
     top.removeFromRight(6);
     snap.setBounds(top.removeFromRight(toggleWidth("Snap")));
     top.removeFromRight(gap);
-    bezier.setBounds(top.removeFromRight(toggleWidth("Bezier handles")));
+    bezier.setBounds(top.removeFromRight(28).withSizeKeepingCentre(28, 28));
     top.removeFromRight(gap);
     retrigger.setBounds(top.removeFromRight(toggleWidth("MIDI retrigger")));
 
@@ -285,4 +305,15 @@ void FreeLfoEditor::resized()
     place(smoothL, smooth);
     place(offsetL, offset);
     place(waveL, wave);
+}
+
+bool FreeLfoEditor::keyPressed(const juce::KeyPress& k)
+{
+    const auto m = k.getModifiers();
+    const int c = k.getKeyCode();
+    if (!m.isCommandDown() && !m.isCtrlDown()) return false;
+    const bool z = c == 'z' || c == 'Z', y = c == 'y' || c == 'Y';
+    if ((z && m.isShiftDown()) || y) return proc.redo();
+    if (z) return proc.undo();
+    return false;
 }

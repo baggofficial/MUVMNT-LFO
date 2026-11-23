@@ -260,6 +260,58 @@ public:
     void convertToBezier() { for (size_t i = 0; i + 1 < points.size(); ++i) convertSegmentToHandles(i); }
     void convertToSimple() { for (size_t i = 0; i + 1 < points.size(); ++i) convertSegmentToBend(i); }
 
+    // Like convertToSimple(), but a segment that one bend cannot follow (an S-shape, like half a sine) is first
+    // split in two with de Casteljau (the curve itself does not change), so the result stays close to the original
+    // shape instead of flattening to a line. Used for presets and pasted curves; the new points are ordinary points.
+    Envelope simplifiedCopy(float tolerance = 0.02f) const
+    {
+        Envelope cur = *this;
+        for (int pass = 0; pass < 6; ++pass)
+        {
+            Envelope trial = cur;
+            trial.convertToSimple();
+            int worst = -1;
+            float worstErr = tolerance;
+            for (size_t i = 0; i + 1 < trial.points.size(); ++i)
+            {
+                const float x0 = trial.points[i].x, x1 = trial.points[i + 1].x;
+                if (x1 - x0 < 0.04f) continue;
+                float err = 0.f;
+                for (int k = 1; k < 24; ++k)
+                {
+                    const float x = x0 + (x1 - x0) * (float) k / 24.f;
+                    err = std::max(err, std::fabs(trial.evaluate(x) - evaluate(x)));
+                }
+                if (err > worstErr) { worstErr = err; worst = (int) i; }
+            }
+            if (worst < 0) return trial;
+            cur.splitSegment((size_t) worst);
+        }
+        Envelope last = cur;
+        last.convertToSimple();
+        return last;
+    }
+
+    // Split segment i at its middle without changing the curve (de Casteljau on the segment's Bezier).
+    void splitSegment(size_t i)
+    {
+        const EnvPoint a = points[i], b = points[i + 1];
+        if (std::fabs(a.bend) > 1e-4f) return; // simple-mode segment: nothing to split
+        const auto o = outHandle(i), n = inHandle(i + 1);
+        auto mid = [](std::pair<float, float> p, std::pair<float, float> q) { return std::pair<float, float>{ 0.5f * (p.first + q.first), 0.5f * (p.second + q.second) }; };
+        const std::pair<float, float> p0{ a.x, a.y }, p3{ b.x, b.y };
+        const auto m01 = mid(p0, o), m12 = mid(o, n), m23 = mid(n, p3);
+        const auto m012 = mid(m01, m12), m123 = mid(m12, m23);
+        const auto m = mid(m012, m123);
+        EnvPoint np;
+        np.x = m.first; np.y = m.second;
+        np.inDx = m012.first - m.first;  np.inDy = m012.second - m.second;
+        np.outDx = m123.first - m.first; np.outDy = m123.second - m.second;
+        points[i].outDx = m01.first - a.x;  points[i].outDy = m01.second - a.y;
+        points[i + 1].inDx = m23.first - b.x; points[i + 1].inDy = m23.second - b.y;
+        points.insert(points.begin() + (long) i + 1, np);
+    }
+
     static double bezierY(double ax, double ay, double p1x, double p1y, double p2x, double p2y, double bx, double by, double x)
     {
         auto bz = [](double a, double b, double c, double d, double t) {

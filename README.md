@@ -25,10 +25,12 @@ It is an independent, from-scratch implementation inspired by the workflow of Xf
 
 **Curve editor**
 - Draw any shape: double-click to add points, drag to move them.
-- **Bezier handles** on every point, After Effects style: all handles are visible at once, smooth by default, with Alt/Option to break them apart.
+- **Bezier handles** on every point, After Effects style: all handles are visible at once, smooth by default, with Shift to break them apart.
 - **Simple mode**: one draggable diamond per segment instead of handles. It reaches much sharper bends than the handles can, and switching between the two styles converts your curve so it stays editable.
 - Easy-ease (double-click a point), straighten (double-click a Simple-mode diamond), delete (right-click a point).
 - **Grid and snapping**: snapping is off by default; hold **Option (macOS) / Alt (Windows)** to snap, or turn the **Snap** switch on to reverse that. A draggable number sets how many grid lines there are (2, 3, 4, 6, 8, 12, 16, 24, 32, 36, 48, 64) and snapping lands exactly on the drawn lines.
+- **Undo / redo** for every edit (Ctrl/Cmd+Z, Shift+Ctrl/Cmd+Z or Ctrl+Y, or the arrows in the header): one step per drag, includes reset and the Bezier switch, and keeps the last 50 steps (about 40 KB).
+- **Presets and copy/paste** from the header's curve button: 11 factory shapes (house pump, soft duck, hard duck, long release, pump x2, sine, triangle, saw down, saw up, flat) shown as small curve thumbnails, **Save curve as preset...** for your own, **Copy curve** and **Paste curve** (works between plugin instances and projects). A preset or pasted curve replaces only the curve you are editing (the selected band in Multiband) and is undoable.
 - Click empty space to hide every point and handle and see the bare curve; click the curve to bring them back.
 - The first and last points always share one height, so the loop has no click where it wraps around.
 
@@ -49,7 +51,7 @@ It is an independent, from-scratch implementation inspired by the workflow of Xf
 - An optional sidechain input is drawn too (display only, see [limitations](#known-limitations-and-roadmap)).
 - A grey line shows the **actual gain** after Depth, Smooth and Offset.
 - Light and dark themes (dark is the default, the choice is remembered).
-- **Resizable window** (760x500 up to 2000x1300): drag the bottom-right corner; the size is remembered.
+- **Resizable window** (880x500 up to 2000x1300): drag the bottom-right corner; the size is remembered.
 
 ![Multiband, dark theme](docs/images/multiband-dark.png)
 
@@ -71,7 +73,8 @@ Only the VST3 format is built (plus a standalone app for development). AU, AAX a
 | Double-click empty space | Add a point (new points start smooth, with their handles spread out) |
 | Drag a point | Move it (the first and last points move together vertically) |
 | Drag a handle | Bend the curve; the opposite handle follows on smooth points |
-| Alt/Option while dragging a handle | Break the handles apart |
+| Shift while dragging a handle | Break the handles apart |
+| Option/Alt or Ctrl while dragging a handle | Snap the handle's tip to the grid |
 | Double-click a point | Toggle easy-ease (flat tangents) |
 | Right-click a point | Delete it |
 | Hold Option/Alt while dragging or adding | Snap to the grid (reversed if the Snap switch is on) |
@@ -172,7 +175,7 @@ docs/images/            screenshots used in this README
 - **Not hardware-tested yet.** It has been developed on macOS and tested offline against a simulated host. Windows builds come from CI; hands-on testing in real DAWs (starting with FL Studio) is still to do.
 - **The sidechain input is display-only.** It lets you see a kick against your curve, but it does not trigger the LFO yet. Use the host tempo, or MIDI in Hz mode.
 - **Structural switches dip the audio** for about 8 ms (the tab, the band count and the crossover slopes). It is click-free but not seamless; change them when the plugin is not playing a critical passage.
-- **Not built yet:** presets and a preset browser, undo/redo and copy/paste of curves, audio or envelope triggering, other formats (AU, AAX, CLAP).
+- **Not built yet:** a full preset browser (folders, rename), copy/paste of whole multiband setups, audio or envelope triggering, other formats (AU, AAX, CLAP).
 
 ## License and credits
 

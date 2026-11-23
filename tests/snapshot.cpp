@@ -3,6 +3,7 @@
 // Run:   build/LfoSnap_artefacts/Release/LfoSnap <output-dir>
 #include "../Source/PluginProcessor.h"
 #include "../Source/PluginEditor.h"
+#include "../Source/Presets.h"
 #include <cstdio>
 
 static void setParam(FreeLfoProcessor& p, const char* id, float plain)
@@ -35,6 +36,7 @@ struct MouseDriver
     }
     void down(juce::Point<float> pos) { downPos = pos; ed.mouseDown(make(pos, false, juce::ModifierKeys::leftButtonModifier)); }
     void drag(juce::Point<float> pos) { ed.mouseDrag(make(pos, true, juce::ModifierKeys::leftButtonModifier)); }
+    void dragCtrl(juce::Point<float> pos) { ed.mouseDrag(make(pos, true, juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::ctrlModifier)); }
     void dragAlt(juce::Point<float> pos) { ed.mouseDrag(make(pos, true, juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::altModifier)); }
     void up(juce::Point<float> pos) { ed.mouseUp(make(pos, true)); }
 };
@@ -547,7 +549,7 @@ static bool resizeRegression()
         FreeLfoEditor ed(p);
         ed.setSize(960, 610);
         if (mb) { setParam(p, "mb", 1.f); juce::MessageManager::getInstance()->runDispatchLoopUntil(300); }
-        const int sizes[][2] = { { 760, 500 }, { 960, 610 }, { 1500, 900 }, { 2000, 1300 } };
+        const int sizes[][2] = { { 880, 500 }, { 960, 610 }, { 1500, 900 }, { 2000, 1300 } };
         for (auto& sz : sizes)
         {
             ed.setSize(sz[0], sz[1]);
@@ -559,7 +561,7 @@ static bool resizeRegression()
                 auto* c = ed.getChildComponent(i);
                 if (!c->isVisible()) continue;
                 inside = inside && b.contains(c->getBounds());
-                if (dynamic_cast<juce::Slider*>(c) || dynamic_cast<juce::ComboBox*>(c)) r.push_back(c->getBounds());
+                if (dynamic_cast<juce::Slider*>(c) || dynamic_cast<juce::ComboBox*>(c) || c->getBounds().getBottom() <= 56) r.push_back(c->getBounds()); // knobs, dropdowns and every header control
             }
             for (size_t i = 0; i < r.size(); ++i)
                 for (size_t j = i + 1; j < r.size(); ++j)
@@ -567,12 +569,183 @@ static bool resizeRegression()
             const bool good = inside && noOverlap && ed.getWidth() == sz[0];
             std::printf("  %s %dx%d  %s\n", mb ? "multiband" : "single   ", sz[0], sz[1], good ? "ok" : "FAILED");
             ok = ok && good;
-            if (sz[0] == 760 || sz[0] == 1500)
+            if (sz[0] == 880 || sz[0] == 1500)
                 save(ed.createComponentSnapshot(ed.getLocalBounds(), true, 1.0f),
                      juce::File(g_outDir).getChildFile(juce::String(mb ? "resize_mb_" : "resize_single_") + juce::String(sz[0]) + ".png"));
         }
     }
     setParam(p, "mb", 0.f);
+    return ok;
+}
+
+// Undo / redo: one step per drag, redo, a new edit clears redo, reset and the Bezier switch are undoable, capped history.
+static bool undoRegression()
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    EnvelopeEditor ed(p, 0);
+    ed.setBounds(0, 0, 800, 400);
+    auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 390.f - y * 380.f); };
+    bool ok = true;
+    auto check = [&](bool cond, const char* what) { std::printf("  %-64s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
+    auto ser = [&](int slot = 0) { return p.getEnvelope(slot).serialize(); };
+    std::printf("undo / redo:\n");
+
+    const auto e0 = ser();
+    check(!p.canUndo() && !p.canRedo(), "nothing to undo at the start");
+
+    MouseDriver m { ed };
+    const auto pt = p.getEnvelope(0).points[2];
+    const auto from = toScreen(pt.x, pt.y);
+    m.down(from);
+    for (int i = 1; i <= 8; ++i) m.drag(from + juce::Point<float>(3.f * (float) i, -2.f * (float) i));
+    m.up(from + juce::Point<float>(24.f, -16.f));
+    const auto e1 = ser();
+    check(e1 != e0, "the drag changed the curve");
+    check(p.undoDepth() == 1, "a whole drag is ONE undo step");
+
+    check(p.undo() && ser() == e0, "undo restores the curve exactly");
+    check(p.canRedo() && p.redo() && ser() == e1, "redo brings the drag back exactly");
+
+    p.undo();
+    const auto q = p.getEnvelope(0).points[3];
+    const auto from2 = toScreen(q.x, q.y);
+    m.down(from2); m.drag(from2 + juce::Point<float>(0.f, 20.f)); m.up(from2 + juce::Point<float>(0.f, 20.f));
+    check(!p.canRedo(), "a new edit after undo clears the redo history");
+
+    // keyboard shortcuts
+    const auto afterEdit = ser();
+    ed.keyPressed(juce::KeyPress('z', juce::ModifierKeys::commandModifier, 'z'));
+    check(ser() == e0, "Cmd+Z undoes");
+    ed.keyPressed(juce::KeyPress('z', juce::ModifierKeys::commandModifier | juce::ModifierKeys::shiftModifier, 'z'));
+    check(ser() == afterEdit, "Shift+Cmd+Z redoes");
+
+    // reset is one undoable step
+    ed.resetCurve();
+    const auto afterReset = ser();
+    p.undo();
+    check(ser() == afterEdit && afterReset != afterEdit, "reset can be undone");
+
+    // the Bezier switch converts every curve; undo puts back curves AND the switch
+    const auto before = ser();
+    auto* bez = p.apvts.getParameter("bezier");
+    bez->setValueNotifyingHost(0.f);
+    p.convertCurveMode(false);
+    check(ser() != before, "switching to simple mode converted the curve");
+    p.undo();
+    check(ser() == before && bez->getValue() > 0.5f, "undo restores the curve and the Bezier switch (no double conversion)");
+    p.redo();
+    check(bez->getValue() < 0.5f, "redo flips the switch back");
+    p.undo();
+
+    // capped history
+    for (int i = 0; i < 120; ++i)
+    {
+        auto e = p.getEnvelope(0);
+        e.points[2].y = 0.2f + 0.005f * (float) i;
+        p.pushUndo(p.captureUndoState());
+        p.setEnvelope(e, 0);
+    }
+    check(p.undoDepth() == FreeLfoProcessor::maxUndo, "history is capped");
+    const size_t perEntry = sizeof(FreeLfoProcessor::UndoState) + 4 * p.getEnvelope(0).points.size() * sizeof(EnvPoint);
+    std::printf("  about %zu bytes per entry, about %zu KB for a full history\n", perEntry, perEntry * FreeLfoProcessor::maxUndo / 1024);
+    return ok;
+}
+
+// Presets and copy / paste: apply to the right curve, convert to the current style, undoable, clipboard round trip.
+static bool presetRegression()
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    bool ok = true;
+    auto check = [&](bool cond, const char* what) { std::printf("  %-64s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
+    std::printf("presets:\n");
+
+    Envelope gate4;
+    for (auto& pr : presets::factory()) if (pr.name == "Hard duck") gate4 = pr.env;
+    const auto single0 = p.getEnvelope(0).serialize(), mid0 = p.getEnvelope(2).serialize();
+    p.applyCurve(gate4, 2);
+    check(p.getEnvelope(2).serialize() != mid0, "a preset replaces the chosen band's curve");
+    check(p.getEnvelope(0).serialize() == single0, "the other curves are untouched");
+    check(std::fabs(p.getEnvelope(2).evaluate(0.30f) - gate4.evaluate(0.30f)) < 1e-4f, "the curve really is the preset");
+    p.undo();
+    check(p.getEnvelope(2).serialize() == mid0, "applying a preset can be undone");
+
+    // simple style: the preset arrives as simple bends, and still sounds like the same shape
+    auto* bez = p.apvts.getParameter("bezier");
+    bez->setValueNotifyingHost(0.f);
+    Envelope sine;
+    for (auto& pr : presets::factory()) if (pr.name == "Sine") sine = pr.env;
+    p.applyCurve(sine, 0);
+    bool hasHandles = false;
+    for (auto& pt : p.getEnvelope(0).points) hasHandles = hasHandles || pt.outDx != 0.f || pt.inDx != 0.f;
+    float worst = 0.f;
+    for (int i = 0; i <= 100; ++i) worst = std::max(worst, std::fabs(p.getEnvelope(0).evaluate(i / 100.f) - sine.evaluate(i / 100.f)));
+    std::printf("  simple-mode conversion of the sine: max error %.3f\n", worst);
+    check(!hasHandles && worst < 0.03f, "in simple mode a preset is converted to bends (and stays close)");
+    bez->setValueNotifyingHost(1.f);
+
+    // clipboard text
+    Envelope back;
+    const auto text = presets::toText(p.getEnvelope(1));
+    check(presets::fromText(text, back) && back.serialize() == p.getEnvelope(1).serialize(), "copy then paste gives the same curve");
+    check(!presets::fromText("not a curve", back), "pasting something else is refused");
+
+    // user preset files
+    const auto f = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("FreeLfoTestPresets");
+    f.createDirectory();
+    const auto file = f.getChildFile("test-curve.lfocurve");
+    file.replaceWithText(text);
+    Envelope loaded;
+    check(presets::fromText(file.loadFileAsString().trim().toStdString(), loaded) && loaded.serialize() == back.serialize(), "a saved preset file loads back exactly");
+    file.deleteFile();
+    return ok;
+}
+
+// Bezier handles snap to the grid with Option/Alt or Ctrl held, and move freely without.
+static bool handleSnapRegression()
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    EnvelopeEditor ed(p, 0);
+    ed.setBounds(0, 0, 800, 400);
+    auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 390.f - y * 380.f); };
+    bool ok = true;
+    auto check = [&](bool cond, const char* what) { std::printf("  %-64s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
+    std::printf("handle snapping:\n");
+
+    p.setEnvelope(Envelope(), 0);
+    auto* bez = p.apvts.getParameter("bezier");
+    bez->setValueNotifyingHost(1.f);
+    const int gx = ed.gridX(), gy = ed.gridY();
+    auto onGrid = [&](float x, float y) {
+        const float fx = x * gx, fy = y * gy;
+        return std::fabs(fx - std::round(fx)) < 1e-3f && std::fabs(fy - std::round(fy)) < 1e-3f;
+    };
+
+    MouseDriver m { ed };
+    const int sel = 3;                                           // the plateau start: it has a visible out handle
+    const auto top = toScreen(p.getEnvelope(0).points[(size_t) sel].x, p.getEnvelope(0).points[(size_t) sel].y);
+    m.down(top); m.up(top);                                      // select it
+    auto grab = [&](int kind) { const auto h = kind == 2 ? p.getEnvelope(0).outHandle((size_t) sel) : p.getEnvelope(0).inHandle((size_t) sel); return toScreen(h.first, h.second); };
+
+    for (int mode = 0; mode < 3; ++mode)                         // 0 = Alt, 1 = Ctrl, 2 = nothing
+    {
+        p.setEnvelope(Envelope(), 0);
+        const auto start = grab(2);
+        const auto target = start + juce::Point<float>(23.7f, 31.3f);   // an off-grid place
+        m.down(start);
+        if (mode == 0) m.dragAlt(target); else if (mode == 1) m.dragCtrl(target); else m.drag(target);
+        m.up(target);
+        const auto q = p.getEnvelope(0);
+        const auto h = q.outHandle((size_t) sel);
+        const bool snapped = onGrid(h.first, h.second);
+        std::printf("  %s: handle tip at (%.4f, %.4f)\n", mode == 0 ? "Alt " : mode == 1 ? "Ctrl" : "free", h.first, h.second);
+        check(mode == 2 ? !snapped : snapped, mode == 0 ? "Alt snaps the handle tip to the grid" : mode == 1 ? "Ctrl snaps the handle tip to the grid" : "no key: the handle moves freely");
+    }
     return ok;
 }
 
@@ -720,6 +893,34 @@ int main(int argc, char** argv)
     const bool n = offsetPreviewRegression(dir);
     const bool o = headerRegression();
     const bool q = gridContrastRegression();
+    {   // the preset popup, rendered headless
+        PaperLookAndFeel laf;
+        FreeLfoProcessor pp;
+        for (int dark = 0; dark < 2; ++dark)
+        {
+            paper::setDark(dark == 1);
+            laf.applyColours();
+            auto panel = PresetMenu::createPanel(pp, 0, nullptr, laf);
+            save(panel->createComponentSnapshot(panel->getLocalBounds(), true, 2.0f), dir.getChildFile(dark ? "preset_popup_dark.png" : "preset_popup_light.png"));
+        }
+        paper::setDark(true);
+    }
+    {   // the popup open inside the editor: it must drop down from the button
+        FreeLfoProcessor pp;
+        pp.setRateAndBufferSizeDetails(48000.0, 512);
+        pp.prepareToPlay(48000.0, 512);
+        FreeLfoEditor fe(pp);
+        fe.setSize(960, 610);
+        fe.getChildComponent(0); // (layout is done by setSize)
+        juce::Component* btn = nullptr;
+        for (int i = 0; i < fe.getNumChildComponents(); ++i) if (dynamic_cast<PresetButton*>(fe.getChildComponent(i))) btn = fe.getChildComponent(i);
+        if (btn != nullptr)
+        {
+            auto popup = PresetMenu::open(fe, *btn, pp, 0, nullptr, nullptr);
+            save(fe.createComponentSnapshot(fe.getLocalBounds(), true, 1.0f), dir.getChildFile("preset_popup_open.png"));
+        }
+    }
     const bool rz = resizeRegression();
-    return a && b && c && d && f && g && h && k && m && n && o && q && rz ? 0 : 1;
+    const bool un = undoRegression() && presetRegression() && handleSnapRegression();
+    return un && a && b && c && d && f && g && h && k && m && n && o && q && rz ? 0 : 1;
 }

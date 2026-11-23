@@ -5,6 +5,7 @@
 EnvelopeEditor::EnvelopeEditor(FreeLfoProcessor& p, int slotIndex)
     : proc(p), slot(slotIndex), env(p.getEnvelope(slotIndex)), vblank(this, [this] { frame(); })
 {
+    setWantsKeyboardFocus(true);
     depthP = proc.apvts.getRawParameterValue(bandId("depth"));
     smoothP = proc.apvts.getRawParameterValue(bandId("smooth"));
     offsetP = proc.apvts.getRawParameterValue(bandId("offset"));
@@ -32,6 +33,7 @@ void EnvelopeEditor::resetCurve()
 {
     Envelope e;                       // the single-band pump
     if (slot >= 1) e.resetToBandPump(slot - 1); // each band's own default
+    proc.pushUndo(proc.captureUndoState());
     proc.setEnvelope(e, slot);
     env = e;
     selected = -1;
@@ -131,7 +133,17 @@ bool EnvelopeEditor::nearCurve(juce::Point<float> p) const
     return false;
 }
 
-void EnvelopeEditor::commit() { proc.setEnvelope(env, slot); }
+// The first change of a gesture records the state from before it (one undo step per drag, not per mouse move).
+void EnvelopeEditor::commit()
+{
+    if (!gestureRecorded)
+    {
+        proc.pushUndo(haveGestureStart ? std::move(gestureStart) : proc.captureUndoState());
+        haveGestureStart = false;
+        gestureRecorded = true;
+    }
+    proc.setEnvelope(env, slot);
+}
 
 // Rekordbox-style: each slice of the LFO cycle is coloured by its frequency content.
 // Red = lows, green = mids, blue = highs, blended by how much of each band is present.
@@ -483,6 +495,8 @@ void EnvelopeEditor::paint(juce::Graphics& g)
 
 void EnvelopeEditor::mouseDown(const juce::MouseEvent& e)
 {
+    grabKeyboardFocus();
+    gestureStart = proc.captureUndoState(); haveGestureStart = true; gestureRecorded = false;
     env = proc.getEnvelope(slot);
     if (selected >= (int) env.points.size()) selected = -1;
     const auto pos = e.position;
@@ -570,7 +584,13 @@ void EnvelopeEditor::mouseDrag(const juce::MouseEvent& e)
     else if (dragKind != 0 && selected >= 0)
     {
         auto& p = env.points[(size_t) selected];
-        const auto n = toNorm(e.position);
+        auto n = toNorm(e.position);
+        // Holding Option / Alt or Ctrl snaps the handle's tip to the grid lines (the Snap switch reverses that)
+        if (snapHandleNow(e.mods))
+        {
+            n.x = std::round(n.x * gridX()) / gridX();
+            n.y = std::round(n.y * gridY()) / gridY();
+        }
 
         // Offsets are kept relative to the point; x is limited to the neighbouring segment.
         float dx = n.x - p.x, dy = n.y - p.y;
@@ -587,9 +607,9 @@ void EnvelopeEditor::mouseDrag(const juce::MouseEvent& e)
         }
 
         // Smooth points: the opposite handle mirrors this one's direction (keeps its length).
-        // Hold Alt to break the handles apart.
+        // Hold Shift to break the handles apart.
         const bool interior = selected > 0 && selected < (int) env.points.size() - 1;
-        const bool mirror = interior && mirrorDrag && !e.mods.isAltDown();
+        const bool mirror = interior && mirrorDrag && !e.mods.isShiftDown();
         if (mirror)
         {
             const float len = std::hypot(dx, dy);
@@ -622,7 +642,7 @@ void EnvelopeEditor::mouseDrag(const juce::MouseEvent& e)
     }
 }
 
-void EnvelopeEditor::mouseUp(const juce::MouseEvent&) { dragPoint = -1; dragKind = 0; dragSeg = -1; repaint(); }
+void EnvelopeEditor::mouseUp(const juce::MouseEvent&) { haveGestureStart = false; gestureRecorded = false; dragPoint = -1; dragKind = 0; dragSeg = -1; repaint(); }
 
 void EnvelopeEditor::mouseDoubleClick(const juce::MouseEvent& e)
 {
@@ -695,3 +715,14 @@ void EnvelopeEditor::mouseDoubleClick(const juce::MouseEvent& e)
     repaint();
 }
 
+
+bool EnvelopeEditor::keyPressed(const juce::KeyPress& k)
+{
+    const auto m = k.getModifiers();
+    const int c = k.getKeyCode();
+    const bool z = c == 'z' || c == 'Z', y = c == 'y' || c == 'Y';
+    if (!m.isCommandDown() && !m.isCtrlDown()) return false;
+    if ((z && m.isShiftDown()) || y) return proc.redo();
+    if (z) return proc.undo();
+    return false;
+}

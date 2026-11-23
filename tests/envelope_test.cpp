@@ -1,5 +1,6 @@
 // Build & run:  clang++ -std=c++17 tests/envelope_test.cpp -o /tmp/envtest && /tmp/envtest
 #include "../Source/Envelope.h"
+#include "../Source/Presets.h"
 #include <array>
 #include <cassert>
 #include <cstdio>
@@ -237,6 +238,44 @@ int main()
     // Older saves (no handles) still load, as straight segments
     Envelope old = Envelope::deserialize("0,0,0.2,0.5;1,1,0,0.5;");
     assert(old.points.size() == 2 && near(old.points[0].outDx, 0.f));
+
+    // Factory presets: every one must be a valid, click-free, duck-only loop
+    {
+        const auto list = presets::factory();
+        assert(list.size() >= 8);
+        for (const auto& pr : list)
+        {
+            const auto& ep = pr.env;
+            assert(ep.points.size() >= 2);
+            assert(near(ep.points.front().x, 0.f) && near(ep.points.back().x, 1.f));
+            assert(near(ep.points.front().y, ep.points.back().y, 1e-6f));            // no click at the loop seam
+            for (size_t i = 1; i < ep.points.size(); ++i) assert(ep.points[i].x > ep.points[i - 1].x);   // strictly increasing: no stacked points
+            float lo = 2.f, hi = -1.f;
+            for (int i = 0; i < 4096; ++i)
+            {
+                const float v = ep.evaluate((float) i / 4096.f);
+                assert(v >= -1e-4f && v <= 1.0001f);                                  // gain can only duck
+                lo = std::min(lo, v); hi = std::max(hi, v);
+            }
+            if (pr.name != "Flat (no ducking)" && pr.name != "Soft duck") assert(lo < 0.05f && hi > 0.95f);            // uses the full range
+            // clipboard / file text round trip
+            Envelope back;
+            assert(presets::fromText(presets::toText(ep), back));
+            for (int i = 0; i <= 200; ++i) assert(near(back.evaluate(i / 200.f), ep.evaluate(i / 200.f), 1e-4f));
+        }
+        assert(!presets::fromText("hello", e));
+        assert(!presets::fromText("FreeLFOCurve1:", e));
+        // tiling: Pump x2 is two half-length copies of the pump
+        Envelope x2;
+        for (const auto& pr : list) if (pr.name == "Pump x2") x2 = pr.env;
+        Envelope one;
+        for (int i = 0; i < 200; ++i)
+        {
+            const float x = i / 200.f * 0.99f;
+            assert(near(x2.evaluate(x * 0.5f), one.evaluate(x), 2e-3f));          // first copy
+            assert(near(x2.evaluate(0.5f + x * 0.5f), one.evaluate(x), 2e-3f));   // second copy
+        }
+    }
 
     std::puts("envelope tests passed");
     return 0;

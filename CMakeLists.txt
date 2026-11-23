@@ -26,7 +26,8 @@ target_sources(FreeLfoTool PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
     Source/EnvelopeEditor.cpp
-    Source/MultibandPanel.cpp)
+    Source/MultibandPanel.cpp
+    Source/PresetMenu.cpp)
 
 target_compile_definitions(FreeLfoTool PUBLIC
     JUCE_WEB_BROWSER=0
@@ -49,7 +50,8 @@ if(FREELFO_BENCH)
         Source/PluginProcessor.cpp
         Source/PluginEditor.cpp
         Source/EnvelopeEditor.cpp
-        Source/MultibandPanel.cpp)
+        Source/MultibandPanel.cpp
+    Source/PresetMenu.cpp)
     target_link_libraries(LfoBench PRIVATE
         juce::juce_audio_utils
         juce::juce_recommended_config_flags
@@ -62,7 +64,8 @@ if(FREELFO_BENCH)
         Source/PluginProcessor.cpp
         Source/PluginEditor.cpp
         Source/EnvelopeEditor.cpp
-        Source/MultibandPanel.cpp)
+        Source/MultibandPanel.cpp
+    Source/PresetMenu.cpp)
     target_link_libraries(LfoAudioTest PRIVATE
         juce::juce_audio_utils
         juce::juce_recommended_config_flags
@@ -75,7 +78,8 @@ if(FREELFO_BENCH)
         Source/PluginProcessor.cpp
         Source/PluginEditor.cpp
         Source/EnvelopeEditor.cpp
-        Source/MultibandPanel.cpp)
+        Source/MultibandPanel.cpp
+    Source/PresetMenu.cpp)
     target_link_libraries(LfoSnap PRIVATE
         juce::juce_audio_utils
         juce::juce_recommended_config_flags

@@ -19,6 +19,7 @@ public:
     void mouseDrag(const juce::MouseEvent&) override;
     void mouseUp(const juce::MouseEvent&) override;
     void mouseDoubleClick(const juce::MouseEvent&) override;
+    bool keyPressed(const juce::KeyPress&) override; // Cmd/Ctrl+Z undo, Shift+Cmd/Ctrl+Z or Ctrl+Y redo
 
     bool areControlsHidden() const { return controlsHidden; }
     // Snapping is off by default; holding Option (macOS) / Alt (Windows) snaps while you drag. If the Snap switch
@@ -33,6 +34,8 @@ public:
     }
     int gridY() const { return juce::jmax(2, gridX() / 2); }
     bool snapNow(const juce::ModifierKeys& m) const { return snapToGrid != m.isAltDown(); }
+    // Bezier handles snap with Option / Alt or Ctrl held (Shift is for breaking the handles apart)
+    bool snapHandleNow(const juce::ModifierKeys& m) const { return snapToGrid != (m.isAltDown() || m.isCtrlDown()); }
 
 private:
     void frame(); // once per display refresh (VBlank), capped to ~60 fps
@@ -77,6 +80,8 @@ private:
     std::atomic<float>* smoothP = nullptr;
     std::atomic<float>* offsetP = nullptr; // phase offset (each band has its own)
     Envelope env;
+    FreeLfoProcessor::UndoState gestureStart; // the curves as they were when the mouse went down
+    bool haveGestureStart = false, gestureRecorded = false;
     Envelope ghost[3]; // the other bands' curves (slots 1..3), drawn faintly for reference; not editable here
     int selected = -1;  // point whose Bezier handles are shown
     int dragPoint = -1;
