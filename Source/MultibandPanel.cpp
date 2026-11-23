@@ -26,7 +26,7 @@ int BandStrip::signature() const
     const auto v = [this](const char* id) { return proc.apvts.getRawParameterValue(id)->load(); };
     return (int) (v("xLow") * 3.f + v("xHigh") * 7.f + v("mbBands") * 100003.f
                   + (v("soloL") + v("soloM") * 2.f + v("soloH") * 4.f) * 7919.f
-                  + v("slopeLow") * 1009.f + v("slopeHigh") * 2003.f);
+                  + v("slopeLow") * 1009.f + v("slopeHigh") * 2003.f + (float) paper::version * 31337.f);
 }
 
 void BandStrip::timerCallback()
@@ -120,11 +120,11 @@ void BandStrip::paint(juce::Graphics& g)
     // octave guides + the -6 dB line where Linkwitz-Riley bands cross
     for (double f : { 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0 })
     {
-        g.setColour(juce::Colours::black.withAlpha(0.05f));
+        g.setColour(paper::ink(0.05f));
         g.drawVerticalLine((int) freqToX(f), 0.f, h);
     }
     const float y6 = plotTop + (plotBottom - plotTop) * (6.f / 36.f);
-    g.setColour(juce::Colours::black.withAlpha(0.10f));
+    g.setColour(paper::ink(0.10f));
     g.drawHorizontalLine((int) y6, freqToX(minHz), freqToX(maxHz));
     g.setColour(paper::sub.withAlpha(0.8f));
     g.setFont(10.f);
@@ -167,7 +167,7 @@ void BandStrip::paint(juce::Graphics& g)
                 const bool sel = band == selected;
                 g.setColour(paper::bandColour(band).withAlpha(sel ? 0.26f : 0.16f));
                 g.fillPath(fill);
-                g.setColour(paper::bandColour(band).darker(0.2f).withAlpha(sel ? 1.f : 0.75f));
+                g.setColour(paper::strong(paper::bandColour(band)).withAlpha(sel ? 1.f : 0.75f));
                 g.strokePath(line, juce::PathStrokeType(sel ? 2.f : 1.3f));
             }
     }
@@ -322,9 +322,7 @@ MultibandPanel::MultibandPanel(FreeLfoProcessor& p) : proc(p), strip(p), curve(p
 
     auto setup = [this](juce::Slider& s, juce::Label& l, const juce::String& text) {
         s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-        s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 80, 18);
-        s.setColour(juce::Slider::textBoxTextColourId, paper::text);
-        s.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+        s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 80, 16);
         l.setText(text, juce::dontSendNotification);
         l.setJustificationType(juce::Justification::centred);
         addAndMakeVisible(s);
@@ -354,7 +352,7 @@ int MultibandPanel::signature() const
     const bool three = v("mbBands") > 0.5f, link = v("mbLink") > 0.5f;
     const int eff = link ? (three ? 1 : 0) : selected;
     const juce::String es = FreeLfoProcessor::bandSuffix(eff);
-    return (three ? 1 : 0) | (link ? 2 : 0) | (((int) v(("mode" + es).toRawUTF8())) << 2) | (selected << 3);
+    return (three ? 1 : 0) | (link ? 2 : 0) | (((int) v(("mode" + es).toRawUTF8())) << 2) | (selected << 3) | (paper::version << 8);
 }
 
 void MultibandPanel::timerCallback()
@@ -410,7 +408,7 @@ void MultibandPanel::rebind()
 
     const char* names[3] = { "Low band", "Mid band", "High band" };
     bandL.setText(names[selected], juce::dontSendNotification);
-    bandL.setColour(juce::Label::textColourId, paper::bandColour(selected).darker(0.25f));
+    bandL.setColour(juce::Label::textColourId, paper::bandText(selected));
     rateL.setText(link ? "Rate (all bands)" : "Rate", juce::dontSendNotification);
 
     lastSig = signature();
@@ -421,27 +419,30 @@ void MultibandPanel::resized()
     auto r = getLocalBounds();
     strip.setBounds(r.removeFromTop(84));
     r.removeFromTop(8);
-    auto knobs = r.removeFromBottom(122);
+    auto knobs = r.removeFromBottom(92);   // compact knobs: more room for the curve
     curve.setBounds(r.withTrimmedBottom(8));
 
-    auto left = knobs.removeFromLeft(160).reduced(0, 4);
-    bandL.setBounds(left.removeFromTop(22));
-    modeBox.setBounds(left.removeFromTop(26));
+    // left column: band name, then Sync/Hz and the band count side by side, then the link switch
+    auto left = knobs.removeFromLeft(168).reduced(0, 4);
+    bandL.setBounds(left.removeFromTop(20));
+    left.removeFromTop(4);
+    auto combos = left.removeFromTop(26);
+    modeBox.setBounds(combos.removeFromLeft(78));
+    combos.removeFromLeft(6);
+    bandsBox.setBounds(combos);
     left.removeFromTop(6);
     linkBtn.setBounds(left.removeFromTop(24));
-    left.removeFromTop(6);
-    bandsBox.setBounds(left.removeFromTop(26));
 
     const int w = knobs.getWidth() / 4;
     auto place = [&](juce::Label& l, juce::Slider& s) {
         auto c = knobs.removeFromLeft(w);
-        l.setBounds(c.removeFromTop(18));
+        l.setBounds(c.removeFromTop(16));
         s.setBounds(c);
     };
     const auto rateColumn = knobs.withWidth(w);
     place(rateL, rate);
-    dotBtn.setBounds(rateColumn.getX() + 4, rateColumn.getBottom() - 24, 26, 22);
-    tripBtn.setBounds(rateColumn.getRight() - 30, rateColumn.getBottom() - 24, 26, 22);
+    dotBtn.setBounds(rateColumn.getX() + 10, rateColumn.getBottom() - 22, 24, 20);
+    tripBtn.setBounds(rateColumn.getRight() - 28, rateColumn.getBottom() - 22, 24, 20);
     place(depthL, depth);
     place(smoothL, smooth);
     place(waveL, wave);

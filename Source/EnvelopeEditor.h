@@ -71,9 +71,11 @@ private:
 
     FreeLfoProcessor& proc;
     int cachedGrid = -1; // grid count the cached grid image was drawn with
+    int cachedTheme = -1; // theme the cached grid image was drawn in
     int slot = 0;
     std::atomic<float>* depthP = nullptr;
     std::atomic<float>* smoothP = nullptr;
+    std::atomic<float>* offsetP = nullptr; // phase offset: only the single-band curve has one
     Envelope env;
     Envelope ghost[3]; // the other bands' curves (slots 1..3), drawn faintly for reference; not editable here
     int selected = -1;  // point whose Bezier handles are shown

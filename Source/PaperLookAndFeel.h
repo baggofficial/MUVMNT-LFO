@@ -1,31 +1,100 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
 
-// "Light paper" theme
+// Two themes: "light paper" (default) and a dark one inspired by After Effects' graph editor
+// (charcoal panels, near-black graph area, blue highlight, yellow keyframe handles).
+// The colours are plain variables that setDark() reassigns, so everything that draws with paper::xxx follows.
 namespace paper
 {
-    inline const juce::Colour bg     { 0xffebe8e1 };
-    inline const juce::Colour panel  { 0xfffbfaf7 };
-    inline const juce::Colour line   { 0xffd8d4ca };
-    inline const juce::Colour accent { 0xffe4572e };
-    inline const juce::Colour text   { 0xff25231f };
-    inline const juce::Colour sub    { 0xff7d786c };
-    inline const juce::Colour track  { 0xffe2ded3 };
-    inline const juce::Colour amber  { 0xffe0a21b };
+    inline bool dark = false;
+    inline int version = 0; // bumps on every theme change, so cached drawings know to redraw
+    inline juce::Colour bg     { 0xffebe8e1 };   // curve area / outer frame
+    inline juce::Colour panel  { 0xfffbfaf7 };   // window panel, buttons, chips
+    inline juce::Colour line   { 0xffd8d4ca };
+    inline juce::Colour accent { 0xffe4572e };
+    inline juce::Colour text   { 0xff25231f };
+    inline juce::Colour sub    { 0xff7d786c };
+    inline juce::Colour track  { 0xffe2ded3 };
+    inline juce::Colour amber  { 0xffe0a21b };
+
+    inline void setDark(bool on)
+    {
+        dark = on;
+        if (on)
+        {
+            bg     = juce::Colour(0xff1b1b1b);  // like AE's graph background
+            panel  = juce::Colour(0xff2a2a2a);  // AE panel grey
+            line   = juce::Colour(0xff434343);
+            accent = juce::Colour(0xff4a9df8);  // AE selection blue
+            text   = juce::Colour(0xffd9d9d9);
+            sub    = juce::Colour(0xff8f8f8f);
+            track  = juce::Colour(0xff3d3d3d);
+            amber  = juce::Colour(0xfff0b429);
+        }
+        else
+        {
+            bg     = juce::Colour(0xffebe8e1);
+            panel  = juce::Colour(0xfffbfaf7);
+            line   = juce::Colour(0xffd8d4ca);
+            accent = juce::Colour(0xffe4572e);
+            text   = juce::Colour(0xff25231f);
+            sub    = juce::Colour(0xff7d786c);
+            track  = juce::Colour(0xffe2ded3);
+            amber  = juce::Colour(0xffe0a21b);
+        }
+        ++version;
+    }
 
     // Same palette as the frequency-coloured waveform: red lows, green mids, blue highs
     inline juce::Colour bandColour(int band)
     {
+        if (dark)
+            return band == 0 ? juce::Colour::fromFloatRGBA(0.96f, 0.38f, 0.34f, 1.f)
+                 : band == 1 ? juce::Colour::fromFloatRGBA(0.36f, 0.82f, 0.45f, 1.f)
+                             : juce::Colour::fromFloatRGBA(0.33f, 0.60f, 1.00f, 1.f);
         return band == 0 ? juce::Colour::fromFloatRGBA(0.90f, 0.20f, 0.20f, 1.f)
              : band == 1 ? juce::Colour::fromFloatRGBA(0.20f, 0.70f, 0.30f, 1.f)
                          : juce::Colour::fromFloatRGBA(0.15f, 0.45f, 0.95f, 1.f);
     }
+
+    // Grid lines, guides: dark ink on the light theme, light ink on the dark one
+    inline juce::Colour ink(float alpha) { return dark ? juce::Colours::white.withAlpha(alpha * 0.7f) : juce::Colours::black.withAlpha(alpha); }
+
+    // Curve editor grid: clearly visible from a distance. Major lines (every quarter of the cycle, and the frame) are stronger.
+    inline juce::Colour gridMajor() { return dark ? juce::Colours::white.withAlpha(0.26f) : juce::Colours::black.withAlpha(0.24f); }
+    inline juce::Colour gridMinor() { return dark ? juce::Colours::white.withAlpha(0.13f) : juce::Colours::black.withAlpha(0.11f); }
+
+    // A colour for outlines of the band curves: a touch darker on light, a touch brighter on dark
+    inline juce::Colour strong(juce::Colour c) { return dark ? c.brighter(0.15f) : c.darker(0.2f); }
+
+    // Text colour for a band name
+    inline juce::Colour bandText(int band) { return dark ? bandColour(band).brighter(0.1f) : bandColour(band).darker(0.25f); }
 }
+
+// A small half-filled circle: click to switch between the light and the dark theme
+class ThemeToggle : public juce::Button
+{
+public:
+    ThemeToggle() : juce::Button("theme") { setTooltip("Light / dark mode"); }
+
+    void paintButton(juce::Graphics& g, bool over, bool) override
+    {
+        auto b = getLocalBounds().toFloat().reduced(4.f);
+        g.setColour(paper::text.withAlpha(over ? 1.f : 0.7f));
+        g.drawEllipse(b, 1.6f);
+        juce::Path half;
+        half.addPieSegment(b, 0.f, juce::MathConstants<float>::pi, 0.f); // the right half
+        g.fillPath(half);
+    }
+};
 
 class PaperLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
-    PaperLookAndFeel()
+    PaperLookAndFeel() { applyColours(); }
+
+    // (re)load the theme colours; call after paper::setDark(), then sendLookAndFeelChange() on the editor
+    void applyColours()
     {
         using namespace juce;
         setColour(Slider::textBoxTextColourId, paper::text);

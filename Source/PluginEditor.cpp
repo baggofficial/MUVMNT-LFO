@@ -2,9 +2,50 @@
 
 // ---------------------------------------------------------------- FreeLfoEditor
 
+// The light / dark choice is a user preference shared by every instance, so it lives in a small settings file
+// (tests set FREELFO_NO_PREFS so they never read or write it).
+static bool usePrefs() { return juce::SystemStats::getEnvironmentVariable("FREELFO_NO_PREFS", "").isEmpty(); }
+
+static juce::PropertiesFile::Options uiPrefsOptions()
+{
+    juce::PropertiesFile::Options o;
+    o.applicationName = "FreeLfoTool UI";
+    o.filenameSuffix = ".settings";
+    o.osxLibrarySubFolder = "Application Support";
+    o.folderName = "FreeLfo";
+    return o;
+}
+
+static constexpr bool defaultDark = true; // dark mode is the default look
+
+static bool loadDarkPreference()
+{
+    if (!usePrefs()) return defaultDark;
+    juce::PropertiesFile f(uiPrefsOptions());
+    return f.getBoolValue("dark", defaultDark);
+}
+
+// Width a switch with a text label needs (the label sits left of the switch, see PaperLookAndFeel::drawToggleButton)
+static int toggleWidth(const juce::String& text)
+{
+    juce::GlyphArrangement ga;
+    ga.addLineOfText(juce::FontOptions(13.f), text, 0.f, 0.f);
+    return (int) std::ceil(ga.getBoundingBox(0, -1, true).getWidth()) + 6 + 30 + 2;
+}
+
+static void saveDarkPreference(bool dark)
+{
+    if (!usePrefs()) return;
+    juce::PropertiesFile f(uiPrefsOptions());
+    f.setValue("dark", dark);
+    f.saveIfNeeded();
+}
+
 FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     : AudioProcessorEditor(&p), proc(p), curve(p, 0), mbPanel(p)
 {
+    paper::setDark(loadDarkPreference());
+    laf.applyColours();
     setLookAndFeel(&laf);
     proc.editorOpen.store(true);
     setSize(960, 610);
@@ -16,9 +57,7 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
 
     auto setup = [this](juce::Slider& s, juce::Label& l, const juce::String& text) {
         s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
-        s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 80, 18);
-        s.setColour(juce::Slider::textBoxTextColourId, paper::text); // explicit: the box is built before the theme reaches it
-        s.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+        s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 80, 16);
         l.setText(text, juce::dontSendNotification);
         l.setJustificationType(juce::Justification::centred);
         addAndMakeVisible(s);
@@ -41,8 +80,6 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     gridBox.setSliderStyle(juce::Slider::LinearBarVertical);
     gridBox.setMouseDragSensitivity(260);   // about 22 px of dragging per step, so each stop is easy to land on
     gridBox.setVelocityBasedMode(false);
-    gridBox.setColour(juce::Slider::textBoxTextColourId, paper::text);
-    gridBox.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
     gridBox.setTooltip("Grid lines and snap steps (drag up or down)");
     addAndMakeVisible(gridBox);
 
@@ -55,6 +92,9 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
 
     reset.onClick = [this] { if (multibandOn()) mbPanel.resetCurve(); else curve.resetCurve(); };
     addAndMakeVisible(reset);
+
+    addAndMakeVisible(themeBtn);
+    themeBtn.onClick = [this] { setDarkMode(!paper::dark); };
 
     // Tabs: Single = the original one-curve LFO (bit-exact pass-through), Multiband = per-band curves
     tabSingle.onClick = [this] { setMultiband(false); };
@@ -79,6 +119,15 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     updateTab();
     startTimerHz(10); // follows the "mb" parameter if the host or a project load changes it
     sendLookAndFeelChange(); // make every child (slider text boxes included) pick up the theme colours
+}
+
+void FreeLfoEditor::setDarkMode(bool dark, bool persist)
+{
+    paper::setDark(dark);
+    laf.applyColours();
+    if (persist) saveDarkPreference(dark);
+    sendLookAndFeelChange(); // every child re-reads the theme colours
+    repaint();
 }
 
 // Switch tabs explicitly. (ParameterAttachment ignores changes it made itself, so relying on its
@@ -148,9 +197,6 @@ void FreeLfoEditor::paint(juce::Graphics& g)
     g.setColour(paper::line);
     g.drawRoundedRectangle(panelArea, 10.f, 1.f);
 
-    g.setColour(paper::text);
-    g.setFont(juce::FontOptions(16.f, juce::Font::bold));
-    g.drawText("Free LFO Tool", 24, 18, 160, 28, juce::Justification::centredLeft);
 }
 
 void FreeLfoEditor::resized()
@@ -158,36 +204,42 @@ void FreeLfoEditor::resized()
     const bool mb = multibandOn();
     auto r = getLocalBounds().reduced(18);
     auto top = r.removeFromTop(36);
-    top.removeFromLeft(150); // title
     tabSingle.setBounds(top.removeFromLeft(74).reduced(0, 4));
     tabMulti.setBounds(top.removeFromLeft(96).reduced(0, 4));
     top.removeFromLeft(14);
     if (!mb) mode.setBounds(top.removeFromLeft(90).reduced(0, 4));
+    // Right-hand group, right to left: Reset | light-dark button | Snap switch + grid number | Bezier switch | retrigger.
+    // Items of a pair sit close together; groups are an even 16 px apart.
+    constexpr int gap = 16;
     reset.setBounds(top.removeFromRight(70).reduced(0, 4));
-    top.removeFromRight(10);
+    top.removeFromRight(12);
+    themeBtn.setBounds(top.removeFromRight(24).withSizeKeepingCentre(22, 22));
+    top.removeFromRight(gap);
     gridBox.setBounds(top.removeFromRight(46).reduced(0, 5));
-    top.removeFromRight(4);
-    snap.setBounds(top.removeFromRight(86));
-    bezier.setBounds(top.removeFromRight(150));
-    retrigger.setBounds(top.removeFromRight(150));
+    top.removeFromRight(6);
+    snap.setBounds(top.removeFromRight(toggleWidth("Snap")));
+    top.removeFromRight(gap);
+    bezier.setBounds(top.removeFromRight(toggleWidth("Bezier handles")));
+    top.removeFromRight(gap);
+    retrigger.setBounds(top.removeFromRight(toggleWidth("MIDI retrigger")));
 
     r.removeFromTop(8);
     if (mb) { mbPanel.setBounds(r); return; }
 
-    auto knobs = r.removeFromBottom(120);
+    auto knobs = r.removeFromBottom(92);   // compact knobs: more room for the curve
     curve.setBounds(r.withTrimmedBottom(8));
 
     const int w = knobs.getWidth() / 5;
     auto place = [&](juce::Label& l, juce::Slider& s) {
         auto c = knobs.removeFromLeft(w);
-        l.setBounds(c.removeFromTop(18));
+        l.setBounds(c.removeFromTop(16));
         s.setBounds(c);
     };
     const auto rateColumn = knobs.withWidth(w);
     place(rateL, rate);
     // dotted / triplet sit either side of the rate readout, like the note-value buttons on Xfer's LFO Tool
-    dotBtn.setBounds(rateColumn.getX() + 8, rateColumn.getBottom() - 24, 26, 22);
-    tripBtn.setBounds(rateColumn.getRight() - 34, rateColumn.getBottom() - 24, 26, 22);
+    dotBtn.setBounds(rateColumn.getX() + 8, rateColumn.getBottom() - 22, 24, 20);
+    tripBtn.setBounds(rateColumn.getRight() - 32, rateColumn.getBottom() - 22, 24, 20);
     place(depthL, depth);
     place(smoothL, smooth);
     place(offsetL, offset);

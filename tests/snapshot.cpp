@@ -393,8 +393,150 @@ static bool gridStopsRegression()
     return ok;
 }
 
+// Switching theme repaints the curve editor's cached drawing (grid + curve layers) in the new colours.
+static bool themeRegression()
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    Envelope floorCurve; floorCurve.points = { { 0.f, 0.f }, { 1.f, 0.f } };   // nothing drawn over the background
+    p.setEnvelope(floorCurve, 0);
+    EnvelopeEditor ed(p, 0);
+    ed.setBounds(0, 0, 400, 240);
+    bool ok = true;
+    auto check = [&](bool cond, const char* what) { std::printf("  %-64s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
+    auto luma = [&] { auto c = ed.createComponentSnapshot(ed.getLocalBounds(), true, 1.0f).getPixelAt(318, 130); return c.getBrightness(); };
+    std::printf("theme switch:\n");
+    paper::setDark(false);
+    const float light = luma();
+    paper::setDark(true);
+    const float dark = luma();
+    paper::setDark(false);
+    const float lightAgain = luma();
+    std::printf("  background brightness: light %.2f, dark %.2f, light again %.2f\n", light, dark, lightAgain);
+    check(light > 0.7f, "light theme: bright curve area");
+    check(dark < 0.25f, "dark theme: dark curve area (the cached drawing was redrawn)");
+    check(lightAgain > 0.7f, "and back to light again");
+    return ok;
+}
+
+// The grey "actual gain" line also appears for a phase offset, slid by that offset.
+static bool offsetPreviewRegression(const juce::File& dir)
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    EnvelopeEditor ed(p, 0);
+    ed.setBounds(0, 0, 600, 300);
+    bool ok = true;
+    auto check = [&](bool cond, const char* what) { std::printf("  %-64s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
+    std::printf("offset preview:\n");
+
+    auto snap = [&] { return ed.createComponentSnapshot(ed.getLocalBounds(), true, 1.0f); };
+    auto differingPixels = [](const juce::Image& a, const juce::Image& b) {
+        int n = 0;
+        for (int y = 0; y < a.getHeight(); ++y)
+            for (int x = 0; x < a.getWidth(); ++x)
+                if (a.getPixelAt(x, y) != b.getPixelAt(x, y)) ++n;
+        return n;
+    };
+
+    auto noOffset = snap();
+    auto* off = p.apvts.getParameter("offset");
+    off->setValueNotifyingHost(off->convertTo0to1(0.25f));
+    auto shifted = snap();
+    save(shifted, dir.getChildFile("offset_preview.png"));
+    off->setValueNotifyingHost(off->convertTo0to1(0.5f));
+    auto shiftedMore = snap();
+    off->setValueNotifyingHost(0.f);
+    auto back = snap();
+
+    const int d1 = differingPixels(noOffset, shifted), d2 = differingPixels(shifted, shiftedMore), d3 = differingPixels(noOffset, back);
+    std::printf("  changed pixels: offset 0.25 vs none %d, 0.5 vs 0.25 %d, back to 0 vs none %d\n", d1, d2, d3);
+    check(d1 > 300, "a phase offset draws the grey line");
+    check(d2 > 300, "a different offset moves it");
+    check(d3 == 0, "offset back to 0 removes it again");
+    return ok;
+}
+
+// Header: nothing overlaps, the light/dark button sits just left of Reset, and dark is the default.
+static bool headerRegression()
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    FreeLfoEditor ed(p);
+    ed.setSize(960, 610);
+    bool ok = true;
+    auto check = [&](bool cond, const char* what) { std::printf("  %-64s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
+    std::printf("header:\n");
+    check(paper::dark, "dark mode is the default");
+
+    juce::Component *theme = nullptr, *reset = nullptr, *grid = nullptr;
+    std::vector<juce::Component*> row;
+    for (int i = 0; i < ed.getNumChildComponents(); ++i)
+    {
+        auto* c = ed.getChildComponent(i);
+        if (!c->isVisible() || c->getY() > 44 || c->getHeight() > 40) continue;
+        row.push_back(c);
+        if (dynamic_cast<ThemeToggle*>(c)) theme = c;
+        if (auto* b = dynamic_cast<juce::TextButton*>(c)) if (b->getButtonText() == "Reset") reset = c;
+        if (auto* s = dynamic_cast<juce::Slider*>(c)) if (s->isBar()) grid = c;
+    }
+    check(theme && reset && grid, "found the theme button, Reset and the grid number");
+    if (!(theme && reset && grid)) return false;
+    bool overlap = false;
+    for (size_t i = 0; i < row.size(); ++i)
+        for (size_t j = i + 1; j < row.size(); ++j)
+            if (row[i]->getBounds().intersects(row[j]->getBounds())) overlap = true;
+    check(!overlap, "no header items overlap");
+    const int gapToReset = reset->getX() - theme->getRight();
+    const int gapToGrid = theme->getX() - grid->getRight();
+    std::printf("  gaps: theme -> Reset %d px, grid -> theme %d px\n", gapToReset, gapToGrid);
+    check(gapToReset > 4 && gapToReset <= 14, "the light/dark button sits right next to Reset, on its left");
+    check(gapToGrid >= 12, "...with room between it and the grid number");
+    return ok;
+}
+
+// The grid is easy to see: a line is clearly different from the background between lines, in both themes.
+static bool gridContrastRegression()
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    Envelope floorCurve; floorCurve.points = { { 0.f, 0.f }, { 1.f, 0.f } };   // a flat curve at the bottom: nothing is drawn over the grid
+    p.setEnvelope(floorCurve, 0);
+    EnvelopeEditor ed(p, 0);
+    ed.setBounds(0, 0, 600, 300);
+    bool ok = true;
+    auto check = [&](bool cond, const char* what) { std::printf("  %-64s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
+    std::printf("grid visibility:\n");
+    const bool wasDark = paper::dark;
+    for (bool dark : { true, false })
+    {
+        paper::setDark(dark);
+        auto img = ed.createComponentSnapshot(ed.getLocalBounds(), true, 1.0f);
+        const int y = 120;                                // lines at 10/16 (minor) and 12/16 (major): clear of the playhead trail
+        const int majorX = (int) std::round(10.f + 0.75f * 580.f), minorX = (int) std::round(10.f + (10.f / 16.f) * 580.f), emptyX = majorX + 14;
+        const float bgLuma = img.getPixelAt(emptyX, y).getBrightness();
+        auto strongest = [&](int cx) { // a 1 px line can straddle two pixel columns: take the strongest of the neighbourhood
+            float best = 0.f;
+            for (int dx = -1; dx <= 1; ++dx) best = std::max(best, std::fabs(img.getPixelAt(cx + dx, y).getBrightness() - bgLuma));
+            return best;
+        };
+        const float major = strongest(majorX), minor = strongest(minorX);
+        std::printf("  %s: contrast against the background: major line %.3f, minor line %.3f\n", dark ? "dark " : "light", major, minor);
+        check(major > 0.10f, dark ? "dark theme: major grid lines stand out" : "light theme: major grid lines stand out");
+        check(minor > 0.045f, dark ? "dark theme: minor grid lines are visible" : "light theme: minor grid lines are visible");
+        check(major > minor, "major lines are stronger than minor ones");
+    }
+    paper::setDark(wasDark);
+    return ok;
+}
+
 int main(int argc, char** argv)
 {
+    setenv("FREELFO_NO_PREFS", "1", 1); // never touch the user's saved light / dark preference
     juce::ScopedJuceInitialiser_GUI init;
     const juce::File dir(argc > 1 ? argv[1] : ".");
     g_outDir = dir.getFullPathName();
@@ -435,6 +577,26 @@ int main(int argc, char** argv)
     run(400);
     juce::MessageManager::getInstance()->runDispatchLoopUntil(100);
     save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("multiband.png"));
+
+    // Dark theme: the same two tabs
+    {
+        auto* fe = static_cast<FreeLfoEditor*>(ed.get());
+        fe->setDarkMode(true, false);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+        run(30);
+        save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("dark_multiband.png"));
+        setParam(p, "mb", 0.f);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+        run(30);
+        save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("dark_single.png"));
+        fe->setDarkMode(false, false);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(200);
+        run(30);
+        save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("light_single.png"));
+        setParam(p, "mb", 1.f);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+        run(30);
+    }
 
     // Make the bands' curves different so the faint reference curves are easy to see, then look at the mid band
     {
@@ -512,5 +674,9 @@ int main(int argc, char** argv)
     const bool g = snapRegression();
     const bool h = rateReadoutRegression();
     const bool k = gridStopsRegression();
-    return a && b && c && d && f && g && h && k ? 0 : 1;
+    const bool m = themeRegression();
+    const bool n = offsetPreviewRegression(dir);
+    const bool o = headerRegression();
+    const bool q = gridContrastRegression();
+    return a && b && c && d && f && g && h && k && m && n && o && q ? 0 : 1;
 }

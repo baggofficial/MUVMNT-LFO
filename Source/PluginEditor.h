@@ -12,6 +12,7 @@ public:
     ~FreeLfoEditor() override { stopTimer(); proc.editorOpen.store(false); setLookAndFeel(nullptr); }
     void paint(juce::Graphics&) override;
     void resized() override;
+    void setDarkMode(bool dark, bool persist = true); // light / dark theme; persist = remember it for next time
     void selectBandForSnapshot(int band) { mbPanel.selectBand(band); }
 
 private:
@@ -25,6 +26,7 @@ private:
     juce::ToggleButton retrigger { "MIDI retrigger" }, snap { "Snap" }, bezier { "Bezier handles" };
     juce::TextButton reset { "Reset" }, tabSingle { "Single" }, tabMulti { "Multiband" };
     juce::TextButton dotBtn { juce::String::fromUTF8("\xE2\x80\xA2") }, tripBtn { "3" }; // dotted / triplet, like Xfer's LFO Tool
+    ThemeToggle themeBtn;
     juce::Slider gridBox;                                                                   // draggable number: grid lines + snap
     juce::Label rateL, depthL, smoothL, offsetL, waveL;
 

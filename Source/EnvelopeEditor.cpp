@@ -7,6 +7,7 @@ EnvelopeEditor::EnvelopeEditor(FreeLfoProcessor& p, int slotIndex)
 {
     depthP = proc.apvts.getRawParameterValue(bandId("depth"));
     smoothP = proc.apvts.getRawParameterValue(bandId("smooth"));
+    offsetP = slot == 0 ? proc.apvts.getRawParameterValue("offset") : nullptr;
     if (slot > 0)
         for (int other = 1; other <= 3; ++other)
             if (other != slot) ghost[other - 1] = proc.getEnvelope(other);
@@ -18,6 +19,7 @@ void EnvelopeEditor::setSlot(int newSlot)
     slot = newSlot;
     depthP = proc.apvts.getRawParameterValue(bandId("depth"));
     smoothP = proc.apvts.getRawParameterValue(bandId("smooth"));
+    offsetP = slot == 0 ? proc.apvts.getRawParameterValue("offset") : nullptr;
     selected = -1; dragPoint = -1; dragKind = 0; dragSeg = -1; controlsHidden = false;
     env = proc.getEnvelope(slot);
     for (int other = 1; other <= 3; ++other)
@@ -196,17 +198,20 @@ void EnvelopeEditor::renderGrid(juce::Graphics& g)
     // grid
     const int gx = gridX(), gy = gridY();
     const int strong = juce::jmax(1, gx / 4); // every quarter of the cycle is a bit stronger
+    // A 1 px line centred between two pixels is smeared over both and looks weak: snap lines onto whole pixels
+    auto crisp = [](float v) { return std::floor(v) + 0.5f; };
     for (int i = 0; i <= gx; ++i)
     {
-        g.setColour(juce::Colours::black.withAlpha(i % strong == 0 ? 0.14f : 0.06f));
+        g.setColour(i % strong == 0 ? paper::gridMajor() : paper::gridMinor());
         auto a = toScreen((float) i / gx, 0.f), b = toScreen((float) i / gx, 1.f);
-        g.drawLine(a.x, a.y, b.x, b.y);
+        g.drawLine(crisp(a.x), a.y, crisp(b.x), b.y, 1.f);
     }
+    const int strongY = juce::jmax(1, gy / 2); // the middle and the top / bottom edges
     for (int i = 0; i <= gy; ++i)
     {
-        g.setColour(juce::Colours::black.withAlpha(0.07f));
+        g.setColour(i % strongY == 0 ? paper::gridMajor() : paper::gridMinor());
         auto a = toScreen(0.f, (float) i / gy), b = toScreen(1.f, (float) i / gy);
-        g.drawLine(a.x, a.y, b.x, b.y);
+        g.drawLine(a.x, crisp(a.y), b.x, crisp(b.y), 1.f);
     }
 
 }
@@ -284,21 +289,37 @@ void EnvelopeEditor::renderCurveLayer(juce::Graphics& g)
     }
     fill.lineTo(toScreen(1.f, 0.f));
     fill.closeSubPath();
-    g.setColour(mainColour().withAlpha(0.12f));
-    g.fillPath(fill);
-    g.setColour(mainColour());
-    g.strokePath(line, juce::PathStrokeType(2.5f, juce::PathStrokeType::curved));
+    // Under the curve: a vertical gradient that fades from the curve colour at the top to almost nothing at the bottom
+    const auto curveColour = mainColour();
+    {
+        const float yTop = toScreen(0.f, 1.f).y, yBottom = toScreen(0.f, 0.f).y;
+        juce::ColourGradient fade(curveColour.withAlpha(paper::dark ? 0.36f : 0.28f), 0.f, yTop,
+                                  curveColour.withAlpha(paper::dark ? 0.03f : 0.02f), 0.f, yBottom, false);
+        g.setGradientFill(fade);
+        g.fillPath(fill);
+    }
+    // A soft glow around the line: a few wider, fainter strokes underneath it
+    for (const auto glow : { std::pair<float, float> { 11.f, 0.05f }, { 7.f, 0.09f }, { 4.5f, 0.15f } })
+    {
+        g.setColour(curveColour.withAlpha(glow.second * (paper::dark ? 1.3f : 0.7f)));
+        g.strokePath(line, juce::PathStrokeType(glow.first, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+    g.setColour(curveColour);
+    g.strokePath(line, juce::PathStrokeType(2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
-    // Actual output gain: the curve after depth and smoothing, as the audio thread will apply it.
+    // Actual output gain: the curve after depth, smoothing and phase offset, as the audio thread will apply it.
     // Only drawn when it differs from the curve itself.
     const float depth = depthP->load();
     const float smoothMs = smoothP->load();
-    const bool differs = depth < 0.999f || smoothMs > 0.05f;
+    const float offset = offsetP != nullptr ? offsetP->load() : 0.f;
+    const bool differs = depth < 0.999f || smoothMs > 0.05f || offset > 0.0005f;
     if (differs)
     {
         constexpr int N = 512;
         float v[N];
-        for (int i = 0; i < N; ++i) v[i] = env.evaluate((float) i / N);
+        // Phase offset: at cycle position x the audio reads the curve at x + offset, so the grey line is the curve
+        // slid to the left by the offset (and wrapped round)
+        for (int i = 0; i < N; ++i) v[i] = env.evaluate((float) i / N + offset);
 
         const double dt = cycleSecs() / N;
         const float coef = smoothMs < 0.01f ? 0.f : (float) std::exp(-dt / (smoothMs * 0.001));
@@ -377,8 +398,10 @@ size_t EnvelopeEditor::computeKey() const
     for (auto& pt : env.points) { mix(pt.x); mix(pt.y); mix(pt.inDx); mix(pt.inDy); mix(pt.outDx); mix(pt.outDy); mix(pt.bend); mix(pt.bendX); }
     mix(depthP->load());
     mix(smoothP->load());
+    mix(offsetP != nullptr ? offsetP->load() : 0.f);
     mix((float) cycleSecs());
     mix(proc.apvts.getRawParameterValue("waveOpacity")->load());
+    mix((float) paper::version);
     mix((float) selected); mix((float) dragKind); mix((float) dragSeg); mix(controlsHidden ? 1.f : 0.f);
     if (slot > 0)
     {
@@ -419,7 +442,7 @@ void EnvelopeEditor::frame()
     const unsigned blk = proc.blockCounter.load(std::memory_order_relaxed);
     const bool audioMoving = blk != lastBlock || (now - proc.uiPhaseTimeMs.load(std::memory_order_relaxed)) < 60.0;
     lastBlock = blk;
-    if (audioMoving || computeKey() != curveKey || cachedGrid != gridX()) repaint();
+    if (audioMoving || computeKey() != curveKey || cachedGrid != gridX() || cachedTheme != paper::version) repaint();
 }
 
 void EnvelopeEditor::paint(juce::Graphics& g)
@@ -435,10 +458,11 @@ void EnvelopeEditor::paint(juce::Graphics& g)
     };
 
     const bool sizeChanged = !gridImg.isValid() || gridImg.getWidth() != pw || gridImg.getHeight() != ph;
-    if (sizeChanged || cachedGrid != gridX()) // the grid is cached too: redraw when its line count changes
+    if (sizeChanged || cachedGrid != gridX() || cachedTheme != paper::version) // the grid is cached too: redraw when its lines or the theme change
     {
         rebuild(gridImg, [this](juce::Graphics& ig) { renderGrid(ig); });
         cachedGrid = gridX();
+        cachedTheme = paper::version;
         curveKey = 0;
     }
 
@@ -450,7 +474,7 @@ void EnvelopeEditor::paint(juce::Graphics& g)
     drawWaveforms(g);
     g.drawImageTransformed(curveImg, unscale);
 
-    // playhead
+    // playhead: just a thin line (nothing else is redrawn per frame)
     const float phase = predictedPhase();
     auto top = toScreen(phase, 1.f), bottom = toScreen(phase, 0.f);
     g.setColour(paper::text.withAlpha(0.7f));
