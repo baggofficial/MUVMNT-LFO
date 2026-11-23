@@ -33,6 +33,22 @@ static int toggleWidth(const juce::String& text)
     return (int) std::ceil(ga.getBoundingBox(0, -1, true).getWidth()) + 6 + 30 + 2;
 }
 
+static juce::Point<int> loadSizePreference()
+{
+    if (!usePrefs()) return { 960, 610 };
+    juce::PropertiesFile f(uiPrefsOptions());
+    return { juce::jlimit(760, 2000, f.getIntValue("width", 960)), juce::jlimit(500, 1300, f.getIntValue("height", 610)) };
+}
+
+static void saveSizePreference(int w, int h)
+{
+    if (!usePrefs()) return;
+    juce::PropertiesFile f(uiPrefsOptions());
+    f.setValue("width", w);
+    f.setValue("height", h);
+    f.saveIfNeeded();
+}
+
 static void saveDarkPreference(bool dark)
 {
     if (!usePrefs()) return;
@@ -48,9 +64,15 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     laf.applyColours();
     setLookAndFeel(&laf);
     proc.editorOpen.store(true);
-    setSize(960, 610);
+    setResizable(true, true);
+    setResizeLimits(760, 500, 2000, 1300);
+    const auto size = loadSizePreference();
+    setSize(size.x, size.y);
     addAndMakeVisible(curve);
     addAndMakeVisible(mbPanel);
+    addChildComponent(mbPanel.modeBox);    // the multiband tab's Sync/Hz and band-count dropdowns sit in this header, like the single tab's
+    addChildComponent(mbPanel.bandsBox);
+    addChildComponent(mbPanel.linkBtn);
 
     mode.addItemList({ "Sync", "Hz" }, 1);
     addAndMakeVisible(mode);
@@ -154,6 +176,9 @@ void FreeLfoEditor::updateTab()
                                                                         &rateL, &depthL, &smoothL, &offsetL, &waveL })
         c->setVisible(!mb);
     mbPanel.setVisible(mb);
+    mbPanel.modeBox.setVisible(mb);
+    mbPanel.bandsBox.setVisible(mb);
+    mbPanel.linkBtn.setVisible(mb);
 
     if (mb) { retrigger.setVisible(false); dotBtn.setVisible(false); tripBtn.setVisible(false); }
     else bindRate(); // restores the retrigger switch for Hz mode, and relayouts
@@ -199,6 +224,14 @@ void FreeLfoEditor::paint(juce::Graphics& g)
 
 }
 
+FreeLfoEditor::~FreeLfoEditor()
+{
+    saveSizePreference(getWidth(), getHeight());   // remembered for next time
+    stopTimer();
+    proc.editorOpen.store(false);
+    setLookAndFeel(nullptr);
+}
+
 void FreeLfoEditor::resized()
 {
     const bool mb = multibandOn();
@@ -208,6 +241,14 @@ void FreeLfoEditor::resized()
     tabMulti.setBounds(top.removeFromLeft(96).reduced(0, 4));
     top.removeFromLeft(14);
     if (!mb) mode.setBounds(top.removeFromLeft(90).reduced(0, 4));
+    else
+    {
+        mbPanel.modeBox.setBounds(top.removeFromLeft(90).reduced(0, 4));
+        top.removeFromLeft(8);
+        mbPanel.bandsBox.setBounds(top.removeFromLeft(100).reduced(0, 4));
+        top.removeFromLeft(6);
+        mbPanel.linkBtn.setBounds(top.removeFromLeft(30).withSizeKeepingCentre(22, 22));
+    }
     // Right-hand group, right to left: Reset | light-dark button | Snap switch + grid number | Bezier switch | retrigger.
     // Items of a pair sit close together; groups are an even 16 px apart.
     constexpr int gap = 16;
@@ -238,8 +279,8 @@ void FreeLfoEditor::resized()
     const auto rateColumn = knobs.withWidth(w);
     place(rateL, rate);
     // dotted / triplet sit either side of the rate readout, like the note-value buttons on Xfer's LFO Tool
-    dotBtn.setBounds(rateColumn.getX() + 8, rateColumn.getBottom() - 22, 24, 20);
-    tripBtn.setBounds(rateColumn.getRight() - 32, rateColumn.getBottom() - 22, 24, 20);
+    dotBtn.setBounds(rateColumn.getCentreX() - 56, rateColumn.getBottom() - 22, 24, 20);
+    tripBtn.setBounds(rateColumn.getCentreX() + 32, rateColumn.getBottom() - 22, 24, 20);
     place(depthL, depth);
     place(smoothL, smooth);
     place(offsetL, offset);

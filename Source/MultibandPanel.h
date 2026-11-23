@@ -41,6 +41,28 @@ private:
 };
 
 // The whole Multiband tab: strip, one curve editor (for the selected band) and that band's controls.
+// A chain-link icon toggle: blue when on, grey when off.
+class LinkButton : public juce::ToggleButton
+{
+public:
+    LinkButton() { setClickingTogglesState(true); setMouseCursor(juce::MouseCursor::PointingHandCursor); }
+    void paint(juce::Graphics& g) override
+    {
+        const bool on = getToggleState();
+        auto c = on ? paper::accent : paper::sub.withAlpha(isMouseOver() ? 0.9f : 0.6f);
+        const auto ctr = getLocalBounds().toFloat().getCentre();
+        g.setColour(c);
+        for (int s = -1; s <= 1; s += 2)
+        {
+            juce::Path link;
+            link.addRoundedRectangle(-5.f, -2.7f, 10.f, 5.4f, 2.7f);
+            g.strokePath(link, juce::PathStrokeType(1.5f),
+                         juce::AffineTransform::rotation(-juce::MathConstants<float>::pi / 4.f)
+                             .translated(ctr.x + (float) s * 1.9f, ctr.y - (float) s * 1.9f));
+        }
+    }
+};
+
 class MultibandPanel : public juce::Component, private juce::Timer
 {
 public:
@@ -52,6 +74,11 @@ public:
     void selectBand(int band); // which band's curve is edited (also used by the headless snapshot tool)
     void setSnap(bool on) { curve.snapToGrid = on; }
 
+public:
+    // These two live in the editor's header row (the editor adopts them), so they are public.
+    juce::ComboBox modeBox, bandsBox;
+    LinkButton linkBtn;
+
 private:
     void timerCallback() override;
     int signature() const;
@@ -61,17 +88,15 @@ private:
     BandStrip strip;
     EnvelopeEditor curve;
 
-    juce::ComboBox modeBox, bandsBox;
-    juce::ToggleButton linkBtn { "Link rates" };
     juce::TextButton dotBtn { juce::String::fromUTF8("\xE2\x80\xA2") }, tripBtn { "3" };
-    juce::Slider rate, depth, smooth, wave;
-    juce::Label bandL, rateL, depthL, smoothL, waveL;
+    juce::Slider rate, depth, smooth, offset, wave;
+    juce::Label rateL, depthL, smoothL, offsetL, waveL;
 
     using CA = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
     using SA = juce::AudioProcessorValueTreeState::SliderAttachment;
     using BA = juce::AudioProcessorValueTreeState::ButtonAttachment;
     std::unique_ptr<CA> modeA, bandsA;
-    std::unique_ptr<SA> rateA, depthA, smoothA, waveA;
+    std::unique_ptr<SA> rateA, depthA, smoothA, offsetA, waveA;
     std::unique_ptr<BA> linkA, dotA, tripA;
 
     int selected = 0;

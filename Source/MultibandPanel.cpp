@@ -313,9 +313,6 @@ MultibandPanel::MultibandPanel(FreeLfoProcessor& p) : proc(p), strip(p), curve(p
 
     modeBox.addItemList({ "Sync", "Hz" }, 1);
     bandsBox.addItemList({ "2 bands", "3 bands" }, 1);
-    addAndMakeVisible(modeBox);
-    addAndMakeVisible(bandsBox);
-    addAndMakeVisible(linkBtn);
     for (auto* b : { &dotBtn, &tripBtn }) { b->setClickingTogglesState(true); b->onStateChange = [this] { rate.updateText(); }; addAndMakeVisible(*b); }
     dotBtn.onClick = [this] { if (dotBtn.getToggleState()) tripBtn.setToggleState(false, juce::sendNotificationSync); rate.updateText(); };
     tripBtn.onClick = [this] { if (tripBtn.getToggleState()) dotBtn.setToggleState(false, juce::sendNotificationSync); rate.updateText(); };
@@ -331,12 +328,10 @@ MultibandPanel::MultibandPanel(FreeLfoProcessor& p) : proc(p), strip(p), curve(p
     setup(rate, rateL, "Rate");
     setup(depth, depthL, "Depth");
     setup(smooth, smoothL, "Smooth");
+    setup(offset, offsetL, "Offset");
     setup(wave, waveL, "Waveform");
     smooth.setTextValueSuffix(" ms");
 
-    bandL.setJustificationType(juce::Justification::centredLeft);
-    bandL.setFont(juce::FontOptions(15.f, juce::Font::bold));
-    addAndMakeVisible(bandL);
 
     bandsA = std::make_unique<CA>(proc.apvts, "mbBands", bandsBox);
     linkA = std::make_unique<BA>(proc.apvts, "mbLink", linkBtn);
@@ -376,7 +371,7 @@ void MultibandPanel::rebind()
     const int eff = link ? (three ? 1 : 0) : selected; // linked bands all follow one band's rate settings
     const juce::String es = FreeLfoProcessor::bandSuffix(eff), ss = FreeLfoProcessor::bandSuffix(selected);
 
-    rateA.reset(); modeA.reset(); depthA.reset(); smoothA.reset(); dotA.reset(); tripA.reset();
+    rateA.reset(); modeA.reset(); depthA.reset(); smoothA.reset(); offsetA.reset(); dotA.reset(); tripA.reset();
 
     modeA = std::make_unique<CA>(proc.apvts, "mode" + es, modeBox);
     const bool syncMode = proc.apvts.getRawParameterValue("mode" + es)->load() < 0.5f;
@@ -402,13 +397,12 @@ void MultibandPanel::rebind()
 
     depthA = std::make_unique<SA>(proc.apvts, "depth" + ss, depth);
     smoothA = std::make_unique<SA>(proc.apvts, "smooth" + ss, smooth);
+    offsetA = std::make_unique<SA>(proc.apvts, "offset" + ss, offset);
 
     curve.setSlot(selected + 1);
     strip.setSelected(selected);
 
     const char* names[3] = { "Low band", "Mid band", "High band" };
-    bandL.setText(names[selected], juce::dontSendNotification);
-    bandL.setColour(juce::Label::textColourId, paper::bandText(selected));
     rateL.setText(link ? "Rate (all bands)" : "Rate", juce::dontSendNotification);
 
     lastSig = signature();
@@ -422,18 +416,8 @@ void MultibandPanel::resized()
     auto knobs = r.removeFromBottom(92);   // compact knobs: more room for the curve
     curve.setBounds(r.withTrimmedBottom(8));
 
-    // left column: band name, then Sync/Hz and the band count side by side, then the link switch
-    auto left = knobs.removeFromLeft(168).reduced(0, 4);
-    bandL.setBounds(left.removeFromTop(20));
-    left.removeFromTop(4);
-    auto combos = left.removeFromTop(26);
-    modeBox.setBounds(combos.removeFromLeft(78));
-    combos.removeFromLeft(6);
-    bandsBox.setBounds(combos);
-    left.removeFromTop(6);
-    linkBtn.setBounds(left.removeFromTop(24));
-
-    const int w = knobs.getWidth() / 4;
+    // same five knob columns as the single tab; the dropdowns and the link chain live in the editor's header
+    const int w = knobs.getWidth() / 5;
     auto place = [&](juce::Label& l, juce::Slider& s) {
         auto c = knobs.removeFromLeft(w);
         l.setBounds(c.removeFromTop(16));
@@ -441,9 +425,10 @@ void MultibandPanel::resized()
     };
     const auto rateColumn = knobs.withWidth(w);
     place(rateL, rate);
-    dotBtn.setBounds(rateColumn.getX() + 10, rateColumn.getBottom() - 22, 24, 20);
-    tripBtn.setBounds(rateColumn.getRight() - 28, rateColumn.getBottom() - 22, 24, 20);
+    dotBtn.setBounds(rateColumn.getCentreX() - 56, rateColumn.getBottom() - 22, 24, 20);
+    tripBtn.setBounds(rateColumn.getCentreX() + 32, rateColumn.getBottom() - 22, 24, 20);
     place(depthL, depth);
     place(smoothL, smooth);
+    place(offsetL, offset);
     place(waveL, wave);
 }

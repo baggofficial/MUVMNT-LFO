@@ -128,7 +128,7 @@ private:
     };
     EnvSlot slots[numSlots];
 
-    struct BandCtl { std::atomic<float> *mode, *division, *hz, *depth, *smooth, *dotted, *triplet; };
+    struct BandCtl { std::atomic<float> *mode, *division, *hz, *depth, *smooth, *dotted, *triplet, *offset; };
     BandCtl band[3] {};
     std::atomic<float> *pMb = nullptr, *pBands = nullptr, *pXLow = nullptr, *pXHigh = nullptr,
                        *pLink = nullptr, *pSlopeLow = nullptr, *pSlopeHigh = nullptr;

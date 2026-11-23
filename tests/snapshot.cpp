@@ -534,6 +534,48 @@ static bool gridContrastRegression()
     return ok;
 }
 
+// The window can be resized: every control must stay inside it, without overlapping, at the smallest and a large size.
+static bool resizeRegression()
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    bool ok = true;
+    std::printf("resizing:\n");
+    for (int mb = 0; mb < 2; ++mb)
+    {
+        FreeLfoEditor ed(p);
+        ed.setSize(960, 610);
+        if (mb) { setParam(p, "mb", 1.f); juce::MessageManager::getInstance()->runDispatchLoopUntil(300); }
+        const int sizes[][2] = { { 760, 500 }, { 960, 610 }, { 1500, 900 }, { 2000, 1300 } };
+        for (auto& sz : sizes)
+        {
+            ed.setSize(sz[0], sz[1]);
+            const auto b = ed.getLocalBounds();
+            bool inside = true, noOverlap = true;
+            std::vector<juce::Rectangle<int>> r;
+            for (int i = 0; i < ed.getNumChildComponents(); ++i)
+            {
+                auto* c = ed.getChildComponent(i);
+                if (!c->isVisible()) continue;
+                inside = inside && b.contains(c->getBounds());
+                if (dynamic_cast<juce::Slider*>(c) || dynamic_cast<juce::ComboBox*>(c)) r.push_back(c->getBounds());
+            }
+            for (size_t i = 0; i < r.size(); ++i)
+                for (size_t j = i + 1; j < r.size(); ++j)
+                    if (r[i].intersects(r[j])) noOverlap = false;
+            const bool good = inside && noOverlap && ed.getWidth() == sz[0];
+            std::printf("  %s %dx%d  %s\n", mb ? "multiband" : "single   ", sz[0], sz[1], good ? "ok" : "FAILED");
+            ok = ok && good;
+            if (sz[0] == 760 || sz[0] == 1500)
+                save(ed.createComponentSnapshot(ed.getLocalBounds(), true, 1.0f),
+                     juce::File(g_outDir).getChildFile(juce::String(mb ? "resize_mb_" : "resize_single_") + juce::String(sz[0]) + ".png"));
+        }
+    }
+    setParam(p, "mb", 0.f);
+    return ok;
+}
+
 int main(int argc, char** argv)
 {
     setenv("FREELFO_NO_PREFS", "1", 1); // never touch the user's saved light / dark preference
@@ -678,5 +720,6 @@ int main(int argc, char** argv)
     const bool n = offsetPreviewRegression(dir);
     const bool o = headerRegression();
     const bool q = gridContrastRegression();
-    return a && b && c && d && f && g && h && k && m && n && o && q ? 0 : 1;
+    const bool rz = resizeRegression();
+    return a && b && c && d && f && g && h && k && m && n && o && q && rz ? 0 : 1;
 }

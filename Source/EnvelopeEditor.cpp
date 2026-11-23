@@ -7,7 +7,7 @@ EnvelopeEditor::EnvelopeEditor(FreeLfoProcessor& p, int slotIndex)
 {
     depthP = proc.apvts.getRawParameterValue(bandId("depth"));
     smoothP = proc.apvts.getRawParameterValue(bandId("smooth"));
-    offsetP = slot == 0 ? proc.apvts.getRawParameterValue("offset") : nullptr;
+    offsetP = proc.apvts.getRawParameterValue(bandId("offset"));
     if (slot > 0)
         for (int other = 1; other <= 3; ++other)
             if (other != slot) ghost[other - 1] = proc.getEnvelope(other);
@@ -19,7 +19,7 @@ void EnvelopeEditor::setSlot(int newSlot)
     slot = newSlot;
     depthP = proc.apvts.getRawParameterValue(bandId("depth"));
     smoothP = proc.apvts.getRawParameterValue(bandId("smooth"));
-    offsetP = slot == 0 ? proc.apvts.getRawParameterValue("offset") : nullptr;
+    offsetP = proc.apvts.getRawParameterValue(bandId("offset"));
     selected = -1; dragPoint = -1; dragKind = 0; dragSeg = -1; controlsHidden = false;
     env = proc.getEnvelope(slot);
     for (int other = 1; other <= 3; ++other)

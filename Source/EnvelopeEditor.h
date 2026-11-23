@@ -75,7 +75,7 @@ private:
     int slot = 0;
     std::atomic<float>* depthP = nullptr;
     std::atomic<float>* smoothP = nullptr;
-    std::atomic<float>* offsetP = nullptr; // phase offset: only the single-band curve has one
+    std::atomic<float>* offsetP = nullptr; // phase offset (each band has its own)
     Envelope env;
     Envelope ghost[3]; // the other bands' curves (slots 1..3), drawn faintly for reference; not editable here
     int selected = -1;  // point whose Bezier handles are shown

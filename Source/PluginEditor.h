@@ -9,7 +9,7 @@ class FreeLfoEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
     explicit FreeLfoEditor(FreeLfoProcessor&);
-    ~FreeLfoEditor() override { stopTimer(); proc.editorOpen.store(false); setLookAndFeel(nullptr); }
+    ~FreeLfoEditor() override;
     void paint(juce::Graphics&) override;
     void resized() override;
     void setDarkMode(bool dark, bool persist = true); // light / dark theme; persist = remember it for next time

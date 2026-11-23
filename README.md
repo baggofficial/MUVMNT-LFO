@@ -40,7 +40,7 @@ It is an independent, from-scratch implementation inspired by the workflow of Xf
 **Multiband**
 - Split into **low / mid / high** (or just low / high) with draggable split lines on a frequency strip.
 - Each split has its own crossover slope: **6, 12, 24, 48, 72 or 96 dB/octave** (Linkwitz-Riley, so the bands add back to a flat response).
-- Every band has its **own curve**, its own **rate** (or link them all), its own depth and smoothing, and a **solo** button; solo several bands at once.
+- Every band has its **own curve**, its own **rate** (or link them all), its own depth, smoothing and phase offset, and a **solo** button; solo several bands at once.
 - The strip draws each band's real filter response, so you can see how the bands overlap at each slope.
 - Defaults are a house-style sidechain pump where the lows stay ducked longest and the highs recover fastest.
 
@@ -49,6 +49,7 @@ It is an independent, from-scratch implementation inspired by the workflow of Xf
 - An optional sidechain input is drawn too (display only, see [limitations](#known-limitations-and-roadmap)).
 - A grey line shows the **actual gain** after Depth, Smooth and Offset.
 - Light and dark themes (dark is the default, the choice is remembered).
+- **Resizable window** (760x500 up to 2000x1300): drag the bottom-right corner; the size is remembered.
 
 ![Multiband, dark theme](docs/images/multiband-dark.png)
 
@@ -171,7 +172,7 @@ docs/images/            screenshots used in this README
 - **Not hardware-tested yet.** It has been developed on macOS and tested offline against a simulated host. Windows builds come from CI; hands-on testing in real DAWs (starting with FL Studio) is still to do.
 - **The sidechain input is display-only.** It lets you see a kick against your curve, but it does not trigger the LFO yet. Use the host tempo, or MIDI in Hz mode.
 - **Structural switches dip the audio** for about 8 ms (the tab, the band count and the crossover slopes). It is click-free but not seamless; change them when the plugin is not playing a critical passage.
-- **Not built yet:** presets and a preset browser, undo/redo and copy/paste of curves, a resizable window, audio or envelope triggering, other formats (AU, AAX, CLAP).
+- **Not built yet:** presets and a preset browser, undo/redo and copy/paste of curves, audio or envelope triggering, other formats (AU, AAX, CLAP).
 
 ## License and credits
 

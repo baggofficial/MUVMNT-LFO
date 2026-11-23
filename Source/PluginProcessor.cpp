@@ -70,6 +70,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout FreeLfoProcessor::createLayo
                                                     NormalisableRange<float>(0.f, 1.f, 0.001f), 1.f));
         l.add(std::make_unique<AudioParameterFloat>(ParameterID { "smooth" + sfx, 1 }, nm + " Smooth (ms)",
                                                     NormalisableRange<float>(0.f, 50.f, 0.01f, 0.5f), 0.f));
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID { "offset" + sfx, 1 }, nm + " Phase Offset",
+                                                    NormalisableRange<float>(0.f, 1.f, 0.001f), 0.f));
     }
     return l;
 }
@@ -105,7 +107,8 @@ FreeLfoProcessor::FreeLfoProcessor()
         band[b] = { apvts.getRawParameterValue("mode" + sfx), apvts.getRawParameterValue("div" + sfx),
                     apvts.getRawParameterValue("hz" + sfx), apvts.getRawParameterValue("depth" + sfx),
                     apvts.getRawParameterValue("smooth" + sfx),
-                    apvts.getRawParameterValue("dot" + sfx), apvts.getRawParameterValue("trip" + sfx) };
+                    apvts.getRawParameterValue("dot" + sfx), apvts.getRawParameterValue("trip" + sfx),
+                    apvts.getRawParameterValue("offset" + sfx) };
         bandCycleSeconds[(size_t) b].store(0.5);
     }
 
@@ -497,7 +500,8 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const Hos
         auto& L = lane[b];
         L.freeInc = (syncMode ? (bpm / 60.0) / beats : hz) / sr;
         L.inc = useHost ? ppqPerSample / beats : L.freeInc;
-        L.p = fract(useHost ? ppq / beats : bandFreePhase[b]);
+        const double off = band[b].offset->load();   // each band has its own phase offset
+        L.p = fract((useHost ? ppq / beats : bandFreePhase[b]) + off);
         L.depth = band[b].depth->load();
         const float ms = band[b].smooth->load();
         L.coef = ms < 0.01f ? 0.f : std::exp(-1.f / (ms * 0.001f * (float) sr));
@@ -507,7 +511,7 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const Hos
                                            std::memory_order_relaxed);
 
         LaneSig cur;
-        cur.division = rate.division->load(); cur.depth = L.depth;
+        cur.division = rate.division->load(); cur.depth = L.depth; cur.offset = (float) off;
         cur.dotted = rate.dotted->load() > 0.5f; cur.triplet = rate.triplet->load() > 0.5f;
         cur.sync = syncMode; cur.useHost = useHost; cur.link = link; cur.three = three;
         if (!laneSigValid[b]) laneSigValid[b] = true;
