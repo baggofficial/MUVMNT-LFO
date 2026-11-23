@@ -1,0 +1,31 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake -B build -G "Visual Studio 17 2022" -A x64
+      - name: Build VST3
+        run: cmake --build build --config Release --target FreeLfoTool_VST3
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FreeLfoTool-windows-vst3
+          path: build/FreeLfoTool_artefacts/Release/VST3/
+
+  macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests
+        run: clang++ -std=c++17 tests/envelope_test.cpp -o envtest && ./envtest
+      - name: Configure
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+      - name: Build VST3 + Standalone
+        run: cmake --build build --config Release --parallel
