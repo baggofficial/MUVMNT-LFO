@@ -16,6 +16,9 @@
 #include <cmath>
 #include <complex>
 
+// M_PI is not defined by MSVC unless _USE_MATH_DEFINES is set, so use our own constant
+constexpr double kPi = 3.14159265358979323846;
+
 enum class Slope { dB6 = 0, dB12 = 1, dB24 = 2, dB48 = 3, dB72 = 4, dB96 = 5 };
 constexpr int numSlopes = 6;
 
@@ -26,14 +29,14 @@ struct Biquad
 
     void setLowpass(double fc, double sr, double q)
     {
-        const double w = 2.0 * M_PI * fc / sr, c = std::cos(w), al = std::sin(w) / (2.0 * q), a0 = 1.0 + al;
+        const double w = 2.0 * kPi * fc / sr, c = std::cos(w), al = std::sin(w) / (2.0 * q), a0 = 1.0 + al;
         b0 = (1.0 - c) / 2.0 / a0; b1 = (1.0 - c) / a0; b2 = b0;
         a1 = -2.0 * c / a0;        a2 = (1.0 - al) / a0;
     }
 
     void setHighpass(double fc, double sr, double q)
     {
-        const double w = 2.0 * M_PI * fc / sr, c = std::cos(w), al = std::sin(w) / (2.0 * q), a0 = 1.0 + al;
+        const double w = 2.0 * kPi * fc / sr, c = std::cos(w), al = std::sin(w) / (2.0 * q), a0 = 1.0 + al;
         b0 = (1.0 + c) / 2.0 / a0; b1 = -(1.0 + c) / a0; b2 = b0;
         a1 = -2.0 * c / a0;        a2 = (1.0 - al) / a0;
     }
@@ -41,13 +44,13 @@ struct Biquad
     // First-order (bilinear transform); LP + HP of the same cutoff sums to exactly 1
     void setLowpass1(double fc, double sr)
     {
-        const double k = std::tan(M_PI * fc / sr);
+        const double k = std::tan(kPi * fc / sr);
         b0 = k / (1.0 + k); b1 = b0; b2 = 0.0; a1 = (k - 1.0) / (1.0 + k); a2 = 0.0;
     }
 
     void setHighpass1(double fc, double sr)
     {
-        const double k = std::tan(M_PI * fc / sr);
+        const double k = std::tan(kPi * fc / sr);
         b0 = 1.0 / (1.0 + k); b1 = -b0; b2 = 0.0; a1 = (k - 1.0) / (1.0 + k); a2 = 0.0;
     }
 
@@ -93,7 +96,7 @@ public:
                 {
                     // Butterworth section Qs: 1 / (2 sin((2j - 1) pi / (2N))), j = 1 .. N/2, used twice
                     const int j = k % (order / 2) + 1;
-                    const double q = 1.0 / (2.0 * std::sin((2.0 * j - 1.0) * M_PI / (2.0 * order)));
+                    const double q = 1.0 / (2.0 * std::sin((2.0 * j - 1.0) * kPi / (2.0 * order)));
                     lp[k].setLowpass(fc, sr, q);
                     hp[k].setHighpass(fc, sr, q);
                 }
@@ -113,7 +116,7 @@ public:
     // Magnitude response of each side at a frequency (used to draw the crossover curves)
     double lowMagnitude(double hz, double sr) const
     {
-        const double w = 2.0 * M_PI * hz / sr;
+        const double w = 2.0 * kPi * hz / sr;
         double m = 1.0;
         for (int k = 0; k < n; ++k) m *= lp[k].magnitude(w);
         return m;
@@ -121,7 +124,7 @@ public:
 
     double highMagnitude(double hz, double sr) const
     {
-        const double w = 2.0 * M_PI * hz / sr;
+        const double w = 2.0 * kPi * hz / sr;
         double m = 1.0;
         for (int k = 0; k < n; ++k) m *= hp[k].magnitude(w);
         return m;
