@@ -78,7 +78,43 @@ public:
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     void syncTable(int slot);
-    void processMultiband(juce::AudioBuffer<float>& buf, double bpm, double ppq, bool havePpq, bool playing);
+    struct HostInfo { double bpm = 120.0, ppq = 0.0; bool havePpq = false, playing = false; };
+    void processSingle(juce::AudioBuffer<float>& main, const HostInfo& host, const juce::MidiBuffer& midi, int midiOffset,
+                       const float* const* scData, int scChannels);
+    void processMultiband(juce::AudioBuffer<float>& buf, const HostInfo& host);
+
+    // Structure = things that rebuild the signal path. Changing them while playing would click, so the output dips
+    // to silence for a few ms around the switch (old path fades out, new path fades in).
+    struct Structure
+    {
+        bool multiband = false, three = true;
+        int slopeLow = 2, slopeHigh = 2;
+        bool operator==(const Structure& o) const { return multiband == o.multiband && three == o.three && slopeLow == o.slopeLow && slopeHigh == o.slopeHigh; }
+    };
+    static constexpr double fadeMs = 4.0; // length of each half of the dip around a structural switch
+    Structure applied;
+    bool structureInit = false;
+    int fadeOutLeft = 0, fadeInLeft = 0;
+
+    // Anything that makes the LFO value jump (rate, mode, offset, depth, transport jump...) starts a short extra
+    // smoothing, so changes never click even with Smooth at 0.
+    struct LaneSig
+    {
+        float division = -1.f, depth = -1.f, offset = 0.f;
+        bool dotted = false, triplet = false, sync = true, useHost = false, link = false, three = true;
+        bool operator==(const LaneSig& o) const
+        {
+            return division == o.division && depth == o.depth && offset == o.offset && dotted == o.dotted && triplet == o.triplet
+                   && sync == o.sync && useHost == o.useHost && link == o.link && three == o.three;
+        }
+    };
+    LaneSig singleSig, laneSig[3];
+    bool singleSigValid = false, laneSigValid[3] = { false, false, false };
+    int singleDeclick = 0, laneDeclick[3] = { 0, 0, 0 };
+    double expectedPpq = 0.0;     // where the transport should be if nobody moved it
+    bool expectedPpqValid = false;
+    float gate[3] = { 1.f, 1.f, 1.f }; // smoothed solo / band on-off gates
+    double fcLowS = -1.0, fcHighS = -1.0; // crossover frequencies, gliding toward the knobs
 
     // One baked curve per slot. The UI edits on the message thread; the audio thread only
     // ever copies a finished table with a try-lock, so it never waits.

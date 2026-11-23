@@ -11,9 +11,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Configure
-        run: cmake -B build -A x64   # no -G: CMake picks whichever Visual Studio the runner has (VS 2022 is no longer there)
-      - name: Build VST3
-        run: cmake --build build --config Release --target FreeLfoTool_VST3
+        run: cmake -B build -A x64 -DFREELFO_BENCH=ON   # no -G: CMake picks whichever Visual Studio the runner has (VS 2022 is no longer there)
+      - name: Build VST3 and the audio tests
+        run: cmake --build build --config Release --target FreeLfoTool_VST3 LfoAudioTest
+      - name: Audio tests (null, silence, clicks, stability, timing, real-time safety)
+        run: build/LfoAudioTest_artefacts/Release/LfoAudioTest.exe
       - uses: actions/upload-artifact@v4
         with:
           name: FreeLfoTool-windows-vst3
@@ -23,9 +25,13 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Unit tests
-        run: clang++ -std=c++17 tests/envelope_test.cpp -o envtest && ./envtest
+      - name: Unit tests (curve model, crossover)
+        run: |
+          clang++ -std=c++17 tests/envelope_test.cpp -o envtest && ./envtest
+          clang++ -std=c++17 tests/crossover_test.cpp -o xotest && ./xotest
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
-      - name: Build VST3 + Standalone
-        run: cmake --build build --config Release --parallel
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DFREELFO_BENCH=ON
+      - name: Build VST3, Standalone and the audio tests
+        run: cmake --build build --config Release --parallel --target FreeLfoTool_VST3 FreeLfoTool_Standalone LfoAudioTest
+      - name: Audio tests (null, silence, clicks, stability, timing, real-time safety)
+        run: build/LfoAudioTest_artefacts/Release/LfoAudioTest

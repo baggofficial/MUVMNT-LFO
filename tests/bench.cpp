@@ -1,22 +1,9 @@
 // CPU benchmark for the audio thread. Build with:  cmake -B build -DFREELFO_BENCH=ON && cmake --build build --target LfoBench
 // Run:  build/LfoBench_artefacts/Release/LfoBench
 #include "../Source/PluginProcessor.h"
+#include "fake_host.h"
 #include <chrono>
 #include <cstdio>
-
-// Minimal transport so the "synced to host" path is exercised too.
-struct FakeHost : juce::AudioPlayHead
-{
-    double ppq = 0.0, bpm = 140.0;
-    juce::Optional<PositionInfo> getPosition() const override
-    {
-        PositionInfo info;
-        info.setBpm(bpm);
-        info.setPpqPosition(ppq);
-        info.setIsPlaying(true);
-        return info;
-    }
-};
 
 static void setParam(FreeLfoProcessor& p, const char* id, float plain)
 {
@@ -128,7 +115,7 @@ int main()
             p.processBlock(b, m);
             return p.cycleSeconds.load();
         };
-        const double quarter = 60.0 / 140.0; // FakeHost runs at 140 bpm
+        const double quarter = 60.0 / kTestBpm; // the fake host runs at 130 bpm
         bool rateOk = std::abs(cycle(5, false, false) - quarter) < 1e-9
                       && std::abs(cycle(5, true, false) - quarter * 1.5) < 1e-9
                       && std::abs(cycle(5, false, true) - quarter * 2.0 / 3.0) < 1e-9;

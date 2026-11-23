@@ -321,7 +321,8 @@ public:
     void bake(float* out) const
     {
         for (int i = 0; i <= tableSize; ++i)
-            out[i] = (i == tableSize) ? evaluate(0.999999f) : evaluate((float) i / (float) tableSize);
+            out[i] = (i == tableSize) ? points.back().y   // phase 1.0 is the curve's end point: the loop's seam stays continuous
+                                      : evaluate((float) i / (float) tableSize);
     }
 
     // Keep the invariants the editor and evaluator rely on.
@@ -350,6 +351,7 @@ public:
     std::string serialize() const
     {
         std::ostringstream s;
+        s.precision(9); // enough digits for floats to survive a save / load exactly
         for (auto& p : points)
             s << p.x << ',' << p.y << ',' << p.inDx << ',' << p.inDy << ',' << p.outDx << ',' << p.outDy << ',' << p.bend << ',' << p.bendX << ';';
         return s.str();
