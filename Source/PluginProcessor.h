@@ -3,6 +3,7 @@
 #include <array>
 #include <atomic>
 #include "Envelope.h"
+#include "Crossover.h"
 
 class FreeLfoProcessor : public juce::AudioProcessor
 {
@@ -33,11 +34,18 @@ public:
     void setStateInformation(const void*, int) override;
 
     // Message-thread API for the editor
-    Envelope getEnvelope() const;
-    void setEnvelope(const Envelope& e);
+    // slot 0 = the single-band curve; slots 1..3 = the low / mid / high band curves (Multiband tab)
+    static constexpr int numSlots = 4;
+    Envelope getEnvelope(int slot = 0) const;
+    void setEnvelope(const Envelope& e, int slot = 0);
+    // Bezier handles <-> simple bend, applied to every curve (single + the three bands) when the user flips the switch
+    void convertCurveMode(bool toBezier);
+    static const char* bandSuffix(int band) { return band == 0 ? "L" : band == 1 ? "M" : "H"; }
 
     juce::AudioProcessorValueTreeState apvts;
-    std::atomic<float> uiPhase { 0.f };
+    std::atomic<float> uiPhase { 0.f };          // LFO phase at the end of the last block
+    std::atomic<double> uiPhaseTimeMs { 0.0 };   // when it was published (for the editor to extrapolate)
+    std::atomic<unsigned> blockCounter { 0 };    // bumps every block: tells the editor audio is flowing
 
     // Input signal min/max per LFO-phase bin (audio thread writes, UI reads).
     // One LFO cycle is split into waveBins slots, so the display lines up with the curve.
@@ -46,21 +54,46 @@ public:
     // Same, for the optional sidechain input (e.g. the kick that triggers the pump).
     std::array<std::atomic<float>, waveBins> scMin {}, scMax {};
     std::atomic<bool> sidechainActive { false };
+    std::atomic<double> cycleSeconds { 0.5 }; // length of one LFO cycle, for the editor's smoothing preview
+    std::atomic<bool> editorOpen { false }; // set by the editor; the waveform analysis only runs while it is true
+    // Peak level per band per phase bin (low < 250 Hz, mid, high > 3 kHz) for the coloured waveform.
+    std::array<std::atomic<float>, waveBins> bandLow {}, bandMid {}, bandHigh {};
+
+    // Multiband tab: each band's own input signal folded onto that band's own LFO cycle.
+    std::array<std::array<std::atomic<float>, waveBins>, 3> bwMin {}, bwMax {};
+    std::array<std::atomic<float>, 3> bandPhase {};
+    std::array<std::atomic<double>, 3> bandCycleSeconds {};
 
     static const std::array<const char*, 15> divisionNames;
     static const std::array<double, 15> divisionBeats; // quarter-note beats per LFO cycle
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
-    void syncTable();
+    void syncTable(int slot);
+    void processMultiband(juce::AudioBuffer<float>& buf, double bpm, double ppq, bool havePpq, bool playing);
 
-    Envelope envelope; // authoritative copy, guarded by envLock
-    mutable juce::SpinLock envLock;
+    // One baked curve per slot. The UI edits on the message thread; the audio thread only
+    // ever copies a finished table with a try-lock, so it never waits.
+    struct EnvSlot
+    {
+        Envelope env;
+        mutable juce::SpinLock lock;
+        std::array<float, Envelope::tableSize + 1> shared {}, audio {};
+        std::atomic<int> version { 0 };
+        int audioVersion = -1;
+    };
+    EnvSlot slots[numSlots];
 
-    std::array<float, Envelope::tableSize + 1> sharedTable {};
-    std::array<float, Envelope::tableSize + 1> audioTable {};
-    std::atomic<int> tableVersion { 0 };
-    int audioTableVersion = -1;
+    struct BandCtl { std::atomic<float> *mode, *division, *hz, *depth, *smooth; };
+    BandCtl band[3] {};
+    std::atomic<float> *pMb = nullptr, *pBands = nullptr, *pXLow = nullptr, *pXHigh = nullptr,
+                       *pLink = nullptr, *pSlopeLow = nullptr, *pSlopeHigh = nullptr;
+
+    std::atomic<float>* pSoloBand[3] = { nullptr, nullptr, nullptr };
+    Crossover crossover;
+    double bandFreePhase[3] = { 0, 0, 0 };
+    float bandSmoothed[3] = { 1.f, 1.f, 1.f };
+    int bandLastBin[3] = { -1, -1, -1 };
 
     std::atomic<float>* pMode = nullptr;
     std::atomic<float>* pDivision = nullptr;
@@ -73,6 +106,7 @@ private:
     double freePhase = 0.0;
     float smoothedGain = 1.f;
     int lastWaveBin = -1;
+    float lpLow = 0.f, lpHigh = 0.f, coefLow = 0.f, coefHigh = 0.f;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FreeLfoProcessor)
 };

@@ -24,7 +24,9 @@ juce_add_plugin(FreeLfoTool
 
 target_sources(FreeLfoTool PRIVATE
     Source/PluginProcessor.cpp
-    Source/PluginEditor.cpp)
+    Source/PluginEditor.cpp
+    Source/EnvelopeEditor.cpp
+    Source/MultibandPanel.cpp)
 
 target_compile_definitions(FreeLfoTool PUBLIC
     JUCE_WEB_BROWSER=0
@@ -37,3 +39,33 @@ target_link_libraries(FreeLfoTool
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
         juce::juce_recommended_warning_flags)
+
+# Optional CPU benchmark (not built by default):  cmake -B build -DFREELFO_BENCH=ON
+option(FREELFO_BENCH "Build the audio-thread CPU benchmark" OFF)
+if(FREELFO_BENCH)
+    juce_add_console_app(LfoBench PRODUCT_NAME "LfoBench")
+    target_sources(LfoBench PRIVATE
+        tests/bench.cpp
+        Source/PluginProcessor.cpp
+        Source/PluginEditor.cpp
+        Source/EnvelopeEditor.cpp
+        Source/MultibandPanel.cpp)
+    target_link_libraries(LfoBench PRIVATE
+        juce::juce_audio_utils
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags)
+    target_compile_definitions(LfoBench PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
+
+    juce_add_console_app(LfoSnap PRODUCT_NAME "LfoSnap")
+    target_sources(LfoSnap PRIVATE
+        tests/snapshot.cpp
+        Source/PluginProcessor.cpp
+        Source/PluginEditor.cpp
+        Source/EnvelopeEditor.cpp
+        Source/MultibandPanel.cpp)
+    target_link_libraries(LfoSnap PRIVATE
+        juce::juce_audio_utils
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags)
+    target_compile_definitions(LfoSnap PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1)
+endif()

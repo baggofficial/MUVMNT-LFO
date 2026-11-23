@@ -1,0 +1,437 @@
+#include "MultibandPanel.h"
+
+namespace
+{
+    constexpr double minHz = 20.0, maxHz = 20000.0;
+
+    juce::String hzText(double hz)
+    {
+        return hz < 1000.0 ? juce::String(juce::roundToInt(hz)) + " Hz" : juce::String(hz / 1000.0, 2) + " kHz";
+    }
+
+    void setParam(juce::AudioProcessorValueTreeState& s, const char* id, float plain)
+    {
+        if (auto* p = s.getParameter(id)) p->setValueNotifyingHost(p->convertTo0to1(plain));
+    }
+}
+
+// ---------------------------------------------------------------- BandStrip
+
+BandStrip::BandStrip(FreeLfoProcessor& p) : proc(p) { startTimerHz(15); }
+
+bool BandStrip::threeBands() const { return proc.apvts.getRawParameterValue("mbBands")->load() > 0.5f; }
+
+int BandStrip::signature() const
+{
+    const auto v = [this](const char* id) { return proc.apvts.getRawParameterValue(id)->load(); };
+    return (int) (v("xLow") * 3.f + v("xHigh") * 7.f + v("mbBands") * 100003.f
+                  + (v("soloL") + v("soloM") * 2.f + v("soloH") * 4.f) * 7919.f
+                  + v("slopeLow") * 1009.f + v("slopeHigh") * 2003.f);
+}
+
+void BandStrip::timerCallback()
+{
+    const int s = signature();
+    if (s != lastSig) { lastSig = s; repaint(); }
+}
+
+float BandStrip::freqToX(double hz) const
+{
+    const auto b = getLocalBounds().toFloat().reduced(8.f, 0.f);
+    const double t = std::log(juce::jlimit(minHz, maxHz, hz) / minHz) / std::log(maxHz / minHz);
+    return b.getX() + (float) t * b.getWidth();
+}
+
+double BandStrip::xToFreq(float x) const
+{
+    const auto b = getLocalBounds().toFloat().reduced(8.f, 0.f);
+    const double t = juce::jlimit(0.0, 1.0, (double) ((x - b.getX()) / b.getWidth()));
+    return minHz * std::pow(maxHz / minHz, t);
+}
+
+std::array<BandStrip::Region, 3> BandStrip::regions(int& count) const
+{
+    const float lo = freqToX(proc.apvts.getRawParameterValue("xLow")->load());
+    const float hi = freqToX(proc.apvts.getRawParameterValue("xHigh")->load());
+    const float x0 = freqToX(minHz), x1 = freqToX(maxHz);
+    if (threeBands()) { count = 3; return { Region { 0, x0, lo }, Region { 1, lo, hi }, Region { 2, hi, x1 } }; }
+    count = 2;
+    return { Region { 0, x0, lo }, Region { 2, lo, x1 }, Region { 2, 0, 0 } };
+}
+
+juce::Rectangle<float> BandStrip::soloChip(float regionRight) const
+{
+    return { regionRight - 26.f, 6.f, 20.f, 18.f };
+}
+
+// The small pill in the middle of a split line: shows that split's slope, click it to change it
+juce::Rectangle<float> BandStrip::slopeChip(float splitX) const
+{
+    return { splitX - 27.f, (float) getHeight() * 0.5f - 9.f, 54.f, 18.f };
+}
+
+void BandStrip::plotArea(float& top, float& bottom) const
+{
+    top = 8.f;
+    bottom = (float) getHeight() - 3.f; // the curves use the whole strip
+}
+
+void BandStrip::openSlopeMenu(int split)
+{
+    const char* id = split == 0 ? "slopeLow" : "slopeHigh";
+    const int current = juce::roundToInt(proc.apvts.getRawParameterValue(id)->load());
+    const char* names[numSlopes] = { "6 dB/oct", "12 dB/oct", "24 dB/oct", "48 dB/oct", "72 dB/oct", "96 dB/oct" };
+
+    juce::PopupMenu menu;
+    for (int i = 0; i < numSlopes; ++i) menu.addItem(i + 1, names[i], true, i == current);
+
+    const double hz = proc.apvts.getRawParameterValue(split == 0 ? "xLow" : "xHigh")->load();
+    const auto area = localAreaToGlobal(slopeChip(freqToX(hz)).toNearestInt());
+    juce::Component::SafePointer<BandStrip> safe(this);
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea(area), [safe, id](int result) {
+        if (safe != nullptr && result > 0) { setParam(safe->proc.apvts, id, (float) (result - 1)); safe->repaint(); }
+    });
+}
+
+void BandStrip::paint(juce::Graphics& g)
+{
+    g.setColour(paper::bg);
+    g.fillRoundedRectangle(getLocalBounds().toFloat(), 6.f);
+
+    int count = 0;
+    const auto regs = regions(count);
+    const auto v = [this](const char* id) { return proc.apvts.getRawParameterValue(id)->load(); };
+    const char* names[3] = { "Low", "Mid", "High" };
+    const float h = (float) getHeight();
+    float plotTop, plotBottom;
+    plotArea(plotTop, plotBottom);
+
+    // light region tints, so the response curves on top stay readable
+    for (int i = 0; i < count; ++i)
+    {
+        const auto& r = regs[(size_t) i];
+        const auto area = juce::Rectangle<float>(r.x0, 1.f, r.x1 - r.x0, h - 2.f);
+        const bool sel = r.band == selected;
+        g.setColour(paper::bandColour(r.band).withAlpha(sel ? 0.16f : 0.07f));
+        g.fillRect(area);
+        if (sel) { g.setColour(paper::bandColour(r.band).withAlpha(0.7f)); g.drawRect(area, 1.5f); }
+    }
+
+    // octave guides + the -6 dB line where Linkwitz-Riley bands cross
+    for (double f : { 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0 })
+    {
+        g.setColour(juce::Colours::black.withAlpha(0.05f));
+        g.drawVerticalLine((int) freqToX(f), 0.f, h);
+    }
+    const float y6 = plotTop + (plotBottom - plotTop) * (6.f / 36.f);
+    g.setColour(juce::Colours::black.withAlpha(0.10f));
+    g.drawHorizontalLine((int) y6, freqToX(minHz), freqToX(maxHz));
+    g.setColour(paper::sub.withAlpha(0.8f));
+    g.setFont(10.f);
+    g.drawText("-6 dB", juce::Rectangle<float>(freqToX(minHz) + 4.f, y6 - 12.f, 40.f, 11.f), juce::Justification::centredLeft);
+
+    // Each band's real filter response (the actual crossover maths), drawn across the whole axis,
+    // so you can see how the neighbouring bands overlap at the split and how the slope changes it.
+    {
+        const double sr = proc.getSampleRate() > 0.0 ? proc.getSampleRate() : 48000.0;
+        const bool three = count == 3;
+        Splitter sp1, sp2;
+        sp1.set(v("xLow"), sr, (Slope) juce::jlimit(0, numSlopes - 1, juce::roundToInt(v("slopeLow"))));
+        sp2.set(juce::jmax(v("xHigh"), v("xLow") * 1.2f), sr, (Slope) juce::jlimit(0, numSlopes - 1, juce::roundToInt(v("slopeHigh"))));
+
+        auto magnitude = [&](int band, double hz) {
+            if (band == 0) return sp1.lowMagnitude(hz, sr);
+            if (!three) return sp1.highMagnitude(hz, sr);
+            return band == 1 ? sp1.highMagnitude(hz, sr) * sp2.lowMagnitude(hz, sr)
+                             : sp1.highMagnitude(hz, sr) * sp2.highMagnitude(hz, sr);
+        };
+
+        const float xa = freqToX(minHz), xb = freqToX(maxHz);
+        for (int pass = 0; pass < 2; ++pass)          // selected band last, so it sits on top
+            for (int i = 0; i < count; ++i)
+            {
+                const int band = regs[(size_t) i].band;
+                if ((band == selected) != (pass == 1)) continue;
+
+                juce::Path line, fill;
+                for (float x = xa; x <= xb + 0.5f; x += 2.f)
+                {
+                    const double mag = magnitude(band, xToFreq(x));
+                    const double db = 20.0 * std::log10(juce::jmax(1e-6, mag));
+                    const float y = plotTop + (float) juce::jlimit(0.0, 1.0, -db / 36.0) * (plotBottom - plotTop);
+                    if (x == xa) { line.startNewSubPath(x, y); fill.startNewSubPath(x, plotBottom); fill.lineTo(x, y); }
+                    else { line.lineTo(x, y); fill.lineTo(x, y); }
+                }
+                fill.lineTo(xb, plotBottom);
+                fill.closeSubPath();
+                const bool sel = band == selected;
+                g.setColour(paper::bandColour(band).withAlpha(sel ? 0.26f : 0.16f));
+                g.fillPath(fill);
+                g.setColour(paper::bandColour(band).darker(0.2f).withAlpha(sel ? 1.f : 0.75f));
+                g.strokePath(line, juce::PathStrokeType(sel ? 2.f : 1.3f));
+            }
+    }
+
+    for (int i = 0; i < count; ++i)
+    {
+        const auto& r = regs[(size_t) i];
+        const auto area = juce::Rectangle<float>(r.x0, 1.f, r.x1 - r.x0, h - 2.f);
+        const bool sel = r.band == selected;
+        g.setColour(paper::text.withAlpha(sel ? 0.9f : 0.55f));
+        g.setFont(juce::FontOptions(13.f, juce::Font::bold));
+        g.drawText(names[r.band], area.withTrimmedLeft(8.f).withHeight(24.f), juce::Justification::centredLeft);
+
+        const auto chip = soloChip(r.x1);
+        const bool on = v((juce::String("solo") + FreeLfoProcessor::bandSuffix(r.band)).toRawUTF8()) > 0.5f;
+        g.setColour(on ? paper::accent : paper::panel);
+        g.fillRoundedRectangle(chip, 4.f);
+        g.setColour(on ? juce::Colours::white : paper::sub);
+        g.setFont(11.f);
+        g.drawText("S", chip, juce::Justification::centred);
+    }
+
+    // split lines, their slope pills (click = menu), drag handles and frequency labels
+    const char* slopeText[numSlopes] = { "6 dB", "12 dB", "24 dB", "48 dB", "72 dB", "96 dB" };
+    for (int i = 0; i < count - 1; ++i)
+    {
+        const double hz = v(i == 0 ? "xLow" : "xHigh");
+        const float x = freqToX(hz);
+        g.setColour(paper::text.withAlpha(0.6f));
+        g.drawVerticalLine((int) x, 0.f, h);
+
+        const auto chip = slopeChip(x);
+        g.setColour(paper::panel);
+        g.fillRoundedRectangle(chip, 9.f);
+        g.setColour(paper::text.withAlpha(0.7f));
+        g.drawRoundedRectangle(chip, 9.f, 1.f);
+        g.setColour(paper::text);
+        g.setFont(11.f);
+        g.drawText(slopeText[juce::jlimit(0, numSlopes - 1, juce::roundToInt(v(i == 0 ? "slopeLow" : "slopeHigh")))], chip, juce::Justification::centred);
+
+        // No drag knob: the split line itself is the handle. The frequency chip sits at its foot.
+        const auto label = juce::Rectangle<float>(x - 28.f, h - 22.f, 56.f, 15.f);
+        g.setColour(paper::bg.withAlpha(0.92f)); // keeps the split line from running through the text
+        g.fillRoundedRectangle(label, 4.f);
+        g.setFont(11.f);
+        g.setColour(paper::sub);
+        g.drawText(hzText(hz), label, juce::Justification::centred);
+    }
+}
+
+void BandStrip::mouseDown(const juce::MouseEvent& e)
+{
+    int count = 0;
+    const auto regs = regions(count);
+
+    for (int i = 0; i < count; ++i) // solo chips first
+        if (soloChip(regs[(size_t) i].x1).contains(e.position))
+        {
+            // each band has its own solo switch, so several can be on at once
+            const juce::String id = juce::String("solo") + FreeLfoProcessor::bandSuffix(regs[(size_t) i].band);
+            const bool on = proc.apvts.getRawParameterValue(id)->load() > 0.5f;
+            setParam(proc.apvts, id.toRawUTF8(), on ? 0.f : 1.f);
+            repaint();
+            return;
+        }
+
+    for (int i = 0; i < count - 1; ++i) // the pill on a split line opens that split's slope menu
+        if (slopeChip(freqToX(proc.apvts.getRawParameterValue(i == 0 ? "xLow" : "xHigh")->load())).contains(e.position))
+        {
+            openSlopeMenu(i);
+            return;
+        }
+
+    dragHandle = -1;
+    for (int i = 0; i < count - 1; ++i)
+    {
+        const double hz = proc.apvts.getRawParameterValue(i == 0 ? "xLow" : "xHigh")->load();
+        if (std::abs(freqToX(hz) - e.position.x) < 8.f)
+        {
+            dragHandle = i;
+            if (auto* p = proc.apvts.getParameter(i == 0 ? "xLow" : "xHigh")) p->beginChangeGesture();
+            return;
+        }
+    }
+
+    for (int i = 0; i < count; ++i)
+        if (e.position.x >= regs[(size_t) i].x0 && e.position.x < regs[(size_t) i].x1)
+        {
+            selected = regs[(size_t) i].band;
+            if (onSelect) onSelect(selected);
+            repaint();
+            return;
+        }
+}
+
+void BandStrip::mouseDrag(const juce::MouseEvent& e)
+{
+    if (dragHandle < 0) return;
+    double hz = xToFreq(e.position.x);
+    if (dragHandle == 0)
+    {
+        const double hi = proc.apvts.getRawParameterValue("xHigh")->load();
+        hz = juce::jlimit(40.0, threeBands() ? juce::jmin(1000.0, hi / 1.2) : 1000.0, hz);
+        setParam(proc.apvts, "xLow", (float) hz);
+    }
+    else
+    {
+        const double lo = proc.apvts.getRawParameterValue("xLow")->load();
+        hz = juce::jlimit(juce::jmax(500.0, lo * 1.2), 12000.0, hz);
+        setParam(proc.apvts, "xHigh", (float) hz);
+    }
+    repaint();
+}
+
+// Show a left-right resize cursor while the mouse is over a split line (the line is the drag handle)
+void BandStrip::mouseMove(const juce::MouseEvent& e)
+{
+    int count = 0;
+    regions(count);
+    bool overLine = false;
+    for (int i = 0; i < count - 1 && !overLine; ++i)
+    {
+        const double hz = proc.apvts.getRawParameterValue(i == 0 ? "xLow" : "xHigh")->load();
+        overLine = std::abs(freqToX(hz) - e.position.x) < 8.f && !slopeChip(freqToX(hz)).contains(e.position);
+    }
+    setMouseCursor(overLine ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::NormalCursor);
+}
+
+void BandStrip::mouseUp(const juce::MouseEvent&)
+{
+    if (dragHandle >= 0)
+        if (auto* p = proc.apvts.getParameter(dragHandle == 0 ? "xLow" : "xHigh")) p->endChangeGesture();
+    dragHandle = -1;
+}
+
+// ---------------------------------------------------------------- MultibandPanel
+
+MultibandPanel::MultibandPanel(FreeLfoProcessor& p) : proc(p), strip(p), curve(p, 1)
+{
+    addAndMakeVisible(strip);
+    addAndMakeVisible(curve);
+    strip.onSelect = [this](int b) { selectBand(b); };
+
+    modeBox.addItemList({ "Sync", "Hz" }, 1);
+    bandsBox.addItemList({ "2 bands", "3 bands" }, 1);
+    addAndMakeVisible(modeBox);
+    addAndMakeVisible(bandsBox);
+    addAndMakeVisible(linkBtn);
+
+    auto setup = [this](juce::Slider& s, juce::Label& l, const juce::String& text) {
+        s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+        s.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 80, 18);
+        s.setColour(juce::Slider::textBoxTextColourId, paper::text);
+        s.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+        l.setText(text, juce::dontSendNotification);
+        l.setJustificationType(juce::Justification::centred);
+        addAndMakeVisible(s);
+        addAndMakeVisible(l);
+    };
+    setup(rate, rateL, "Rate");
+    setup(depth, depthL, "Depth");
+    setup(smooth, smoothL, "Smooth");
+    setup(wave, waveL, "Waveform");
+    smooth.setTextValueSuffix(" ms");
+
+    bandL.setJustificationType(juce::Justification::centredLeft);
+    bandL.setFont(juce::FontOptions(15.f, juce::Font::bold));
+    addAndMakeVisible(bandL);
+
+    bandsA = std::make_unique<CA>(proc.apvts, "mbBands", bandsBox);
+    linkA = std::make_unique<BA>(proc.apvts, "mbLink", linkBtn);
+    waveA = std::make_unique<SA>(proc.apvts, "waveOpacity", wave);
+
+    rebind();
+    startTimerHz(10);
+}
+
+int MultibandPanel::signature() const
+{
+    const auto v = [this](const char* id) { return proc.apvts.getRawParameterValue(id)->load(); };
+    const bool three = v("mbBands") > 0.5f, link = v("mbLink") > 0.5f;
+    const int eff = link ? (three ? 1 : 0) : selected;
+    const juce::String es = FreeLfoProcessor::bandSuffix(eff);
+    return (three ? 1 : 0) | (link ? 2 : 0) | (((int) v(("mode" + es).toRawUTF8())) << 2) | (selected << 3);
+}
+
+void MultibandPanel::timerCallback()
+{
+    if (signature() != lastSig) rebind();
+}
+
+void MultibandPanel::selectBand(int band)
+{
+    selected = band;
+    rebind();
+}
+
+void MultibandPanel::rebind()
+{
+    const auto v = [this](const char* id) { return proc.apvts.getRawParameterValue(id)->load(); };
+    const bool three = v("mbBands") > 0.5f, link = v("mbLink") > 0.5f;
+    if (!three && selected == 1) selected = 0; // there is no mid band in 2-band mode
+
+    const int eff = link ? (three ? 1 : 0) : selected; // linked bands all follow one band's rate settings
+    const juce::String es = FreeLfoProcessor::bandSuffix(eff), ss = FreeLfoProcessor::bandSuffix(selected);
+
+    rateA.reset(); modeA.reset(); depthA.reset(); smoothA.reset();
+
+    modeA = std::make_unique<CA>(proc.apvts, "mode" + es, modeBox);
+    const bool syncMode = proc.apvts.getRawParameterValue("mode" + es)->load() < 0.5f;
+    if (syncMode)
+    {
+        rate.textFromValueFunction = [](double x) {
+            return juce::String(FreeLfoProcessor::divisionNames[(size_t) juce::jlimit(0, 14, (int) std::round(x))]);
+        };
+        rate.valueFromTextFunction = nullptr;
+        rateA = std::make_unique<SA>(proc.apvts, "div" + es, rate);
+    }
+    else
+    {
+        rate.textFromValueFunction = [](double x) { return juce::String(x, x < 10.0 ? 2 : 1) + " Hz"; };
+        rate.valueFromTextFunction = nullptr;
+        rateA = std::make_unique<SA>(proc.apvts, "hz" + es, rate);
+    }
+    rate.updateText();
+
+    depthA = std::make_unique<SA>(proc.apvts, "depth" + ss, depth);
+    smoothA = std::make_unique<SA>(proc.apvts, "smooth" + ss, smooth);
+
+    curve.setSlot(selected + 1);
+    strip.setSelected(selected);
+
+    const char* names[3] = { "Low band", "Mid band", "High band" };
+    bandL.setText(names[selected], juce::dontSendNotification);
+    bandL.setColour(juce::Label::textColourId, paper::bandColour(selected).darker(0.25f));
+    rateL.setText(link ? "Rate (all bands)" : "Rate", juce::dontSendNotification);
+
+    lastSig = signature();
+}
+
+void MultibandPanel::resized()
+{
+    auto r = getLocalBounds();
+    strip.setBounds(r.removeFromTop(84));
+    r.removeFromTop(8);
+    auto knobs = r.removeFromBottom(122);
+    curve.setBounds(r.withTrimmedBottom(8));
+
+    auto left = knobs.removeFromLeft(160).reduced(0, 4);
+    bandL.setBounds(left.removeFromTop(22));
+    modeBox.setBounds(left.removeFromTop(26));
+    left.removeFromTop(6);
+    linkBtn.setBounds(left.removeFromTop(24));
+    left.removeFromTop(6);
+    bandsBox.setBounds(left.removeFromTop(26));
+
+    const int w = knobs.getWidth() / 4;
+    auto place = [&](juce::Label& l, juce::Slider& s) {
+        auto c = knobs.removeFromLeft(w);
+        l.setBounds(c.removeFromTop(18));
+        s.setBounds(c);
+    };
+    place(rateL, rate);
+    place(depthL, depth);
+    place(smoothL, smooth);
+    place(waveL, wave);
+}
