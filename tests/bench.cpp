@@ -117,6 +117,25 @@ int main()
         setParam(p, "depth", 1.f); setParam(p, "mode", 1.f); setParam(p, "smooth", 50.f); });
     nullTest("default pump, depth 100% (should differ)", [](FreeLfoProcessor& p) { setParam(p, "depth", 1.f); });
 
+    // ---- Rate: straight values only (slow -> fast), dotted / triplet as modifiers ----
+    {
+        auto cycle = [&](int division, bool dotted, bool triplet) {
+            FreeLfoProcessor p; FakeHost host; p.setPlayHead(&host);
+            p.setRateAndBufferSizeDetails(sr, blockSize); p.prepareToPlay(sr, blockSize);
+            setParam(p, "mode", 0.f); setParam(p, "division", (float) division);
+            setParam(p, "dotted", dotted ? 1.f : 0.f); setParam(p, "triplet", triplet ? 1.f : 0.f);
+            juce::AudioBuffer<float> b(2, blockSize); b.clear(); juce::MidiBuffer m;
+            p.processBlock(b, m);
+            return p.cycleSeconds.load();
+        };
+        const double quarter = 60.0 / 140.0; // FakeHost runs at 140 bpm
+        bool rateOk = std::abs(cycle(5, false, false) - quarter) < 1e-9
+                      && std::abs(cycle(5, true, false) - quarter * 1.5) < 1e-9
+                      && std::abs(cycle(5, false, true) - quarter * 2.0 / 3.0) < 1e-9;
+        for (int d = 1; d < FreeLfoProcessor::numDivisions; ++d) rateOk = rateOk && cycle(d, false, false) < cycle(d - 1, false, false); // each step is faster
+        std::printf("rate knob: %d straight values slow->fast (down to 1/64), dotted x1.5 and triplet x2/3 modify them: %s\n", FreeLfoProcessor::numDivisions, rateOk ? "OK" : "FAILED");
+    }
+
     // ---- Multiband checks ----
     auto toneRms = [&](FreeLfoProcessor& p, double freq) {
         juce::AudioBuffer<float> buf(2, blockSize);

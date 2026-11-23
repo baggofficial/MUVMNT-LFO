@@ -64,8 +64,16 @@ public:
     std::array<std::atomic<float>, 3> bandPhase {};
     std::array<std::atomic<double>, 3> bandCycleSeconds {};
 
-    static const std::array<const char*, 15> divisionNames;
-    static const std::array<double, 15> divisionBeats; // quarter-note beats per LFO cycle
+    // Straight note values only, slowest to fastest, so turning the knob always speeds the LFO up. Dotted (x1.5 longer)
+    // and triplet (x2/3) are separate switches that modify whatever value is selected.
+    // Grid line counts the draggable grid number steps through (handy musical subdivisions: straight and triplet-friendly)
+    static constexpr std::array<int, 12> gridStops { 2, 3, 4, 6, 8, 12, 16, 24, 32, 36, 48, 64 };
+    static constexpr int defaultGridStop = 6; // index of 16
+
+    static constexpr int numDivisions = 10;
+    static const std::array<const char*, numDivisions> divisionNames;
+    static const std::array<double, numDivisions> divisionBeats; // quarter-note beats per LFO cycle
+    static double rateModifier(bool dotted, bool triplet) { return dotted ? 1.5 : triplet ? 2.0 / 3.0 : 1.0; }
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
@@ -84,7 +92,7 @@ private:
     };
     EnvSlot slots[numSlots];
 
-    struct BandCtl { std::atomic<float> *mode, *division, *hz, *depth, *smooth; };
+    struct BandCtl { std::atomic<float> *mode, *division, *hz, *depth, *smooth, *dotted, *triplet; };
     BandCtl band[3] {};
     std::atomic<float> *pMb = nullptr, *pBands = nullptr, *pXLow = nullptr, *pXHigh = nullptr,
                        *pLink = nullptr, *pSlopeLow = nullptr, *pSlopeHigh = nullptr;
@@ -97,6 +105,8 @@ private:
 
     std::atomic<float>* pMode = nullptr;
     std::atomic<float>* pDivision = nullptr;
+    std::atomic<float>* pDotted = nullptr;
+    std::atomic<float>* pTriplet = nullptr;
     std::atomic<float>* pHz = nullptr;
     std::atomic<float>* pDepth = nullptr;
     std::atomic<float>* pSmooth = nullptr;

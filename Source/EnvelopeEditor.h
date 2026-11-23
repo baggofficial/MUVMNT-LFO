@@ -21,8 +21,18 @@ public:
     void mouseDoubleClick(const juce::MouseEvent&) override;
 
     bool areControlsHidden() const { return controlsHidden; }
-    bool snapToGrid = true;
-    int gridX = 16, gridY = 4;
+    // Snapping is off by default; holding Option (macOS) / Alt (Windows) snaps while you drag. If the Snap switch
+    // is on, it snaps all the time and holding Option / Alt turns it off instead.
+    bool snapToGrid = false;
+    // Number of grid lines (a saved parameter, set by the draggable number in the header). Snapping lands exactly
+    // on the drawn lines. The vertical lines follow the horizontal ones at about half the count.
+    int gridX() const
+    {
+        const int index = juce::jlimit(0, (int) FreeLfoProcessor::gridStops.size() - 1, (int) proc.apvts.getRawParameterValue("gridDiv")->load());
+        return FreeLfoProcessor::gridStops[(size_t) index];
+    }
+    int gridY() const { return juce::jmax(2, gridX() / 2); }
+    bool snapNow(const juce::ModifierKeys& m) const { return snapToGrid != m.isAltDown(); }
 
 private:
     void frame(); // once per display refresh (VBlank), capped to ~60 fps
@@ -60,6 +70,7 @@ private:
     juce::Colour mainColour() const { return slot == 0 ? paper::accent : paper::bandColour(slot - 1); }
 
     FreeLfoProcessor& proc;
+    int cachedGrid = -1; // grid count the cached grid image was drawn with
     int slot = 0;
     std::atomic<float>* depthP = nullptr;
     std::atomic<float>* smoothP = nullptr;

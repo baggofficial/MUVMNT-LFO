@@ -30,6 +30,27 @@ int main()
     }
     assert(near(e.evaluate(1.25f), e.evaluate(0.25f)));                // wraps
 
+    // Multiband defaults: the lows recover slowest, the highs fastest (shapes taken from the reference sketch)
+    {
+        Envelope lo, mi, hi;
+        lo.resetToBandPump(0); mi.resetToBandPump(1); hi.resetToBandPump(2);
+        for (auto* c : { &lo, &mi, &hi })
+        {
+            assert(c->points.size() == 6);
+            assert(near(c->points.front().y, c->points.back().y));
+            assert(near(c->evaluate(0.f), 0.f) && near(c->evaluate(0.5f), 1.f, 2e-3f) && near(c->evaluate(0.8f), 1.f, 2e-3f));
+            assert(c->evaluate(0.999f) < 0.9f);
+        }
+        // heights read off the sketch: (band, x, expected y)
+        struct Probe { const Envelope* e; float x, y; };
+        for (auto p : { Probe { &lo, 0.25f, 0.10f }, Probe { &lo, 0.338f, 0.50f }, Probe { &lo, 0.398f, 0.90f },
+                        Probe { &mi, 0.228f, 0.25f }, Probe { &mi, 0.270f, 0.50f }, Probe { &mi, 0.359f, 0.90f },
+                        Probe { &hi, 0.132f, 0.25f }, Probe { &hi, 0.175f, 0.50f }, Probe { &hi, 0.278f, 0.90f } })
+            assert(near(p.e->evaluate(p.x), p.y, 0.025f));
+        for (float x : { 0.15f, 0.2f, 0.25f, 0.3f, 0.35f })       // at any moment: low <= mid <= high
+            assert(lo.evaluate(x) <= mi.evaluate(x) + 1e-4f && mi.evaluate(x) <= hi.evaluate(x) + 1e-4f);
+    }
+
     // The loop's first and last points always share one height
     {
         Envelope seam; seam.points = { { 0.f, 0.3f }, { 0.5f, 1.f }, { 1.f, 0.9f } };

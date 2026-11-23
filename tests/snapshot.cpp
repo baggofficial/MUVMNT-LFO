@@ -35,6 +35,7 @@ struct MouseDriver
     }
     void down(juce::Point<float> pos) { downPos = pos; ed.mouseDown(make(pos, false, juce::ModifierKeys::leftButtonModifier)); }
     void drag(juce::Point<float> pos) { ed.mouseDrag(make(pos, true, juce::ModifierKeys::leftButtonModifier)); }
+    void dragAlt(juce::Point<float> pos) { ed.mouseDrag(make(pos, true, juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::altModifier)); }
     void up(juce::Point<float> pos) { ed.mouseUp(make(pos, true)); }
 };
 
@@ -148,8 +149,8 @@ static bool newPointRegression()
     m.down(click); ed.mouseDoubleClick(m.make(click, false)); m.up(click);
     auto e1 = p.getEnvelope(0);
     check(e1.points.size() == 7, "double-click adds a point");
-    size_t qi = 0;                                           // the new point is the one at the snapped x
-    for (size_t i = 0; i < e1.points.size(); ++i) if (std::fabs(e1.points[i].x - 0.3125f) < 1e-4f) qi = i;
+    size_t qi = 0;                                           // the new point is the one at the clicked x (snapping is off by default)
+    for (size_t i = 0; i < e1.points.size(); ++i) if (std::fabs(e1.points[i].x - 0.3f) < 2e-3f) qi = i;
     const auto& q = e1.points[qi];
     const auto origin = toScreen(q.x, q.y);
     const float lenOut = toScreen(q.x + q.outDx, q.y + q.outDy).getDistanceFrom(origin);
@@ -239,6 +240,159 @@ static bool seamRegression()
     return ok;
 }
 
+// The Rate readout says "1/4 T" / "1/4 D" when the buttons are on, and 1/64 exists.
+static bool rateReadoutRegression()
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    FreeLfoEditor ed(p);
+    ed.setSize(960, 610);
+    bool ok = true;
+    auto check = [&](bool cond, const char* what) { std::printf("  %-64s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
+    std::printf("rate readout:\n");
+
+    // find the rate knob (the slider whose text is "1/4") and the two small toggle buttons
+    juce::Slider* rate = nullptr; juce::TextButton *dot = nullptr, *trip = nullptr;
+    for (int i = 0; i < ed.getNumChildComponents(); ++i)
+    {
+        auto* c = ed.getChildComponent(i);
+        if (auto* s = dynamic_cast<juce::Slider*>(c)) if (s->getTextFromValue(s->getValue()) == "1/4") rate = s;
+        if (auto* b = dynamic_cast<juce::TextButton*>(c)) { if (b->getButtonText() == "3") trip = b; else if (b->getButtonText().startsWith(juce::String::fromUTF8("\xE2\x80\xA2"))) dot = b; }
+    }
+    check(rate != nullptr && dot != nullptr && trip != nullptr, "found the rate knob and the dotted / triplet buttons");
+    auto click = [](juce::Button* b) { // triggerClick() posts a message: let it run
+        b->triggerClick();
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(60);
+    };
+    auto boxText = [](juce::Slider* s) { // the text under the knob is a Label inside the slider
+        for (int i = 0; i < s->getNumChildComponents(); ++i)
+            if (auto* l = dynamic_cast<juce::Label*>(s->getChildComponent(i))) return l->getText();
+        return juce::String();
+    };
+    if (!ok) return false;
+    check(rate->getTextFromValue(rate->getValue()) == "1/4", "starts as 1/4");
+    click(trip);
+    check(rate->getTextFromValue(rate->getValue()) == "1/4 T", "triplet on: reads 1/4 T");
+    check(boxText(rate) == "1/4 T", "...and that is what the knob's text box shows");
+    click(dot);
+    check(rate->getTextFromValue(rate->getValue()) == "1/4 D" && !trip->getToggleState(), "dotted on: reads 1/4 D, triplet switches off");
+    click(dot);
+    check(rate->getTextFromValue(rate->getValue()) == "1/4", "both off: back to 1/4");
+    rate->setValue(FreeLfoProcessor::numDivisions - 1.0, juce::sendNotificationSync);
+    check(rate->getTextFromValue(rate->getValue()) == "1/64", "the knob's fastest position is 1/64");
+    click(trip);
+    check(boxText(rate) == "1/64 T", "1/64 takes the modifiers too");
+
+    p.apvts.getParameter("mode")->setValueNotifyingHost(1.f);
+    juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+    check(boxText(rate).endsWith(" Hz"), "Hz mode: the readout carries the unit");
+    return ok;
+}
+
+// Snapping: off by default, Option/Alt snaps; with the switch on it is reversed. 4 snap steps between grid lines on both axes.
+static bool snapRegression()
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    p.apvts.getParameter("bezier")->setValueNotifyingHost(1.f);
+    EnvelopeEditor ed(p, 0);
+    ed.setBounds(0, 0, 800, 400);
+    auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 390.f - y * 380.f); };
+    MouseDriver m { ed };
+    bool ok = true;
+    auto check = [&](bool cond, const char* what) { std::printf("  %-64s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
+    auto onGrid = [](float v, int steps) { return std::fabs(v * (float) steps - std::round(v * (float) steps)) < 1e-3f; };
+    std::printf("snapping:\n");
+    check(!ed.snapToGrid, "snapping is off by default");
+
+    // drag the plateau point (index 3, at x 0.5) somewhere that is not on any snap position
+    const float tx = 0.4137f, ty = 0.5321f;
+    auto dragPoint3 = [&](bool alt) {
+        const auto start = toScreen(p.getEnvelope(0).points[3].x, p.getEnvelope(0).points[3].y);
+        const auto target = toScreen(tx, ty);
+        m.down(start);
+        if (alt) m.dragAlt(target); else m.drag(target);
+        m.up(target);
+        return p.getEnvelope(0).points[3];
+    };
+    auto free = dragPoint3(false);
+    check(std::fabs(free.x - tx) < 3e-3f && std::fabs(free.y - ty) < 3e-3f, "a plain drag is free (no snapping)");
+    auto snapped = dragPoint3(true);
+    check(onGrid(snapped.x, 16), "Option/Alt drag snaps x exactly onto the 16 drawn grid lines");
+    check(onGrid(snapped.y, 8), "...and y onto the 8 horizontal lines");
+    check(std::fabs(snapped.x - tx) < 1.f / 32.f && std::fabs(snapped.y - ty) < 1.f / 16.f, "...to the nearest line");
+    check(!onGrid(free.x, 16) || !onGrid(free.y, 8), "(sanity: the free drag was off-grid)");
+
+    // the draggable number changes the number of lines, and snapping follows it
+    auto* grid = p.apvts.getParameter("gridDiv");
+    auto setGrid = [grid](int lines) { // the parameter picks one of the musical stops by index
+        for (size_t i = 0; i < FreeLfoProcessor::gridStops.size(); ++i)
+            if (FreeLfoProcessor::gridStops[i] == lines) grid->setValueNotifyingHost(grid->convertTo0to1((float) i));
+    };
+    setGrid(8);
+    auto coarse = dragPoint3(true);
+    check(onGrid(coarse.x, 8) && onGrid(coarse.y, 4), "grid set to 8: Option/Alt snaps to 8 x 4 lines");
+    setGrid(32);
+    auto fine = dragPoint3(true);
+    check(onGrid(fine.x, 32) && onGrid(fine.y, 16) && std::fabs(fine.x - tx) < 1.f / 64.f, "grid set to 32: snaps to 32 x 16 lines");
+    setGrid(12);                                                  // a triplet-friendly stop
+    auto triplet = dragPoint3(true);
+    check(onGrid(triplet.x, 12) && onGrid(triplet.y, 6), "grid set to 12: snaps to 12 x 6 lines");
+    setGrid(16);
+
+    ed.snapToGrid = true;                                       // Snap switch on: reversed
+    auto always = dragPoint3(false);
+    check(onGrid(always.x, 16) && onGrid(always.y, 8), "with the switch on, a plain drag snaps");
+    auto off = dragPoint3(true);
+    check(std::fabs(off.x - tx) < 3e-3f && std::fabs(off.y - ty) < 3e-3f, "...and Option/Alt then turns snapping off");
+
+    ed.snapToGrid = false;                                      // adding a point honours it too
+    const auto click = toScreen(0.3f, 0.2f);
+    m.down(click); ed.mouseDoubleClick(m.make(click, false, juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::altModifier)); m.up(click);
+    bool found = false;
+    for (auto& pt : p.getEnvelope(0).points) if (std::fabs(pt.x - 0.3f) < 1.f / 32.f && onGrid(pt.x, 16) && pt.x > 0.f && pt.x < 1.f && pt.x != 0.5f) found = true;
+    check(found, "double-click with Option/Alt places the new point on the snap grid");
+    return ok;
+}
+
+// The draggable grid number only lands on musical stops (8, 12, 24, 36...), one step per notch.
+static bool gridStopsRegression()
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    FreeLfoEditor ed(p);
+    ed.setSize(960, 610);
+    bool ok = true;
+    auto check = [&](bool cond, const char* what) { std::printf("  %-64s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
+    std::printf("grid number stops:\n");
+
+    juce::Slider* box = nullptr;
+    for (int i = 0; i < ed.getNumChildComponents(); ++i)
+        if (auto* s = dynamic_cast<juce::Slider*>(ed.getChildComponent(i))) if (s->isBar()) box = s;
+    check(box != nullptr, "found the grid number box");
+    if (!box) return false;
+    auto shown = [&] { return box->getTextFromValue(box->getValue()); };
+    check(shown() == "16", "starts at 16");
+    box->setValue(box->getValue() + 1, juce::sendNotificationSync);
+    check(shown() == "24", "one step up from 16 is 24");
+    box->setValue(box->getValue() + 1, juce::sendNotificationSync);
+    check(shown() == "32", "...then 32");
+    box->setValue(box->getValue() + 1, juce::sendNotificationSync);
+    check(shown() == "36", "...then 36");
+    box->setValue(box->getValue() - 5, juce::sendNotificationSync);
+    check(shown() == "8", "five steps down from 36 lands on 8");
+    box->setValue(box->getValue() + 1, juce::sendNotificationSync);
+    check(shown() == "12", "one step up from 8 is 12");
+    box->setValue(box->getMinimum(), juce::sendNotificationSync);
+    check(shown() == "2", "bottom stop is 2");
+    box->setValue(box->getMaximum(), juce::sendNotificationSync);
+    check(shown() == "64", "top stop is 64");
+    return ok;
+}
+
 int main(int argc, char** argv)
 {
     juce::ScopedJuceInitialiser_GUI init;
@@ -251,7 +405,7 @@ int main(int argc, char** argv)
     p.setRateAndBufferSizeDetails(sr, bs);
     p.prepareToPlay(sr, bs);
     std::unique_ptr<juce::AudioProcessorEditor> ed(p.createEditor()); // sets editorOpen, so the waveform gets analysed
-    ed->setSize(900, 610);
+    ed->setSize(960, 610);
 
     // Material to look at: a 90 Hz "kick" every half second plus short hi-hat noise bursts
     juce::AudioBuffer<float> buf(2, bs);
@@ -355,5 +509,8 @@ int main(int argc, char** argv)
     const bool c = newPointRegression();
     const bool d = endHandleRegression();
     const bool f = seamRegression();
-    return a && b && c && d && f ? 0 : 1;
+    const bool g = snapRegression();
+    const bool h = rateReadoutRegression();
+    const bool k = gridStopsRegression();
+    return a && b && c && d && f && g && h && k ? 0 : 1;
 }

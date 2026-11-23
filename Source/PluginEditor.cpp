@@ -7,7 +7,7 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
 {
     setLookAndFeel(&laf);
     proc.editorOpen.store(true);
-    setSize(900, 610);
+    setSize(960, 610);
     addAndMakeVisible(curve);
     addAndMakeVisible(mbPanel);
 
@@ -32,10 +32,24 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     smooth.setTextValueSuffix(" ms");
 
     addAndMakeVisible(retrigger);
-    snap.setToggleState(true, juce::dontSendNotification);
+    snap.setToggleState(false, juce::dontSendNotification); // off by default: hold Option / Alt to snap
     snap.onClick = [this] { curve.snapToGrid = snap.getToggleState(); mbPanel.setSnap(snap.getToggleState()); };
     addAndMakeVisible(snap);
     addAndMakeVisible(bezier);
+
+    // Draggable grid number: how many grid lines the curve editor has, and where snapping lands
+    gridBox.setSliderStyle(juce::Slider::LinearBarVertical);
+    gridBox.setMouseDragSensitivity(260);   // about 22 px of dragging per step, so each stop is easy to land on
+    gridBox.setVelocityBasedMode(false);
+    gridBox.setColour(juce::Slider::textBoxTextColourId, paper::text);
+    gridBox.setColour(juce::Slider::textBoxOutlineColourId, juce::Colours::transparentBlack);
+    gridBox.setTooltip("Grid lines and snap steps (drag up or down)");
+    addAndMakeVisible(gridBox);
+
+    // Dotted / triplet modifiers for the straight note value on the Rate knob (one at a time)
+    for (auto* b : { &dotBtn, &tripBtn }) { b->setClickingTogglesState(true); b->onStateChange = [this] { rate.updateText(); }; addAndMakeVisible(*b); }
+    dotBtn.onClick = [this] { if (dotBtn.getToggleState()) tripBtn.setToggleState(false, juce::sendNotificationSync); rate.updateText(); };
+    tripBtn.onClick = [this] { if (tripBtn.getToggleState()) dotBtn.setToggleState(false, juce::sendNotificationSync); rate.updateText(); };
     // Flipping the switch converts every curve to the other style, so it stays editable after the switch
     bezier.onClick = [this] { proc.convertCurveMode(bezier.getToggleState()); curve.repaint(); };
 
@@ -54,6 +68,10 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     waveA = std::make_unique<SA>(proc.apvts, "waveOpacity", wave);
     retrigA = std::make_unique<BA>(proc.apvts, "retrigger", retrigger);
     bezierA = std::make_unique<BA>(proc.apvts, "bezier", bezier);
+    dotA = std::make_unique<BA>(proc.apvts, "dotted", dotBtn);
+    tripA = std::make_unique<BA>(proc.apvts, "triplet", tripBtn);
+    gridA = std::make_unique<SA>(proc.apvts, "gridDiv", gridBox); // steps through FreeLfoProcessor::gridStops
+    gridBox.setDoubleClickReturnValue(true, FreeLfoProcessor::defaultGridStop);
 
     mode.onChange = [this] { bindRate(); };
     modeA = std::make_unique<CA>(proc.apvts, "mode", mode);
@@ -88,7 +106,7 @@ void FreeLfoEditor::updateTab()
         c->setVisible(!mb);
     mbPanel.setVisible(mb);
 
-    if (mb) retrigger.setVisible(false);
+    if (mb) { retrigger.setVisible(false); dotBtn.setVisible(false); tripBtn.setVisible(false); }
     else bindRate(); // restores the retrigger switch for Hz mode, and relayouts
     resized();
 }
@@ -98,23 +116,25 @@ void FreeLfoEditor::bindRate()
     const bool syncMode = mode.getSelectedItemIndex() <= 0;
     rateA.reset(); // detach before swapping which parameter the knob drives
 
+    // NB: creating a SliderAttachment installs its own text functions, so ours go in AFTER it, or they are ignored
     if (syncMode)
     {
-        rate.textFromValueFunction = [](double v) {
-            return juce::String(FreeLfoProcessor::divisionNames[(size_t) juce::jlimit(0, 14, (int) std::round(v))]);
-        };
-        rate.valueFromTextFunction = nullptr;
         rateA = std::make_unique<SA>(proc.apvts, "division", rate);
+        rate.textFromValueFunction = [this](double v) {
+            return juce::String(FreeLfoProcessor::divisionNames[(size_t) juce::jlimit(0, FreeLfoProcessor::numDivisions - 1, (int) std::round(v))])
+                   + (dotBtn.getToggleState() ? " D" : tripBtn.getToggleState() ? " T" : "");
+        };
     }
     else
     {
+        rateA = std::make_unique<SA>(proc.apvts, "hz", rate);
         rate.textFromValueFunction = [](double v) {
             return juce::String(v, v < 10.0 ? 2 : 1) + " Hz";
         };
-        rate.valueFromTextFunction = nullptr;
-        rateA = std::make_unique<SA>(proc.apvts, "hz", rate);
     }
     rate.updateText();
+    dotBtn.setVisible(syncMode && !multibandOn());   // dotted / triplet only mean something in Sync mode
+    tripBtn.setVisible(syncMode && !multibandOn());
     retrigger.setVisible(!syncMode && !multibandOn());
     resized();
 }
@@ -145,6 +165,8 @@ void FreeLfoEditor::resized()
     if (!mb) mode.setBounds(top.removeFromLeft(90).reduced(0, 4));
     reset.setBounds(top.removeFromRight(70).reduced(0, 4));
     top.removeFromRight(10);
+    gridBox.setBounds(top.removeFromRight(46).reduced(0, 5));
+    top.removeFromRight(4);
     snap.setBounds(top.removeFromRight(86));
     bezier.setBounds(top.removeFromRight(150));
     retrigger.setBounds(top.removeFromRight(150));
@@ -161,7 +183,11 @@ void FreeLfoEditor::resized()
         l.setBounds(c.removeFromTop(18));
         s.setBounds(c);
     };
+    const auto rateColumn = knobs.withWidth(w);
     place(rateL, rate);
+    // dotted / triplet sit either side of the rate readout, like the note-value buttons on Xfer's LFO Tool
+    dotBtn.setBounds(rateColumn.getX() + 8, rateColumn.getBottom() - 24, 26, 22);
+    tripBtn.setBounds(rateColumn.getRight() - 34, rateColumn.getBottom() - 24, 26, 22);
     place(depthL, depth);
     place(smoothL, smooth);
     place(offsetL, offset);

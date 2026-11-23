@@ -1,14 +1,12 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
-const std::array<const char*, 15> FreeLfoProcessor::divisionNames = {
-    "8 bars", "4 bars", "2 bars", "1 bar", "1/2", "1/4", "1/8", "1/16", "1/32",
-    "1/4 T", "1/8 T", "1/16 T", "1/4 D", "1/8 D", "1/16 D"
+const std::array<const char*, FreeLfoProcessor::numDivisions> FreeLfoProcessor::divisionNames = {
+    "8 bars", "4 bars", "2 bars", "1 bar", "1/2", "1/4", "1/8", "1/16", "1/32", "1/64"
 };
 
-const std::array<double, 15> FreeLfoProcessor::divisionBeats = {
-    32.0, 16.0, 8.0, 4.0, 2.0, 1.0, 0.5, 0.25, 0.125,
-    2.0 / 3.0, 1.0 / 3.0, 1.0 / 6.0, 1.5, 0.75, 0.375
+const std::array<double, FreeLfoProcessor::numDivisions> FreeLfoProcessor::divisionBeats = {
+    32.0, 16.0, 8.0, 4.0, 2.0, 1.0, 0.5, 0.25, 0.125, 0.0625
 };
 
 juce::AudioProcessorValueTreeState::ParameterLayout FreeLfoProcessor::createLayout()
@@ -22,6 +20,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout FreeLfoProcessor::createLayo
     StringArray divs;
     for (auto* n : divisionNames) divs.add(n);
     l.add(std::make_unique<AudioParameterChoice>(ParameterID { "division", 1 }, "Rate", divs, 5)); // 1/4
+    l.add(std::make_unique<AudioParameterBool>(ParameterID { "dotted", 1 }, "Dotted", false));
+    l.add(std::make_unique<AudioParameterBool>(ParameterID { "triplet", 1 }, "Triplet", false));
+    StringArray gridNames;
+    for (int n : gridStops) gridNames.add(String(n));
+    l.add(std::make_unique<AudioParameterChoice>(ParameterID { "gridDiv", 1 }, "Grid Lines", gridNames, defaultGridStop)); // curve editor grid + snap
 
     l.add(std::make_unique<AudioParameterFloat>(ParameterID { "hz", 1 }, "Frequency",
                                                 NormalisableRange<float>(0.01f, 40.f, 0.001f, 0.35f), 2.f));
@@ -59,6 +62,8 @@ juce::AudioProcessorValueTreeState::ParameterLayout FreeLfoProcessor::createLayo
         const String sfx = bandSuffix(b), nm = names[b];
         l.add(std::make_unique<AudioParameterChoice>(ParameterID { "mode" + sfx, 1 }, nm + " Mode", StringArray { "Sync", "Hz" }, 0));
         l.add(std::make_unique<AudioParameterChoice>(ParameterID { "div" + sfx, 1 }, nm + " Rate", divs, 5));
+        l.add(std::make_unique<AudioParameterBool>(ParameterID { "dot" + sfx, 1 }, nm + " Dotted", false));
+        l.add(std::make_unique<AudioParameterBool>(ParameterID { "trip" + sfx, 1 }, nm + " Triplet", false));
         l.add(std::make_unique<AudioParameterFloat>(ParameterID { "hz" + sfx, 1 }, nm + " Frequency",
                                                     NormalisableRange<float>(0.01f, 40.f, 0.001f, 0.35f), 2.f));
         l.add(std::make_unique<AudioParameterFloat>(ParameterID { "depth" + sfx, 1 }, nm + " Depth",
@@ -78,6 +83,8 @@ FreeLfoProcessor::FreeLfoProcessor()
 {
     pMode = apvts.getRawParameterValue("mode");
     pDivision = apvts.getRawParameterValue("division");
+    pDotted = apvts.getRawParameterValue("dotted");
+    pTriplet = apvts.getRawParameterValue("triplet");
     pHz = apvts.getRawParameterValue("hz");
     pDepth = apvts.getRawParameterValue("depth");
     pSmooth = apvts.getRawParameterValue("smooth");
@@ -97,15 +104,19 @@ FreeLfoProcessor::FreeLfoProcessor()
         const juce::String sfx = bandSuffix(b);
         band[b] = { apvts.getRawParameterValue("mode" + sfx), apvts.getRawParameterValue("div" + sfx),
                     apvts.getRawParameterValue("hz" + sfx), apvts.getRawParameterValue("depth" + sfx),
-                    apvts.getRawParameterValue("smooth" + sfx) };
+                    apvts.getRawParameterValue("smooth" + sfx),
+                    apvts.getRawParameterValue("dot" + sfx), apvts.getRawParameterValue("trip" + sfx) };
         bandCycleSeconds[(size_t) b].store(0.5);
     }
 
     setEnvelope(Envelope()); // default pump shape
-    setEnvelope(Envelope(), 1); // multiband default: the low band ducks (bass sidechain), the rest pass through
-    Envelope flat; flat.resetToFlat();
-    setEnvelope(flat, 2);
-    setEnvelope(flat, 3);
+    // multiband defaults: the same pump in every band, recovering slowest in the lows and fastest in the highs
+    for (int b = 0; b < 3; ++b)
+    {
+        Envelope e;
+        e.resetToBandPump(b);
+        setEnvelope(e, b + 1);
+    }
 }
 
 bool FreeLfoProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
@@ -216,7 +227,8 @@ void FreeLfoProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
     }
 
     const bool syncMode = pMode->load() < 0.5f;
-    const double beats = divisionBeats[(size_t) juce::jlimit(0, 14, (int) pDivision->load())];
+    const double beats = divisionBeats[(size_t) juce::jlimit(0, numDivisions - 1, (int) pDivision->load())]
+                         * rateModifier(pDotted->load() > 0.5f, pTriplet->load() > 0.5f);
     const double offset = pOffset->load();
     const float depth = pDepth->load();
     const double hz = pHz->load();
@@ -356,7 +368,8 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, double bp
     {
         const auto& rate = band[link ? rateSource : b];
         const bool syncMode = rate.mode->load() < 0.5f;
-        const double beats = divisionBeats[(size_t) juce::jlimit(0, 14, (int) rate.division->load())];
+        const double beats = divisionBeats[(size_t) juce::jlimit(0, numDivisions - 1, (int) rate.division->load())]
+                             * rateModifier(rate.dotted->load() > 0.5f, rate.triplet->load() > 0.5f);
         const double hz = rate.hz->load();
         const bool useHost = syncMode && playing && havePpq;
 

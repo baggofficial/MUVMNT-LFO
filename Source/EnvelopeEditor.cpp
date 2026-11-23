@@ -28,8 +28,8 @@ void EnvelopeEditor::setSlot(int newSlot)
 
 void EnvelopeEditor::resetCurve()
 {
-    Envelope e;                       // pump
-    if (slot >= 2) e.resetToFlat();   // mid / high bands default to "no effect"
+    Envelope e;                       // the single-band pump
+    if (slot >= 1) e.resetToBandPump(slot - 1); // each band's own default
     proc.setEnvelope(e, slot);
     env = e;
     selected = -1;
@@ -194,16 +194,18 @@ void EnvelopeEditor::renderGrid(juce::Graphics& g)
     g.fillRoundedRectangle(area, 6.f);
 
     // grid
-    for (int i = 0; i <= gridX; ++i)
+    const int gx = gridX(), gy = gridY();
+    const int strong = juce::jmax(1, gx / 4); // every quarter of the cycle is a bit stronger
+    for (int i = 0; i <= gx; ++i)
     {
-        g.setColour(juce::Colours::black.withAlpha(i % 4 == 0 ? 0.14f : 0.06f));
-        auto a = toScreen((float) i / gridX, 0.f), b = toScreen((float) i / gridX, 1.f);
+        g.setColour(juce::Colours::black.withAlpha(i % strong == 0 ? 0.14f : 0.06f));
+        auto a = toScreen((float) i / gx, 0.f), b = toScreen((float) i / gx, 1.f);
         g.drawLine(a.x, a.y, b.x, b.y);
     }
-    for (int i = 0; i <= gridY; ++i)
+    for (int i = 0; i <= gy; ++i)
     {
         g.setColour(juce::Colours::black.withAlpha(0.07f));
-        auto a = toScreen(0.f, (float) i / gridY), b = toScreen(1.f, (float) i / gridY);
+        auto a = toScreen(0.f, (float) i / gy), b = toScreen(1.f, (float) i / gy);
         g.drawLine(a.x, a.y, b.x, b.y);
     }
 
@@ -417,7 +419,7 @@ void EnvelopeEditor::frame()
     const unsigned blk = proc.blockCounter.load(std::memory_order_relaxed);
     const bool audioMoving = blk != lastBlock || (now - proc.uiPhaseTimeMs.load(std::memory_order_relaxed)) < 60.0;
     lastBlock = blk;
-    if (audioMoving || computeKey() != curveKey) repaint();
+    if (audioMoving || computeKey() != curveKey || cachedGrid != gridX()) repaint();
 }
 
 void EnvelopeEditor::paint(juce::Graphics& g)
@@ -433,7 +435,12 @@ void EnvelopeEditor::paint(juce::Graphics& g)
     };
 
     const bool sizeChanged = !gridImg.isValid() || gridImg.getWidth() != pw || gridImg.getHeight() != ph;
-    if (sizeChanged) { rebuild(gridImg, [this](juce::Graphics& ig) { renderGrid(ig); }); curveKey = 0; }
+    if (sizeChanged || cachedGrid != gridX()) // the grid is cached too: redraw when its line count changes
+    {
+        rebuild(gridImg, [this](juce::Graphics& ig) { renderGrid(ig); });
+        cachedGrid = gridX();
+        curveKey = 0;
+    }
 
     const size_t key = computeKey();
     if (key != curveKey || sizeChanged) { rebuild(curveImg, [this](juce::Graphics& ig) { renderCurveLayer(ig); }); curveKey = key; }
@@ -509,10 +516,10 @@ void EnvelopeEditor::mouseDrag(const juce::MouseEvent& e)
     if (dragPoint >= 0)
     {
         auto n = toNorm(e.position);
-        if (snapToGrid && !e.mods.isAltDown())
+        if (snapNow(e.mods))
         {
-            n.x = std::round(n.x * gridX) / gridX;
-            n.y = std::round(n.y * (gridY * 4)) / (gridY * 4);
+            n.x = std::round(n.x * gridX()) / gridX();   // exactly on the drawn grid lines
+            n.y = std::round(n.y * gridY()) / gridY();
         }
         auto& pt = env.points[(size_t) dragPoint];
         pt.y = n.y;
@@ -626,7 +633,7 @@ void EnvelopeEditor::mouseDoubleClick(const juce::MouseEvent& e)
     else if (hitHandle(e.position).first < 0)
     {
         auto n = toNorm(e.position);
-        if (snapToGrid) n.x = std::round(n.x * gridX) / gridX;
+        if (snapNow(e.mods)) n.x = std::round(n.x * gridX()) / gridX();
         if (n.x <= 0.f || n.x >= 1.f) return;
         env.points.push_back({ n.x, n.y });
         env.normalize();
@@ -650,7 +657,11 @@ void EnvelopeEditor::mouseDoubleClick(const juce::MouseEvent& e)
                 if (dy < 0.f && q.y + dy < 0.f) k = (0.f - q.y) / dy;
                 return std::pair<float, float> { dx * k, dy * k };
             };
-            const float dr = (next.x - q.x) / 3.f, dl = (q.x - prev.x) / 3.f;
+            // a third of the way to each neighbour, but never shorter than ~28 px (unless the neighbour is closer than that),
+            // so the handles stay clearly apart from the point even when it is placed right next to another one
+            const float minDx = 28.f / juce::jmax(1.f, (float) getWidth() - 20.f);
+            const float dr = juce::jmax((next.x - q.x) / 3.f, juce::jmin(next.x - q.x, minDx));
+            const float dl = juce::jmax((q.x - prev.x) / 3.f, juce::jmin(q.x - prev.x, minDx));
             const auto o = fit(dr, slope * dr), i = fit(-dl, -slope * dl);
             q.outDx = o.first; q.outDy = o.second;
             q.inDx = i.first;  q.inDy = i.second;

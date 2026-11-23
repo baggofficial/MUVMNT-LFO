@@ -316,6 +316,9 @@ MultibandPanel::MultibandPanel(FreeLfoProcessor& p) : proc(p), strip(p), curve(p
     addAndMakeVisible(modeBox);
     addAndMakeVisible(bandsBox);
     addAndMakeVisible(linkBtn);
+    for (auto* b : { &dotBtn, &tripBtn }) { b->setClickingTogglesState(true); b->onStateChange = [this] { rate.updateText(); }; addAndMakeVisible(*b); }
+    dotBtn.onClick = [this] { if (dotBtn.getToggleState()) tripBtn.setToggleState(false, juce::sendNotificationSync); rate.updateText(); };
+    tripBtn.onClick = [this] { if (tripBtn.getToggleState()) dotBtn.setToggleState(false, juce::sendNotificationSync); rate.updateText(); };
 
     auto setup = [this](juce::Slider& s, juce::Label& l, const juce::String& text) {
         s.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
@@ -357,6 +360,7 @@ int MultibandPanel::signature() const
 void MultibandPanel::timerCallback()
 {
     if (signature() != lastSig) rebind();
+    else rate.updateText(); // picks up dotted / triplet changes (cheap: only touches the label if the text changed)
 }
 
 void MultibandPanel::selectBand(int band)
@@ -374,24 +378,28 @@ void MultibandPanel::rebind()
     const int eff = link ? (three ? 1 : 0) : selected; // linked bands all follow one band's rate settings
     const juce::String es = FreeLfoProcessor::bandSuffix(eff), ss = FreeLfoProcessor::bandSuffix(selected);
 
-    rateA.reset(); modeA.reset(); depthA.reset(); smoothA.reset();
+    rateA.reset(); modeA.reset(); depthA.reset(); smoothA.reset(); dotA.reset(); tripA.reset();
 
     modeA = std::make_unique<CA>(proc.apvts, "mode" + es, modeBox);
     const bool syncMode = proc.apvts.getRawParameterValue("mode" + es)->load() < 0.5f;
+    // NB: creating a SliderAttachment installs its own text functions, so ours go in AFTER it, or they are ignored
     if (syncMode)
     {
-        rate.textFromValueFunction = [](double x) {
-            return juce::String(FreeLfoProcessor::divisionNames[(size_t) juce::jlimit(0, 14, (int) std::round(x))]);
-        };
-        rate.valueFromTextFunction = nullptr;
         rateA = std::make_unique<SA>(proc.apvts, "div" + es, rate);
+        rate.textFromValueFunction = [this](double x) {
+            return juce::String(FreeLfoProcessor::divisionNames[(size_t) juce::jlimit(0, FreeLfoProcessor::numDivisions - 1, (int) std::round(x))])
+                   + (dotBtn.getToggleState() ? " D" : tripBtn.getToggleState() ? " T" : "");
+        };
     }
     else
     {
-        rate.textFromValueFunction = [](double x) { return juce::String(x, x < 10.0 ? 2 : 1) + " Hz"; };
-        rate.valueFromTextFunction = nullptr;
         rateA = std::make_unique<SA>(proc.apvts, "hz" + es, rate);
+        rate.textFromValueFunction = [](double x) { return juce::String(x, x < 10.0 ? 2 : 1) + " Hz"; };
     }
+    dotA = std::make_unique<BA>(proc.apvts, "dot" + es, dotBtn);   // dotted / triplet follow the same band as the rate
+    tripA = std::make_unique<BA>(proc.apvts, "trip" + es, tripBtn);
+    dotBtn.setVisible(syncMode);
+    tripBtn.setVisible(syncMode);
     rate.updateText();
 
     depthA = std::make_unique<SA>(proc.apvts, "depth" + ss, depth);
@@ -430,7 +438,10 @@ void MultibandPanel::resized()
         l.setBounds(c.removeFromTop(18));
         s.setBounds(c);
     };
+    const auto rateColumn = knobs.withWidth(w);
     place(rateL, rate);
+    dotBtn.setBounds(rateColumn.getX() + 4, rateColumn.getBottom() - 24, 26, 22);
+    tripBtn.setBounds(rateColumn.getRight() - 30, rateColumn.getBottom() - 24, 26, 22);
     place(depthL, depth);
     place(smoothL, smooth);
     place(waveL, wave);

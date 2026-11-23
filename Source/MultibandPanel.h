@@ -63,6 +63,7 @@ private:
 
     juce::ComboBox modeBox, bandsBox;
     juce::ToggleButton linkBtn { "Link rates" };
+    juce::TextButton dotBtn { juce::String::fromUTF8("\xE2\x80\xA2") }, tripBtn { "3" };
     juce::Slider rate, depth, smooth, wave;
     juce::Label bandL, rateL, depthL, smoothL, waveL;
 
@@ -71,7 +72,7 @@ private:
     using BA = juce::AudioProcessorValueTreeState::ButtonAttachment;
     std::unique_ptr<CA> modeA, bandsA;
     std::unique_ptr<SA> rateA, depthA, smoothA, waveA;
-    std::unique_ptr<BA> linkA;
+    std::unique_ptr<BA> linkA, dotA, tripA;
 
     int selected = 0;
     int lastSig = -1;

@@ -105,4 +105,20 @@ public:
     }
 
     juce::Font getComboBoxFont(juce::ComboBox&) override { return juce::FontOptions(14.f); }
+
+    // Bar-style sliders are used as small draggable number boxes (drag up / down to change the value)
+    void drawLinearSlider(juce::Graphics& g, int x, int y, int w, int h, float pos, float minPos, float maxPos,
+                          juce::Slider::SliderStyle style, juce::Slider& s) override
+    {
+        if (!s.isBar())
+        {
+            LookAndFeel_V4::drawLinearSlider(g, x, y, w, h, pos, minPos, maxPos, style, s);
+            return;
+        }
+        auto b = juce::Rectangle<float>((float) x, (float) y, (float) w, (float) h).reduced(0.5f);
+        g.setColour(s.isMouseOverOrDragging() ? paper::bg : paper::panel);
+        g.fillRoundedRectangle(b, 6.f);
+        g.setColour(s.isMouseButtonDown() ? paper::accent : paper::line);
+        g.drawRoundedRectangle(b, 6.f, 1.f);
+    }
 };

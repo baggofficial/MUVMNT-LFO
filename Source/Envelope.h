@@ -48,6 +48,30 @@ public:
                    { 1.000f, 0.f,  0.f,      1.f,     0.f,    0.f    } };
     }
 
+    // Multiband defaults, one per band (0 = low, 1 = mid, 2 = high): the same pump, but the lows stay ducked longest and
+    // the highs recover fastest, so the kick punches through. The shapes were fitted to a reference sketch (max error
+    // under 1% of the height). Same 6-point layout and sharp drop at the end as the single-band default.
+    void resetToBandPump(int band)
+    {
+        //                  x      y     inDx     inDy    outDx   outDy
+        const EnvPoint start[3] = { { 0.000f, 0.f,  0.f,      0.f,  0.044f, 0.f },
+                                    { 0.000f, 0.f,  0.f,      0.f,  0.044f, 0.f },
+                                    { 0.000f, 0.f,  0.f,      0.f,  0.006f, 0.f } };
+        const EnvPoint rise1[3] = { { 0.133f, 0.f, -0.063f,   0.f,  0.1571f, 0.0015f },   // low
+                                    { 0.133f, 0.f, -0.063f,   0.f,  0.0579f, 0.0103f },   // mid
+                                    { 0.020f, 0.f, -0.0067f,  0.f,  0.0745f, 0.0443f } }; // high
+        const EnvPoint mid[3]   = { { 0.338f, 0.5f, -0.0085f, -0.0934f, 0.0368f, 0.3994f },
+                                    { 0.270f, 0.5f, -0.0444f, -0.2812f, 0.0845f, 0.5000f },
+                                    { 0.175f, 0.5f, -0.0381f, -0.2639f, 0.0297f, 0.1595f } };
+        const EnvPoint top[3]   = { { 0.500f, 1.f, -0.0924f, -0.0011f, 0.063f, 0.f },
+                                    { 0.500f, 1.f, -0.1136f,  0.0000f, 0.063f, 0.f },
+                                    { 0.500f, 1.f, -0.3168f, -0.0009f, 0.063f, 0.f } };
+        const int b = std::clamp(band, 0, 2);
+        points = { start[b], rise1[b], mid[b], top[b],
+                   { 0.940f, 1.f, -0.050f, 0.f, 0.061f, 0.f },     // end of the plateau
+                   { 1.000f, 0.f,  0.f,    1.f, 0.f,    0.f } };   // sharp drop: back to where the loop started
+    }
+
     void resetToFlat() { points = { { 0.f, 1.f }, { 1.f, 1.f } }; }
 
     // Handle positions as drawn/evaluated: x limited to the neighbouring segment, y to 0..1.
