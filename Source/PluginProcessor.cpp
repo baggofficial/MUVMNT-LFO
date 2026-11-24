@@ -608,16 +608,16 @@ void FreeLfoProcessor::processSingle(juce::AudioBuffer<float>& mainBuf, const Ho
                     lp1500 += c1500 * (mono - lp1500);
                     eLow += eCoef * (std::abs(lp150) - eLow);
                     eHigh += eCoef * (std::abs(mono - lp1500) - eHigh);
-                    if (zcEnv > 0.01f)
+                    if (isNew && zcEnv > 0.01f)   // the colour only needs updating when the position enters a new bin
                     {
                         const float mixNow = juce::jlimit(0.f, 1.f, 2.f * juce::jmin(eLow, eHigh) / (eLow + eHigh + 1e-6f));
                         auto& mixA = waveMix[(size_t) bin];
-                        mixA.store(mixA.load(std::memory_order_relaxed) * 0.94f + mixNow * 0.06f, std::memory_order_relaxed);
+                        mixA.store(mixA.load(std::memory_order_relaxed) * 0.5f + mixNow * 0.5f, std::memory_order_relaxed);
                         const float hz = juce::jlimit(40.f, 16000.f, zcrSmooth * 0.5f * (float) sr);
-                        const float t = std::log(hz / 40.f) / std::log(16000.f / 40.f);
+                        const float t = std::log(hz * (1.f / 40.f)) * (1.f / 5.9914645f);   // ln(16000 / 40)
                         auto& hue = waveHue[(size_t) bin];
                         const float old = hue.load(std::memory_order_relaxed);
-                        hue.store(old < 0.f ? t : old + (t - old) * 0.06f, std::memory_order_relaxed);
+                        hue.store(old < 0.f ? t : old + (t - old) * 0.5f, std::memory_order_relaxed);
                     }
                 }
                 lastWaveBin = bin;

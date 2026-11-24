@@ -7,6 +7,7 @@
 // filter stability, NaN/Inf and extreme-setting robustness, tempo accuracy at 130 bpm, the sidechain bus, no
 // allocations on the audio thread, thread safety while the curve is edited, state save/load, and CPU in worst cases.
 #include "../Source/PluginProcessor.h"
+#include "../Source/Spectrum.h"
 #include "fake_host.h"
 
 #include <algorithm>
@@ -354,6 +355,25 @@ static void testMeters()
     const float mi = r.p.meterIn.load(), mo = r.p.meterOut.load();
     check(mi > 0.45f && mi < 0.52f, "input meter reads the input peak", fmt("%.3f (input peak 0.5)", mi));
     check(mo <= mi + 1e-4f && mo > 0.f, "output meter reads at most the input peak", fmt("%.3f", mo));
+}
+
+// ---------------------------------------------------------------------------------------------
+// The spectrum analyser: a sine lands in the right bin at the right level.
+// ---------------------------------------------------------------------------------------------
+static void testSpectrum()
+{
+    section("3c2. Spectrum analyser");
+    spectrum::Analyser a;
+    std::vector<float> sig((size_t) spectrum::fftSize), db;
+    const int bin = 100;
+    for (int i = 0; i < spectrum::fftSize; ++i)
+        sig[(size_t) i] = 0.5f * (float) std::sin(6.283185307179586 * (double) bin * (double) i / (double) spectrum::fftSize);
+    a.magnitudesDb(sig.data(), db);
+    size_t peak = 0;
+    for (size_t k = 1; k < db.size(); ++k) if (db[k] > db[peak]) peak = k;
+    check(peak == (size_t) bin, "a sine lands in the right bin", fmt("bin %zu (expected %d)", peak, bin));
+    check(std::abs(db[peak] - (-6.02f)) < 0.6f, "a 0.5 sine reads about -6 dB", fmt("%.2f dB", db[peak]));
+    check(db[(size_t) bin + 40] < db[peak] - 60.f, "far from the sine it is quiet", fmt("%.1f dB below", db[peak] - db[(size_t) bin + 40]));
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -931,6 +951,7 @@ int main()
     testMultibandTransparent();
     testKnobLinks();
     testMeters();
+    testSpectrum();
     testBypass();
     testBlockSizes();
     testSmoothingSlew();

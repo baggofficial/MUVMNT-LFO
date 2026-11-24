@@ -39,6 +39,7 @@ public:
     // slot 0 = the single-band curve; slots 1..3 = the low / mid / high band curves (Multiband tab)
     static constexpr int numSlots = 4;
     Envelope getEnvelope(int slot = 0) const;
+    int envelopeVersion(int slot) const { return slots[(size_t) juce::jlimit(0, numSlots - 1, slot)].version.load(std::memory_order_acquire); }   // bumps on every change: lets the editor skip copying an unchanged curve
     void setEnvelope(const Envelope& e, int slot = 0);
     // Bezier handles <-> simple bend, applied to every curve (single + the three bands) when the user flips the switch
     void convertCurveMode(bool toBezier);

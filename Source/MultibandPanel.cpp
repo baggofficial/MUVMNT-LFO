@@ -54,13 +54,14 @@ void BandStrip::updateSpectrum()
     if (specDb.empty()) { specDb.assign((size_t) spectrum::fftSize / 2, -120.f); specDbOut = specDb; }
 
     auto analyse = [&](const std::array<std::atomic<float>, FreeLfoProcessor::specSize>& fifo, std::vector<float>& smooth) {
-        std::vector<float> samples((size_t) spectrum::fftSize);
+        specSamples.resize((size_t) spectrum::fftSize);
+        auto& samples = specSamples;
         const int w = proc.specPos.load(std::memory_order_acquire);
         for (int i = 0; i < spectrum::fftSize; ++i)
             samples[(size_t) i] = fifo[(size_t) ((w + FreeLfoProcessor::specSize - spectrum::fftSize + i) % FreeLfoProcessor::specSize)]
                                       .load(std::memory_order_relaxed);
-        std::vector<float> db;
-        spectrum::magnitudesDb(samples.data(), db);
+        auto& db = specTmpDb;
+        analyser.magnitudesDb(samples.data(), db);
         for (size_t k = 0; k < smooth.size(); ++k)
             smooth[k] += (db[k] - smooth[k]) * (db[k] > smooth[k] ? 0.6f : 0.12f);
     };

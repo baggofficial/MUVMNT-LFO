@@ -569,11 +569,19 @@ void EnvelopeEditor::frame()
     if (now - lastFrameMs < 14.0) return; // ~60 fps cap, even on 120 Hz displays
     lastFrameMs = now;
 
+    // Copy a curve only when it changed (60 times a second would otherwise copy up to three curves for nothing)
     if (dragPoint < 0 && dragKind == 0 && dragSeg < 0)
-        env = proc.getEnvelope(slot);
+    {
+        const int v = proc.envelopeVersion(slot);
+        if (v != seenVersion[0] || seenSlot != slot) { env = proc.getEnvelope(slot); seenVersion[0] = v; seenSlot = slot; }
+    }
     if (slot > 0)
         for (int other = 1; other <= 3; ++other)
-            if (other != slot) ghost[other - 1] = proc.getEnvelope(other);
+            if (other != slot)
+            {
+                const int v = proc.envelopeVersion(other);
+                if (v != seenVersion[other]) { ghost[other - 1] = proc.getEnvelope(other); seenVersion[other] = v; }
+            }
 
     // Idle = no repaint: only redraw when audio is flowing or something changed.
     const unsigned blk = proc.blockCounter.load(std::memory_order_relaxed);

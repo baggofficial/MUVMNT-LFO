@@ -42,6 +42,8 @@ private:
     int dragHandle = -1; // 0 = low split, 1 = high split
     int lastSig = -1;
     unsigned lastBlock = 0;
+    spectrum::Analyser analyser;                       // preallocated: the 30 Hz update allocates nothing
+    std::vector<float> specSamples, specTmpDb;
     std::vector<float> specDb, specDbOut;   // smoothed live spectrum (dB per FFT bin): input, and output after the plugin
     bool specLive = false;          // something is still visible
     void updateSpectrum();

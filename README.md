@@ -50,13 +50,15 @@ It is an independent, from-scratch implementation inspired by the workflow of Xf
 - The input waveform is drawn folded onto the LFO cycle, faintly, with the **output** (what the plugin actually lets through) drawn over it in the curve's colour, so you can see where the kick and the hats land against your curve and what the ducking does to them. In the Single tab the output is coloured like a rainbow by pitch (red up to 100 Hz, then orange, yellow, green, turquoise and blue for the highs; a mix of lots of bass and highs tints pink or purple), a rough zero-crossing estimate; the input stays grey. In Multiband each band shows its own signal in its own colour (red lows, green mids, blue highs). The **Waveform** knob sets how strong this is.
 - An optional sidechain input is drawn in amber: route a kick from another mixer channel into the plugin's sidechain and you see it against your curve (display only, it never changes the sound). Where the kick and the plugin's output are both loud at the same position in the cycle, that stretch is **hatched**: a conflict between the two. The output is measured after the ducking, so a spot where your curve really ducks under the kick is not marked. In Multiband the kick is split into the same bands, so each band is compared with the matching part of the kick (the lows against the kick's lows).
 - A thin **end-of-cycle meter** beside the curve shows where the output signal (the input after the plugin's ducking, -1 to +1, same scale as the scope) was at the last point of the cycle, right when the curve drops: the big arrow pointing at the curve is the newest cycle, the small ones the cycles before. An arrow near the centre line is safe (green); one far from it turns amber, then red, and means a bass note is still swinging when the gain falls, which is where clicks come from. Duck harder at the end of the curve, ease the fall, or add a little Smooth, and watch the arrow settle at the middle. Click the meter to show an **end-zone bar** next to the arrow (hidden by default, and remembered with the project): a thin bar that spans the lowest to the highest output level over the last 4% of the cycle (it grows at once and falls back slowly, and the arrow glides to each new value), to catch heavy ducking that happens just before the end: a long red bar means the signal is still loud while the gain drops, even if the arrow itself sits at the middle. In Multiband the meter follows the selected band.
-- **IN / OUT meters** on the right are analog-style stacks of squares (mostly green, then yellow, with one red square at the top that lights at 0 dBFS and holds a moment). They show the peak level going in and coming out. They are built for loud material: 26 squares, 1.5 dB apart in the top third, a fast fall (80 dB/s) and a red square that follows the signal like the rest, so they keep moving on a loud, pumping mix.
+- **IN / OUT meters** on the right are analog-style stacks of squares (mostly green, then yellow, with one red square at the top that lights at about 0 dBFS), with a soft glow on the lit squares. They show the peak level going in and coming out. They are built for loud material: 26 squares, 1.5 dB apart in the top third, a fast fall (80 dB/s) and a red square that follows the signal like the rest, so they keep moving on a loud, pumping mix.
 - A **bypass** button (power icon) under the meters passes the audio through untouched, with a 10 ms crossfade so it never clicks, and no CPU use while it is bypassed. It is also the host's bypass: the host's own bypass button drives the same switch.
 - A grey line shows the **actual gain** after Depth, Smooth and Offset; the output waveform is the input multiplied by exactly that gain.
 - Light and dark themes (dark is the default, the choice is remembered).
 - **Resizable window** (880x500 up to 2000x1300): drag the bottom-right corner; the size is remembered.
 
-![Multiband, dark theme](docs/images/multiband-dark.png)
+![Multiband, dark theme: live input / output spectrum behind the band curves](docs/images/multiband-dark.png)
+
+![A kick routed through the sidechain, with the overlap with the bass hatched](docs/images/kick-overlap-dark.png)
 
 ![Presets popup](docs/images/presets-dark.png)
 
@@ -90,6 +92,9 @@ Only the VST3 format is built (plus a standalone app for development). AU, AAX a
 | **Bezier handles** switch | Flip between handle editing and one-diamond Simple mode (curves are converted) |
 | Drag a diamond (Simple mode) | Bend that segment through the point; double-click to straighten |
 | Drag the number next to **Snap** | Change the number of grid lines |
+| Wave icon (top left) | Switch between **Single** (one wave) and **Multiband** (three stacked waves); the icon shows the current mode |
+| Power button (under the meters) | Bypass |
+| Click the end-of-cycle meter | Show or hide the end-zone bar |
 | Half-moon button | Light / dark theme |
 | **Reset** | Restore the current curve to its default |
 
@@ -125,11 +130,13 @@ Share of **one CPU core**, measured by the offline test suite on an Apple Silico
 | Mode | 44.1 kHz | 48 kHz | 96 kHz | 192 kHz |
 |---|---|---|---|---|
 | Single band, editor closed | 0.03% | 0.03% | 0.06% | 0.12% |
-| Single band, editor open | 0.06% | 0.06% | 0.12% | 0.23% |
-| Multiband 24 dB/oct, editor closed | 0.16% | 0.18% | 0.37% | 0.71% |
-| Multiband 96 dB/oct (heaviest), editor closed | 0.46% | 0.50% | 1.00% | 2.01% |
+| Single band, editor open | 0.07% | 0.08% | 0.16% | 0.32% |
+| Multiband 24 dB/oct, editor closed | 0.17% | 0.18% | 0.37% | 0.73% |
+| Multiband 96 dB/oct (heaviest), editor closed | 0.49% | 0.51% | 1.02% | 2.02% |
+| Multiband 96 dB/oct, editor open | 0.52% | 0.56% | 1.11% | 2.19% |
+| Bypassed | ~0% | ~0% | ~0% | ~0% |
 
-(512-sample blocks; 32-sample blocks cost up to about 30% more.) The editor only costs anything while it is open. These figures are from one machine and will differ on yours, but the ratios hold: single band is almost free, and the heaviest multiband setting at 192 kHz is still around 2% of a core.
+(512-sample blocks; 32-sample blocks cost up to about 30% more.) The editor only costs anything while it is open (the waveform, spectrum and meters are only analysed then), and a bypassed plugin does nothing at all. These figures are from one machine and will differ on yours, but the ratios hold: single band is almost free, and the heaviest multiband setting at 192 kHz is still around 2% of a core.
 
 ## Testing
 
@@ -137,10 +144,10 @@ Everything below runs offline, without a DAW or a sound card. A small **fake DAW
 
 | Program | What it checks | How to run |
 |---|---|---|
-| `LfoAudioTest` | **125 audio checks**: bit-exact null at 100%, exact silence at 0%, transparency of every crossover slope, block-size independence, clicks on 24 kinds of parameter change, filter stability across 4 sample rates, NaN/Inf and zero-length blocks, a fuzz test that randomises every parameter and the transport, tempo accuracy at 130 bpm, Hz accuracy, MIDI restart, the sidechain bus, state save/load, zero allocations on the audio thread, thread safety while the curve is edited, CPU worst cases and denormals | `build/LfoAudioTest_artefacts/Release/LfoAudioTest` |
+| `LfoAudioTest` | **134 audio checks**: bit-exact null at 100%, exact silence at 0%, transparency of every crossover slope, block-size independence, clicks on 24 kinds of parameter change, filter stability across 4 sample rates, NaN/Inf and zero-length blocks, a fuzz test that randomises every parameter and the transport, tempo accuracy at 130 bpm, Hz accuracy, MIDI restart, the sidechain bus, bypass (bit-exact, click-free, allocation-free), the peak meters and the spectrum analyser, state save/load, zero allocations on the audio thread, thread safety while the curve is edited, CPU worst cases and denormals | `build/LfoAudioTest_artefacts/Release/LfoAudioTest` |
 | `tests/envelope_test.cpp` | The curve model: Bezier evaluation, Simple-mode bends, conversions between the two, the default curves, saving and loading | `clang++ -std=c++17 tests/envelope_test.cpp -o envtest && ./envtest` |
 | `tests/crossover_test.cpp` | The crossover maths for all six slopes, mixed slopes, and the drawn response curves | `clang++ -std=c++17 tests/crossover_test.cpp -o xotest && ./xotest` |
-| `LfoBench` | CPU per block, plus quick null and multiband sanity checks | `build/LfoBench_artefacts/Release/LfoBench` |
+| `LfoBench` | CPU per block (including the bypassed and editor-open cases), plus quick null and multiband sanity checks | `build/LfoBench_artefacts/Release/LfoBench` |
 | `LfoSnap` | Renders the editor to PNG files without a screen and drives it with synthetic mouse events: editing, snapping, handles, hiding, themes, header layout | `build/LfoSnap_artefacts/Release/LfoSnap <output-folder>` |
 
 The three programs that need JUCE are built with `-DFREELFO_BENCH=ON` (see below). GitHub Actions builds the Windows and macOS plugins and runs `LfoAudioTest` on both for every push; timing limits are relaxed there because shared machines are noisy.
@@ -169,11 +176,12 @@ Source/
   PluginProcessor.*     audio engine: single band, multiband, smoothing, declick, state
   Envelope.h            the curve model (no JUCE; unit-testable)
   Crossover.h           the Linkwitz-Riley band splitter (no JUCE; unit-testable)
-  Spectrum.h            FFT + dB conversion for the live spectrum (no JUCE)
+  Spectrum.h            FFT analyser for the live spectrum (no JUCE; allocation-free)
   PluginEditor.*        the window: header, tabs, knobs
   EnvelopeEditor.*      the curve editor (points, handles, snapping, drawing)
   MultibandPanel.*      the frequency strip and the multiband tab
-  PaperLookAndFeel.h    the light and dark themes and the custom controls
+  LevelMeter.h          the IN / OUT peak meters (squares with a glow)
+  PaperLookAndFeel.h    the light and dark themes and the custom controls (icon buttons, knobs, bypass)
   Fonts.h               the bundled Inter font
 Assets/Fonts/           Inter Regular and SemiBold, plus its license
 tests/                  the test programs above and the shared fake DAW
@@ -183,9 +191,10 @@ docs/images/            screenshots used in this README
 
 ## Known limitations and roadmap
 
-- **Not hardware-tested yet.** It has been developed on macOS and tested offline against a simulated host. Windows builds come from CI; hands-on testing in real DAWs (starting with FL Studio) is still to do.
+- **Tested mostly in FL Studio on Windows.** It is developed on macOS and checked offline against a simulated host; Windows builds come from CI and have been used in FL Studio. Other DAWs (Ableton, Logic, Reaper, Bitwig) and other operating systems have not been tried by hand yet.
 - **The sidechain input is display-only.** It lets you see a kick against your curve and where it conflicts with your sound, but it does not trigger the LFO. Use the host tempo, or MIDI in Hz mode.
 - **Structural switches dip the audio** for about 8 ms (the tab, the band count and the crossover slopes). It is click-free but not seamless; change them when the plugin is not playing a critical passage.
+- **Bypass stops the LFO.** While bypassed nothing is processed, so the free-running phase (Hz mode) pauses; in Sync mode the LFO follows the host position and stays on the beat.
 - **Not built yet:** a full preset browser (folders, rename), copy/paste of whole multiband setups, audio or envelope triggering, other formats (AU, AAX, CLAP).
 
 ## License and credits

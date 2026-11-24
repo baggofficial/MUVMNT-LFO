@@ -91,6 +91,8 @@ private:
     Envelope env;
     FreeLfoProcessor::UndoState gestureStart; // the curves as they were when the mouse went down
     bool haveGestureStart = false, gestureRecorded = false;
+    int seenVersion[4] = { -1, -1, -1, -1 }; // the curve versions last copied (own curve, then the three bands)
+    int seenSlot = -1;
     Envelope ghost[3]; // the other bands' curves (slots 1..3), drawn faintly for reference; not editable here
     int selected = -1;  // point whose Bezier handles are shown
     int dragPoint = -1;
