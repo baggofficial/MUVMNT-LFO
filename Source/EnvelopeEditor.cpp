@@ -187,8 +187,7 @@ void EnvelopeEditor::fillWavePath(juce::Graphics& g, const std::array<std::atomi
     g.fillPath(w);
 }
 
-// The output waveform in rainbow colours (like MiniMeters): low pitches red, then yellow, green, cyan, blue, violet for the
-// highest. The hue per position comes from the audio thread's rough pitch tracker. Returns false until something was measured.
+// The output waveform coloured by pitch like MiniMeters (red sub bass, pink low mids ... yellow highs). The hue per position comes from the audio thread's rough pitch tracker. Returns false until something was measured.
 bool EnvelopeEditor::rainbowFill(float alpha, juce::FillType& out) const
 {
     constexpr int stops = 64, bins = FreeLfoProcessor::waveBins, per = bins / stops;
@@ -215,12 +214,34 @@ bool EnvelopeEditor::rainbowFill(float alpha, juce::FillType& out) const
     for (int k = 0; k < stops; ++k) // a little blur, so the colours flow
         soft[k] = (hue[juce::jmax(0, k - 1)] + 2.f * hue[k] + hue[juce::jmin(stops - 1, k + 1)]) * 0.25f;
 
+    float mix[stops];
+    for (int k = 0; k < stops; ++k)
+    {
+        float sum = 0.f;
+        for (int i = k * per; i < (k + 1) * per; ++i) sum += proc.waveMix[(size_t) i].load(std::memory_order_relaxed);
+        mix[k] = sum / (float) per;
+    }
     const float x0 = toScreen(0.f, 0.5f).x, x1 = toScreen(1.f, 0.5f).x;
-    auto colourAt = [alpha](float t) {
-        return juce::Colour::fromHSV(juce::jlimit(0.f, 1.f, t) * 0.78f, 0.78f, paper::dark ? 1.f : 0.88f, alpha);
+    // t (0..1 on a log axis, 40 Hz .. 16 kHz) -> colour, following MiniMeters: red up to 100 Hz, orange 200, yellow 250, lime 300,
+    // green 400, turquoise 1 k, light blue 1.5 k, full blue from 5 k. Hue is in degrees, interpolated between these anchors.
+    auto colourAt = [alpha](float t, float m) {
+        struct Anchor { float hz, hue, sat; };
+        static const Anchor a[] = { { 40.f, 0.f, 0.90f }, { 100.f, 0.f, 0.90f }, { 200.f, 30.f, 0.92f }, { 250.f, 55.f, 0.92f },
+                                    { 300.f, 85.f, 0.90f }, { 400.f, 125.f, 0.85f }, { 1000.f, 172.f, 0.85f }, { 1500.f, 200.f, 0.80f },
+                                    { 5000.f, 230.f, 0.88f }, { 16000.f, 235.f, 0.90f } };
+        const float hz = 40.f * std::pow(16000.f / 40.f, juce::jlimit(0.f, 1.f, t));
+        size_t i = 0;
+        while (i + 2 < std::size(a) && hz > a[i + 1].hz) ++i;
+        const float k = juce::jlimit(0.f, 1.f, std::log(hz / a[i].hz) / std::log(a[i + 1].hz / a[i].hz));
+        const float hue = a[i].hue + (a[i + 1].hue - a[i].hue) * k;
+        const float sat = a[i].sat + (a[i + 1].sat - a[i].sat) * k;
+        const auto c = juce::Colour::fromHSV(std::fmod(hue, 360.f) / 360.f, sat, paper::dark ? 1.f : 0.88f, alpha);
+        // lots of bass and highs together: toward pink / purple
+        const auto blend = juce::Colour::fromHSV(0.84f, 0.65f, paper::dark ? 1.f : 0.88f, alpha);
+        return c.interpolatedWith(blend, juce::jlimit(0.f, 1.f, m * m * 1.4f) * 0.8f);
     };
-    juce::ColourGradient grad(colourAt(soft[0]), x0, 0.f, colourAt(soft[stops - 1]), x1, 0.f, false);
-    for (int k = 1; k < stops - 1; ++k) grad.addColour((double) k / (stops - 1), colourAt(soft[k]));
+    juce::ColourGradient grad(colourAt(soft[0], mix[0]), x0, 0.f, colourAt(soft[stops - 1], mix[stops - 1]), x1, 0.f, false);
+    for (int k = 1; k < stops - 1; ++k) grad.addColour((double) k / (stops - 1), colourAt(soft[k], mix[k]));
     out = juce::FillType(grad);
     return true;
 }

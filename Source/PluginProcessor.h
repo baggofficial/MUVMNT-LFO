@@ -74,6 +74,8 @@ public:
     // Rough pitch of the input at each phase bin (0 = low ... 1 = high, on a log axis; -1 = not measured yet).
     // The single-tab scope uses it to colour the waveform like a rainbow.
     std::array<std::atomic<float>, waveBins> waveHue {};
+    // How much bass and highs are present together (0..1); the scope tints that blend pink / purple.
+    std::array<std::atomic<float>, waveBins> waveMix {};
     // The newest input samples (mono), for the live spectrum in the multiband strip. Only filled while the editor is open.
     static constexpr int specSize = 4096;
     std::array<std::atomic<float>, specSize> specFifo {};
@@ -180,6 +182,7 @@ private:
     int lastWaveBin = -1;
     // zero-crossing pitch tracker for the rainbow scope
     float zcrSmooth = 0.f, zcrCoef = 0.f, zcEnv = 0.f;
+    float lp150 = 0.f, lp1500 = 0.f, eLow = 0.f, eHigh = 0.f, c150 = 0.f, c1500 = 0.f, eCoef = 0.f;
     int zcState = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FreeLfoProcessor)

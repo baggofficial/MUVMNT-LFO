@@ -153,8 +153,13 @@ bool FreeLfoProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 
 void FreeLfoProcessor::prepareToPlay(double sampleRate, int)
 {
-    zcrCoef = 1.f - std::exp(-1.f / (0.012f * (float) sampleRate));
+    zcrCoef = 1.f - std::exp(-1.f / (0.025f * (float) sampleRate));
     zcrSmooth = zcEnv = 0.f; zcState = 0;
+    c150 = 1.f - std::exp(-juce::MathConstants<float>::twoPi * 150.f / (float) sampleRate);
+    c1500 = 1.f - std::exp(-juce::MathConstants<float>::twoPi * 1500.f / (float) sampleRate);
+    eCoef = 1.f - std::exp(-1.f / (0.025f * (float) sampleRate));
+    lp150 = lp1500 = eLow = eHigh = 0.f;
+    for (auto& m : waveMix) m.store(0.f, std::memory_order_relaxed);
     for (auto& h : waveHue) h.store(-1.f, std::memory_order_relaxed);
     freePhase = 0.0;
     smoothedGain = 1.f;
@@ -501,7 +506,7 @@ void FreeLfoProcessor::processSingle(juce::AudioBuffer<float>& mainBuf, const Ho
                 track(waveMin, waveMax, mono);
                 if (scChannels > 0) track(scMin, scMax, scMono);
 
-                // Rough pitch for the rainbow: zero crossings per sample (with hysteresis against noise), averaged over ~12 ms.
+                // Rough pitch for the rainbow: zero crossings per sample (with hysteresis against noise), averaged over ~25 ms.
                 // A sine of f Hz crosses zero 2f/sr times per sample.
                 {
                     const int st = mono > 0.004f ? 1 : mono < -0.004f ? -1 : zcState;
@@ -509,8 +514,16 @@ void FreeLfoProcessor::processSingle(juce::AudioBuffer<float>& mainBuf, const Ho
                     zcState = st;
                     zcrSmooth += zcrCoef * (crossed - zcrSmooth);
                     zcEnv = juce::jmax(std::abs(mono), zcEnv * 0.9995f);
+                    // bass and highs at once (energy under 150 Hz vs. above 1.5 kHz): the scope blends that toward pink / purple
+                    lp150 += c150 * (mono - lp150);
+                    lp1500 += c1500 * (mono - lp1500);
+                    eLow += eCoef * (std::abs(lp150) - eLow);
+                    eHigh += eCoef * (std::abs(mono - lp1500) - eHigh);
                     if (zcEnv > 0.01f)
                     {
+                        const float mixNow = juce::jlimit(0.f, 1.f, 2.f * juce::jmin(eLow, eHigh) / (eLow + eHigh + 1e-6f));
+                        auto& mixA = waveMix[(size_t) bin];
+                        mixA.store(mixA.load(std::memory_order_relaxed) * 0.94f + mixNow * 0.06f, std::memory_order_relaxed);
                         const float hz = juce::jlimit(40.f, 16000.f, zcrSmooth * 0.5f * (float) sr);
                         const float t = std::log(hz / 40.f) / std::log(16000.f / 40.f);
                         auto& hue = waveHue[(size_t) bin];
