@@ -29,10 +29,13 @@
 // ---------------------------------------------------------------------------------------------
 static std::atomic<long> g_allocs { 0 };
 static std::atomic<bool> g_countAllocs { false };
+static std::atomic<long> g_otherThreadAllocs { 0 };     // allocations by other threads while counting (JUCE / OS helper threads)
+static thread_local bool t_isAudioThread = false;       // only the thread that runs processBlock counts: that is the real-time rule
 
 void* operator new(std::size_t n)
 {
-    if (g_countAllocs.load(std::memory_order_relaxed)) g_allocs.fetch_add(1, std::memory_order_relaxed);
+    if (g_countAllocs.load(std::memory_order_relaxed))
+        (t_isAudioThread ? g_allocs : g_otherThreadAllocs).fetch_add(1, std::memory_order_relaxed);
     if (void* p = std::malloc(n ? n : 1)) return p;
     throw std::bad_alloc();
 }
@@ -729,11 +732,11 @@ static void testRealTimeSafety()
             juce::AudioBuffer<float> buf(2, 512); juce::MidiBuffer midi;
             midi.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8) 100), 10);
             for (int i = 0; i < 200; ++i) { for (int k = 0; k < 512; ++k) { buf.setSample(0, k, 0.1f); buf.setSample(1, k, 0.1f); } r.p.processBlock(buf, midi); }
-            g_allocs = 0; g_countAllocs = true;
+            t_isAudioThread = true; g_allocs = 0; g_otherThreadAllocs = 0; g_countAllocs = true;
             for (int i = 0; i < 2000; ++i) r.p.processBlock(buf, midi);
-            g_countAllocs = false;
+            g_countAllocs = false; t_isAudioThread = false;
             check(g_allocs.load() == 0, fmt("%s, editor %s", multiband ? "multiband" : "single band", editorOpen ? "open" : "closed"),
-                  fmt("%ld allocations in 2000 blocks", g_allocs.load()));
+                  fmt("%ld allocations in 2000 blocks (%ld by other threads, not counted)", g_allocs.load(), g_otherThreadAllocs.load()));
         }
 }
 
