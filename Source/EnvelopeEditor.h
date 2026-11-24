@@ -102,3 +102,70 @@ private:
     juce::VBlankAttachment vblank; // keep last: it calls frame() as soon as it exists
 };
 
+
+// A thin vertical meter beside the curve editor: where the input signal (-1 .. +1, same scale as the scope) was at the last
+// point of the cycle, the moment the curve drops. The big dot is the newest cycle, the small ones the cycles before it.
+// A dot far from the centre line means that note is still swinging when the gain falls: that is where bass clicks.
+class WrapMeter : public juce::Component, private juce::Timer
+{
+public:
+    WrapMeter(FreeLfoProcessor& p, const EnvelopeEditor& e) : proc(p), editor(e) { startTimerHz(30); setInterceptsMouseClicks(false, false); }
+    ~WrapMeter() override { stopTimer(); }
+
+    void paint(juce::Graphics& g) override
+    {
+        const auto b = getLocalBounds().toFloat();
+        const float top = b.getY() + 10.f, h = b.getHeight() - 20.f;
+        g.setColour(paper::bg);
+        g.fillRoundedRectangle(b, 5.f);
+        auto yOf = [&](float v) { return top + (1.f - (0.5f + 0.5f * juce::jlimit(-1.f, 1.f, v))) * h; };
+
+        // a quiet track with a zero line; only the arrows carry colour
+        g.setColour(paper::gridMajor());
+        g.fillRoundedRectangle(juce::Rectangle<float>(b.getCentreX() - 1.f, top, 2.f, h), 1.f);
+        g.setColour(paper::sub.withAlpha(0.7f));
+        g.drawHorizontalLine((int) yOf(0.f), b.getX() + 3.f, b.getRight() - 3.f);
+        g.setFont(fonts::regular(8.5f));
+        g.drawText("+1", b.withHeight(10.f), juce::Justification::centred);
+        g.drawText("-1", b.withTop(b.getBottom() - 10.f), juce::Justification::centred);
+
+        // green at 0, through amber, to red at the peaks (+1 / -1)
+        auto colourFor = [](float v) {
+            const auto green = juce::Colour(0xff39c46a), amber = juce::Colour(0xfff0b429), red = juce::Colour(0xffff4d4d);
+            const float a = juce::jlimit(0.f, 1.f, std::abs(v));
+            return a < 0.44f ? green.interpolatedWith(amber, a / 0.44f) : amber.interpolatedWith(red, (a - 0.44f) / 0.56f);
+        };
+
+        const int s = editor.getSlot();
+        const int count = proc.wrapCount[(size_t) s].load(std::memory_order_acquire);
+        for (int k = juce::jmin(count, FreeLfoProcessor::wrapHistory) - 1; k >= 0; --k)   // oldest first, newest on top
+        {
+            const float v = proc.wrapVal[(size_t) s][(size_t) ((count - 1 - k) % FreeLfoProcessor::wrapHistory)].load(std::memory_order_relaxed);
+            const float y = yOf(v);
+            const float size = k == 0 ? 6.f : 3.5f;           // half height of the arrow
+            const float tipX = b.getX() + 2.f, baseX = tipX + (k == 0 ? 11.f : 7.f);
+            juce::Path arrow;                                    // "<": points left, at the curve editor
+            arrow.addTriangle(tipX, y, baseX, y - size, baseX, y + size);
+            const float a = k == 0 ? 1.f : 0.5f * (1.f - (float) k / FreeLfoProcessor::wrapHistory) + 0.1f;
+            if (k == 0)
+            {
+                g.setColour(juce::Colours::black.withAlpha(0.5f));
+                g.strokePath(arrow, juce::PathStrokeType(2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            }
+            g.setColour(colourFor(v).withAlpha(a));
+            g.fillPath(arrow);
+        }
+    }
+
+private:
+    void timerCallback() override
+    {
+        const int s = editor.getSlot();
+        const int c = proc.wrapCount[(size_t) s].load(std::memory_order_relaxed);
+        if (c != lastCount || s != lastSlot) { lastCount = c; lastSlot = s; repaint(); }
+    }
+
+    FreeLfoProcessor& proc;
+    const EnvelopeEditor& editor;
+    int lastCount = -1, lastSlot = -1;
+};

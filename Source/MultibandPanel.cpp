@@ -387,6 +387,7 @@ MultibandPanel::MultibandPanel(FreeLfoProcessor& p) : proc(p), strip(p), curve(p
 {
     addAndMakeVisible(strip);
     addAndMakeVisible(curve);
+    addAndMakeVisible(curveMeter);
     strip.onSelect = [this](int b) { selectBand(b); };
 
     modeBox.addItemList({ "Sync", "Hz" }, 1);
@@ -525,7 +526,12 @@ void MultibandPanel::resized()
     strip.setBounds(r.removeFromTop(84));
     r.removeFromTop(8);
     auto knobs = r.removeFromBottom(92);   // compact knobs: more room for the curve
-    curve.setBounds(r.withTrimmedBottom(8));
+    {
+        auto area = r.withTrimmedBottom(8);
+        curveMeter.setBounds(area.removeFromRight(20));
+        area.removeFromRight(6);
+        curve.setBounds(area);
+    }
 
     // same five knob columns as the single tab; the dropdowns and the link chain live in the editor's header
     const int w = knobs.getWidth() / 5;

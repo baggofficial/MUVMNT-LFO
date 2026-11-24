@@ -824,6 +824,19 @@ int main(int argc, char** argv)
     run(400);
     save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("single.png"));
 
+    { // a sub bass note that is still sounding when the curve drops: the click risk marker
+        for (int b = 0; b < 400; ++b)
+        {
+            for (int i = 0; i < bs; ++i, ++t)
+            {
+                const float v = 0.8f * (float) std::cos(2.0 * juce::MathConstants<double>::pi * 50.0 * (double) t / sr);
+                buf.setSample(0, i, v); buf.setSample(1, i, v);
+            }
+            p.processBlock(buf, midi);
+        }
+        save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("click_risk.png"));
+    }
+
     setParam(p, "mb", 1.f);
     juce::MessageManager::getInstance()->runDispatchLoopUntil(300); // lets the tab switch and the band controls rebind
     std::printf("mb raw value after set: %.1f, blockCounter %u\n", p.apvts.getRawParameterValue("mb")->load(), p.blockCounter.load());

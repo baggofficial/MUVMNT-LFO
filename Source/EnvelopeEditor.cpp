@@ -544,6 +544,7 @@ void EnvelopeEditor::paint(juce::Graphics& g)
     const auto unscale = juce::AffineTransform::scale(1.f / scale);
     g.drawImageTransformed(gridImg, unscale);
     drawWaveforms(g);
+    g.setColour(juce::Colours::black); // drawImage uses the current colour's alpha as the image's opacity: the scope must not dim the curve
     g.drawImageTransformed(curveImg, unscale);
 
     // playhead: just a thin line (nothing else is redrawn per frame)

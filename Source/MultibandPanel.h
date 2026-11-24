@@ -96,6 +96,7 @@ private:
     FreeLfoProcessor& proc;
     BandStrip strip;
     EnvelopeEditor curve;
+    WrapMeter curveMeter { proc, curve };
 
     juce::TextButton dotBtn { juce::String::fromUTF8("\xE2\x80\xA2") }, tripBtn { "3" };
     Knob rate, depth, smooth, offset, wave;

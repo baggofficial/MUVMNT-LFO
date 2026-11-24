@@ -74,6 +74,17 @@ public:
     // Rough pitch of the input at each phase bin (0 = low ... 1 = high, on a log axis; -1 = not measured yet).
     // The single-tab scope uses it to colour the waveform like a rainbow.
     std::array<std::atomic<float>, waveBins> waveHue {};
+    // The input level (-1..+1) at the last point of the cycle, for the newest 8 cycles: slot 0 = single tab, 1..3 = bands.
+    // Shown by the thin meter beside the curve: a bass note that is away from 0 there will click when the curve drops.
+    static constexpr int wrapHistory = 8;
+    std::array<std::array<std::atomic<float>, wrapHistory>, 4> wrapVal {};
+    std::array<std::atomic<int>, 4> wrapCount {};
+    void pushWrap(int slot, float v)
+    {
+        const int n = wrapCount[(size_t) slot].load(std::memory_order_relaxed);
+        wrapVal[(size_t) slot][(size_t) (n % wrapHistory)].store(v, std::memory_order_relaxed);
+        wrapCount[(size_t) slot].store(n + 1, std::memory_order_release);
+    }
     // How much bass and highs are present together (0..1); the scope tints that blend pink / purple.
     std::array<std::atomic<float>, waveBins> waveMix {};
     // The newest input samples (mono), for the live spectrum in the multiband strip. Only filled while the editor is open.

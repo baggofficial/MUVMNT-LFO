@@ -503,6 +503,7 @@ void FreeLfoProcessor::processSingle(juce::AudioBuffer<float>& mainBuf, const Ho
                     if (v < lo.load(std::memory_order_relaxed)) lo.store(v, std::memory_order_relaxed);
                     if (v > hi.load(std::memory_order_relaxed)) hi.store(v, std::memory_order_relaxed);
                 };
+                if (isNew && lastWaveBin >= 0 && bin < lastWaveBin) pushWrap(0, mono); // the cycle just wrapped
                 track(waveMin, waveMax, mono);
                 if (scChannels > 0) track(scMin, scMax, scMono);
 
@@ -688,6 +689,7 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const Hos
                 if (!lane[b].active) continue;
                 const float v = (float) (avg[b] / numCh);
                 const bool isNew = bin[b] != bandLastBin[b];
+                if (isNew && bandLastBin[b] >= 0 && bin[b] < bandLastBin[b]) pushWrap(b + 1, v);
                 auto& lo = bwMin[(size_t) b][(size_t) bin[b]];
                 auto& hi = bwMax[(size_t) b][(size_t) bin[b]];
                 if (isNew) { lo.store(v, std::memory_order_relaxed); hi.store(v, std::memory_order_relaxed); }

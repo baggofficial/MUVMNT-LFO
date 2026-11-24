@@ -21,6 +21,7 @@ private:
     FreeLfoProcessor& proc;
     PaperLookAndFeel laf;
     EnvelopeEditor curve;
+    WrapMeter curveMeter { proc, curve };
     MultibandPanel mbPanel;
 
     juce::ComboBox mode;

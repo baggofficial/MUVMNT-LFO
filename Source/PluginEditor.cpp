@@ -70,6 +70,7 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     const auto size = loadSizePreference();
     setSize(size.x, size.y);
     addAndMakeVisible(curve);
+    addAndMakeVisible(curveMeter);
     addAndMakeVisible(mbPanel);
     addChildComponent(mbPanel.modeBox);    // the multiband tab's Sync/Hz and band-count dropdowns sit in this header, like the single tab's
     addChildComponent(mbPanel.bandsBox);
@@ -187,7 +188,7 @@ void FreeLfoEditor::updateTab()
     tabSingle.setToggleState(!mb, juce::dontSendNotification);
     tabMulti.setToggleState(mb, juce::dontSendNotification);
 
-    for (juce::Component* c : std::initializer_list<juce::Component*> { &curve, &mode, &rate, &depth, &smooth, &offset, &wave,
+    for (juce::Component* c : std::initializer_list<juce::Component*> { &curve, &curveMeter, &mode, &rate, &depth, &smooth, &offset, &wave,
                                                                         &rateL, &depthL, &smoothL, &offsetL, &waveL })
         c->setVisible(!mb);
     mbPanel.setVisible(mb);
@@ -287,7 +288,12 @@ void FreeLfoEditor::resized()
     if (mb) { mbPanel.setBounds(r); return; }
 
     auto knobs = r.removeFromBottom(92);   // compact knobs: more room for the curve
-    curve.setBounds(r.withTrimmedBottom(8));
+    {
+        auto area = r.withTrimmedBottom(8);
+        curveMeter.setBounds(area.removeFromRight(20));
+        area.removeFromRight(6);
+        curve.setBounds(area);
+    }
 
     const int w = knobs.getWidth() / 5;
     auto place = [&](juce::Label& l, juce::Slider& s) {
