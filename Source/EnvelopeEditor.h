@@ -4,7 +4,7 @@
 #include "PaperLookAndFeel.h"
 
 // The curve editor: double-click empty space = add point, drag = move,
-// right-click point = delete, drag the small diamond on a segment = bend it.
+// double-click a point = delete it, drag the small diamond on a segment = bend it.
 class EnvelopeEditor : public juce::Component
 {
 public:
@@ -45,7 +45,6 @@ private:
     size_t computeKey() const;
     float predictedPhase() const;
 
-    void drawInputWaveform(juce::Graphics&, float opacity);
     juce::Point<float> toScreen(float x, float y) const;
     juce::Point<float> toNorm(juce::Point<float> p) const;
     int hitPoint(juce::Point<float> p) const;
@@ -68,7 +67,9 @@ private:
         return slot == 0 ? proc.cycleSeconds.load(std::memory_order_relaxed)
                          : proc.bandCycleSeconds[(size_t) slot - 1].load(std::memory_order_relaxed);
     }
-    void drawBandWaveform(juce::Graphics&, float opacity);
+    void fillWavePath(juce::Graphics&, const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& mn,
+                      const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& mx, const float* gain, juce::Colour c);
+    float outGain[FreeLfoProcessor::waveBins] = {}; // the gain actually applied at each cycle position (filled with the curve layer)
     // Single tab: the accent colour. Multiband tab: the band's own colour (red / green / blue).
     juce::Colour mainColour() const { return slot == 0 ? paper::accent : paper::bandColour(slot - 1); }
 
@@ -76,9 +77,12 @@ private:
     int cachedGrid = -1; // grid count the cached grid image was drawn with
     int cachedTheme = -1; // theme the cached grid image was drawn in
     int slot = 0;
-    std::atomic<float>* depthP = nullptr;
-    std::atomic<float>* smoothP = nullptr;
-    std::atomic<float>* offsetP = nullptr; // phase offset (each band has its own)
+    // depth / smooth / offset as the audio will use them for this curve (a linked control follows one band for all)
+    void initParams();
+    float paramValue(int which) const; // 0 = depth, 1 = smooth, 2 = offset
+    std::atomic<float>* paramP[3][4] = {};   // [which][0 = single curve, 1..3 = bands]
+    std::atomic<float>* linkP[3] = {};
+    std::atomic<float>* bandsP = nullptr;
     Envelope env;
     FreeLfoProcessor::UndoState gestureStart; // the curves as they were when the mouse went down
     bool haveGestureStart = false, gestureRecorded = false;

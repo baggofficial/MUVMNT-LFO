@@ -6,21 +6,37 @@ EnvelopeEditor::EnvelopeEditor(FreeLfoProcessor& p, int slotIndex)
     : proc(p), slot(slotIndex), env(p.getEnvelope(slotIndex)), vblank(this, [this] { frame(); })
 {
     setWantsKeyboardFocus(true);
-    depthP = proc.apvts.getRawParameterValue(bandId("depth"));
-    smoothP = proc.apvts.getRawParameterValue(bandId("smooth"));
-    offsetP = proc.apvts.getRawParameterValue(bandId("offset"));
+    initParams();
     if (slot > 0)
         for (int other = 1; other <= 3; ++other)
             if (other != slot) ghost[other - 1] = proc.getEnvelope(other);
+}
+
+void EnvelopeEditor::initParams()
+{
+    static const char* base[3] = { "depth", "smooth", "offset" };
+    static const char* link[3] = { "linkDepth", "linkSmooth", "linkOffset" };
+    for (int w = 0; w < 3; ++w)
+    {
+        paramP[w][0] = proc.apvts.getRawParameterValue(base[w]);
+        for (int b = 0; b < 3; ++b)
+            paramP[w][b + 1] = proc.apvts.getRawParameterValue(juce::String(base[w]) + FreeLfoProcessor::bandSuffix(b));
+        linkP[w] = proc.apvts.getRawParameterValue(link[w]);
+    }
+    bandsP = proc.apvts.getRawParameterValue("mbBands");
+}
+
+float EnvelopeEditor::paramValue(int which) const
+{
+    int s = slot;
+    if (s > 0 && linkP[which]->load() > 0.5f) s = bandsP->load() > 0.5f ? 2 : 1;   // linked: every band follows the mid (or low) band
+    return paramP[which][s]->load();
 }
 
 void EnvelopeEditor::setSlot(int newSlot)
 {
     if (newSlot == slot) return;
     slot = newSlot;
-    depthP = proc.apvts.getRawParameterValue(bandId("depth"));
-    smoothP = proc.apvts.getRawParameterValue(bandId("smooth"));
-    offsetP = proc.apvts.getRawParameterValue(bandId("offset"));
     selected = -1; dragPoint = -1; dragKind = 0; dragSeg = -1; controlsHidden = false;
     env = proc.getEnvelope(slot);
     for (int other = 1; other <= 3; ++other)
@@ -145,57 +161,29 @@ void EnvelopeEditor::commit()
     proc.setEnvelope(env, slot);
 }
 
-// Rekordbox-style: each slice of the LFO cycle is coloured by its frequency content.
-// Red = lows, green = mids, blue = highs, blended by how much of each band is present.
-void EnvelopeEditor::drawInputWaveform(juce::Graphics& g, float opacity)
+// One filled outline of a min / max envelope (the signal folded onto the LFO cycle), optionally scaled by the gain
+// the plugin applies at each position. A single path per frame: smooth, and cheap.
+void EnvelopeEditor::fillWavePath(juce::Graphics& g, const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& mnArr,
+                                  const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& mxArr,
+                                  const float* gain, juce::Colour colour)
 {
     constexpr int bins = FreeLfoProcessor::waveBins;
-    const float binW = toScreen(1.f, 0.f).x - toScreen(0.f, 0.f).x;
-    const float w = binW / (float) bins + 0.6f;
-
-    for (int i = 0; i < bins; ++i)
-    {
-        const float mx = juce::jlimit(-1.f, 1.f, proc.waveMax[(size_t) i].load(std::memory_order_relaxed));
-        const float mn = juce::jlimit(-1.f, 1.f, proc.waveMin[(size_t) i].load(std::memory_order_relaxed));
-        if (mx - mn < 1e-5f) continue;
-
-        // boost mids/highs a little: they carry far less amplitude than lows in most material
-        const float lo = proc.bandLow[(size_t) i].load(std::memory_order_relaxed);
-        const float mi = proc.bandMid[(size_t) i].load(std::memory_order_relaxed) * 1.6f;
-        const float hi = proc.bandHigh[(size_t) i].load(std::memory_order_relaxed) * 3.2f;
-        const float sum = lo + mi + hi + 1e-9f;
-
-        const float r = (0.90f * lo + 0.20f * mi + 0.15f * hi) / sum;
-        const float gr = (0.20f * lo + 0.70f * mi + 0.45f * hi) / sum;
-        const float b = (0.20f * lo + 0.30f * mi + 0.95f * hi) / sum;
-
-        auto top = toScreen((float) i / (bins - 1), 0.5f + 0.5f * mx);
-        auto bot = toScreen((float) i / (bins - 1), 0.5f + 0.5f * mn);
-        g.setColour(juce::Colour::fromFloatRGBA(r, gr, b, opacity));
-        g.fillRect(top.x - w * 0.5f, top.y, w, juce::jmax(1.f, bot.y - top.y));
-    }
-}
-
-// Multiband tab: this band's own signal, folded onto this band's own LFO cycle, in the band's colour.
-void EnvelopeEditor::drawBandWaveform(juce::Graphics& g, float opacity)
-{
-    constexpr int bins = FreeLfoProcessor::waveBins;
-    const auto& mnArr = proc.bwMin[(size_t) slot - 1];
-    const auto& mxArr = proc.bwMax[(size_t) slot - 1];
     juce::Path w;
     for (int i = 0; i < bins; ++i)
     {
-        const float mx = juce::jlimit(-1.f, 1.f, mxArr[(size_t) i].load(std::memory_order_relaxed));
-        auto p = toScreen((float) i / (bins - 1), 0.5f + 0.5f * mx);
+        const float k = gain != nullptr ? gain[i] : 1.f;
+        const float mx = juce::jlimit(-1.f, 1.f, mxArr[(size_t) i].load(std::memory_order_relaxed)) * k;
+        const auto p = toScreen((float) i / (bins - 1), 0.5f + 0.5f * mx);
         if (i == 0) w.startNewSubPath(p); else w.lineTo(p);
     }
     for (int i = bins - 1; i >= 0; --i)
     {
-        const float mn = juce::jlimit(-1.f, 1.f, mnArr[(size_t) i].load(std::memory_order_relaxed));
+        const float k = gain != nullptr ? gain[i] : 1.f;
+        const float mn = juce::jlimit(-1.f, 1.f, mnArr[(size_t) i].load(std::memory_order_relaxed)) * k;
         w.lineTo(toScreen((float) i / (bins - 1), 0.5f + 0.5f * mn));
     }
     w.closeSubPath();
-    g.setColour(paper::bandColour(slot - 1).withAlpha(opacity));
+    g.setColour(colour);
     g.fillPath(w);
 }
 
@@ -228,37 +216,41 @@ void EnvelopeEditor::renderGrid(juce::Graphics& g)
 
 }
 
+// The input signal is drawn faint and the output (input x the gain the plugin really applies) on top of it, so the
+// ducking is visible on the audio itself. Single tab: neutral input, accent-coloured output. Multiband: the band's colour.
 void EnvelopeEditor::drawWaveforms(juce::Graphics& g)
 {
     const float waveOpacity = proc.apvts.getRawParameterValue("waveOpacity")->load();
-    if (slot > 0) { if (waveOpacity > 0.01f) drawBandWaveform(g, waveOpacity); return; }
-    if (waveOpacity > 0.01f)
+    if (waveOpacity < 0.01f) return;
+    const auto in = slot > 0 ? paper::bandColour(slot - 1) : (paper::dark ? juce::Colours::white : juce::Colours::black);
+    const auto out = slot > 0 ? paper::bandColour(slot - 1) : paper::accent;
+    const auto& mnArr = slot > 0 ? proc.bwMin[(size_t) slot - 1] : proc.waveMin;
+    const auto& mxArr = slot > 0 ? proc.bwMax[(size_t) slot - 1] : proc.waveMax;
+
+    fillWavePath(g, mnArr, mxArr, nullptr, in.withAlpha(waveOpacity * 0.30f));
+    fillWavePath(g, mnArr, mxArr, outGain, out.withAlpha(waveOpacity));
+
+    if (slot == 0 && proc.sidechainActive.load())
     {
-        drawInputWaveform(g, waveOpacity);
-
-        if (proc.sidechainActive.load())
+        constexpr int bins = FreeLfoProcessor::waveBins;
+        juce::Path w;
+        for (int i = 0; i < bins; ++i)
         {
-            constexpr int bins = FreeLfoProcessor::waveBins;
-            juce::Path w;
-            for (int i = 0; i < bins; ++i)
-            {
-                const float mx = juce::jlimit(-1.f, 1.f, proc.scMax[(size_t) i].load(std::memory_order_relaxed));
-                auto p = toScreen((float) i / (bins - 1), 0.5f + 0.5f * mx);
-                if (i == 0) w.startNewSubPath(p); else w.lineTo(p);
-            }
-            for (int i = bins - 1; i >= 0; --i)
-            {
-                const float mn = juce::jlimit(-1.f, 1.f, proc.scMin[(size_t) i].load(std::memory_order_relaxed));
-                w.lineTo(toScreen((float) i / (bins - 1), 0.5f + 0.5f * mn));
-            }
-            w.closeSubPath();
-            g.setColour(paper::amber.withAlpha(waveOpacity * 0.8f));
-            g.fillPath(w);
-            g.setColour(paper::amber.darker(0.3f).withAlpha(juce::jmin(1.f, waveOpacity + 0.2f)));
-            g.strokePath(w, juce::PathStrokeType(1.f));
+            const float mx = juce::jlimit(-1.f, 1.f, proc.scMax[(size_t) i].load(std::memory_order_relaxed));
+            auto p = toScreen((float) i / (bins - 1), 0.5f + 0.5f * mx);
+            if (i == 0) w.startNewSubPath(p); else w.lineTo(p);
         }
+        for (int i = bins - 1; i >= 0; --i)
+        {
+            const float mn = juce::jlimit(-1.f, 1.f, proc.scMin[(size_t) i].load(std::memory_order_relaxed));
+            w.lineTo(toScreen((float) i / (bins - 1), 0.5f + 0.5f * mn));
+        }
+        w.closeSubPath();
+        g.setColour(paper::amber.withAlpha(waveOpacity * 0.8f));
+        g.fillPath(w);
+        g.setColour(paper::amber.darker(0.3f).withAlpha(juce::jmin(1.f, waveOpacity + 0.2f)));
+        g.strokePath(w, juce::PathStrokeType(1.f));
     }
-
 }
 
 void EnvelopeEditor::renderCurveLayer(juce::Graphics& g)
@@ -310,24 +302,27 @@ void EnvelopeEditor::renderCurveLayer(juce::Graphics& g)
         g.setGradientFill(fade);
         g.fillPath(fill);
     }
+    // A contrasting halo under the line (dark on the dark theme, light on the light one) so the curve stays readable
+    // on top of a waveform in the same colour; then a slightly more vivid line. All of this is cached, no per-frame cost.
+    g.setColour((paper::dark ? juce::Colours::black : juce::Colours::white).withAlpha(0.6f));
+    g.strokePath(line, juce::PathStrokeType(6.f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     // A soft glow around the line: a few wider, fainter strokes underneath it
     for (const auto glow : { std::pair<float, float> { 11.f, 0.05f }, { 7.f, 0.09f }, { 4.5f, 0.15f } })
     {
         g.setColour(curveColour.withAlpha(glow.second * (paper::dark ? 1.3f : 0.7f)));
         g.strokePath(line, juce::PathStrokeType(glow.first, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
-    g.setColour(curveColour);
+    g.setColour(paper::dark ? curveColour.brighter(0.25f).interpolatedWith(juce::Colours::white, 0.15f) : curveColour);
     g.strokePath(line, juce::PathStrokeType(2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
     // Actual output gain: the curve after depth, smoothing and phase offset, as the audio thread will apply it.
     // Only drawn when it differs from the curve itself.
-    const float depth = depthP->load();
-    const float smoothMs = smoothP->load();
-    const float offset = offsetP != nullptr ? offsetP->load() : 0.f;
+    const float depth = paramValue(0);
+    const float smoothMs = paramValue(1);
+    const float offset = paramValue(2);
     const bool differs = depth < 0.999f || smoothMs > 0.05f || offset > 0.0005f;
-    if (differs)
     {
-        constexpr int N = 512;
+        constexpr int N = FreeLfoProcessor::waveBins;
         float v[N];
         // Phase offset: at cycle position x the audio reads the curve at x + offset, so the grey line is the curve
         // slid to the left by the offset (and wrapped round)
@@ -343,7 +338,10 @@ void EnvelopeEditor::renderCurveLayer(juce::Graphics& g)
                 y = coef * y + (1.f - coef) * (1.f - depth * (1.f - v[i]));
                 out[i] = y;
             }
+        std::copy(out, out + N, outGain);   // the waveform overlay uses the same gain
 
+        if (differs)
+        {
         juce::Path actual;
         for (int i = 0; i < N; ++i)
         {
@@ -352,6 +350,7 @@ void EnvelopeEditor::renderCurveLayer(juce::Graphics& g)
         }
         g.setColour(paper::text.withAlpha(0.3f));
         g.strokePath(actual, juce::PathStrokeType(2.f));
+        }
     }
 
     // Bezier handles for every point, After Effects style: thin yellow line to the point, filled yellow dot
@@ -408,9 +407,9 @@ size_t EnvelopeEditor::computeKey() const
     size_t h = 1469598103u;
     auto mix = [&h](float f) { h = (h ^ (size_t) (juce::roundToInt(f * 10000.f) + 1000003)) * 1099511628211ull; };
     for (auto& pt : env.points) { mix(pt.x); mix(pt.y); mix(pt.inDx); mix(pt.inDy); mix(pt.outDx); mix(pt.outDy); mix(pt.bend); mix(pt.bendX); }
-    mix(depthP->load());
-    mix(smoothP->load());
-    mix(offsetP != nullptr ? offsetP->load() : 0.f);
+    mix(paramValue(0));
+    mix(paramValue(1));
+    mix(paramValue(2));
     mix((float) cycleSecs());
     mix(proc.apvts.getRawParameterValue("waveOpacity")->load());
     mix((float) paper::version);
@@ -532,19 +531,10 @@ void EnvelopeEditor::mouseDown(const juce::MouseEvent& e)
     else if (dragKind == 0)
     {
         const int hit = hitPoint(pos);
-        if (e.mods.isPopupMenu() && hit > 0 && hit < (int) env.points.size() - 1)
-        {
-            env.points.erase(env.points.begin() + hit);
-            selected = -1;
-            commit();
-        }
-        else
-        {
-            selected = hit;
-            dragPoint = hit;
-            // a click on neither a point, a handle nor the curve hides all the controls, so the bare curve shows
-            if (hit < 0 && !e.mods.isPopupMenu() && !nearCurve(pos)) controlsHidden = true;
-        }
+        selected = hit;
+        dragPoint = e.mods.isPopupMenu() ? -1 : hit;
+        // a click on neither a point, a handle nor the curve hides all the controls, so the bare curve shows
+        if (hit < 0 && !e.mods.isPopupMenu() && !nearCurve(pos)) controlsHidden = true;
     }
     repaint();
 }
@@ -658,9 +648,15 @@ void EnvelopeEditor::mouseDoubleClick(const juce::MouseEvent& e)
         a.outDx = a.outDy = b.inDx = b.inDy = 0.f;
         a.bend = 0.f; a.bendX = 0.5f;
     }
+    else if (hit > 0 && hit < (int) env.points.size() - 1)
+    {
+        // Double-click a point: delete it (the first and last points are fixed)
+        env.points.erase(env.points.begin() + hit);
+        selected = -1;
+    }
     else if (hit >= 0)
     {
-        // Double-click a point: toggle "easy ease" (flat tangents). Again: back to a straight line.
+        // Double-click the first / last point: toggle "easy ease" (flat tangents). Again: back to a straight line.
         auto& p = env.points[(size_t) hit];
         if (hit > 0) { env.points[(size_t) hit - 1].bend = 0.f; env.points[(size_t) hit - 1].bendX = 0.5f; }
         if (hit + 1 < (int) env.points.size()) { p.bend = 0.f; p.bendX = 0.5f; }

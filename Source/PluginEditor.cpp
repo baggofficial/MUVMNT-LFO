@@ -73,7 +73,6 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     addAndMakeVisible(mbPanel);
     addChildComponent(mbPanel.modeBox);    // the multiband tab's Sync/Hz and band-count dropdowns sit in this header, like the single tab's
     addChildComponent(mbPanel.bandsBox);
-    addChildComponent(mbPanel.linkBtn);
 
     mode.addItemList({ "Sync", "Hz" }, 1);
     addAndMakeVisible(mode);
@@ -194,7 +193,6 @@ void FreeLfoEditor::updateTab()
     mbPanel.setVisible(mb);
     mbPanel.modeBox.setVisible(mb);
     mbPanel.bandsBox.setVisible(mb);
-    mbPanel.linkBtn.setVisible(mb);
 
     if (mb) { retrigger.setVisible(false); dotBtn.setVisible(false); tripBtn.setVisible(false); }
     else bindRate(); // restores the retrigger switch for Hz mode, and relayouts
@@ -264,8 +262,6 @@ void FreeLfoEditor::resized()
         mbPanel.modeBox.setBounds(top.removeFromLeft(80).reduced(0, 4));
         top.removeFromLeft(8);
         mbPanel.bandsBox.setBounds(top.removeFromLeft(92).reduced(0, 4));
-        top.removeFromLeft(6);
-        mbPanel.linkBtn.setBounds(top.removeFromLeft(30).withSizeKeepingCentre(22, 22));
     }
     // Right-hand group, right to left: Reset | light-dark button | Snap switch + grid number | Bezier switch | retrigger.
     // Items of a pair sit close together; groups are an even 16 px apart.

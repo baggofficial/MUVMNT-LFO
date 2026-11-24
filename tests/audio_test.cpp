@@ -310,6 +310,34 @@ static void testMultibandTransparent()
         }
 }
 
+// Per-knob links: with a link on, every band follows the mid band's value (the low band's in 2-band mode)
+static void testKnobLinks()
+{
+    section("3b. Linked depth / smooth / offset: every band follows one band");
+    const auto in = noise(48000, 11);
+    for (bool three : { true, false })
+    {
+        const char* src = three ? "M" : "L";
+        auto diffFromAll = [&](const char* link, const char* base, float a, float b, float c, bool linked) {
+            Rig r1; r1.param("mb", 1.f); r1.param("mbBands", three ? 1.f : 0.f);
+            r1.param(link, linked ? 1.f : 0.f);
+            r1.param((std::string(base) + "L").c_str(), a); r1.param((std::string(base) + "M").c_str(), b); r1.param((std::string(base) + "H").c_str(), c);
+            const float follow = std::string(src) == "M" ? b : a;
+            Rig r2; r2.param("mb", 1.f); r2.param("mbBands", three ? 1.f : 0.f);
+            for (const char* sfx : { "L", "M", "H" }) r2.param((std::string(base) + sfx).c_str(), follow);
+            const auto o1 = r1.render(in), o2 = r2.render(in);
+            return std::max(maxDiff(o1[0], o2[0]), maxDiff(o1[1], o2[1]));
+        };
+        for (auto [link, base, a, b, c] : { std::tuple<const char*, const char*, float, float, float> { "linkDepth", "depth", 0.2f, 0.8f, 0.5f },
+                                            { "linkSmooth", "smooth", 4.f, 1.f, 9.f }, { "linkOffset", "offset", 0.3f, 0.1f, 0.6f } })
+        {
+            const float on = diffFromAll(link, base, a, b, c, true), off = diffFromAll(link, base, a, b, c, false);
+            check(on < 1e-6f && off > 1e-3f, fmt("%s, %d bands", link, three ? 3 : 2),
+                  fmt("linked matches 'all bands = source' (diff %.1e), unlinked differs (%.1e)", on, off));
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // 4. Block-size independence
 // ---------------------------------------------------------------------------------------------
@@ -826,6 +854,7 @@ int main()
     testNull();
     testSilence();
     testMultibandTransparent();
+    testKnobLinks();
     testBlockSizes();
     testSmoothingSlew();
     testClicks();

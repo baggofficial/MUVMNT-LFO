@@ -35,7 +35,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout FreeLfoProcessor::createLayo
     l.add(std::make_unique<AudioParameterFloat>(ParameterID { "offset", 1 }, "Phase Offset",
                                                 NormalisableRange<float>(0.f, 1.f, 0.001f), 0.f));
     l.add(std::make_unique<AudioParameterFloat>(ParameterID { "waveOpacity", 1 }, "Waveform Opacity",
-                                                NormalisableRange<float>(0.f, 1.f, 0.01f), 0.35f));
+                                                NormalisableRange<float>(0.f, 1.f, 0.01f), 1.f));
     l.add(std::make_unique<AudioParameterBool>(ParameterID { "bezier", 1 }, "Bezier Handles", true));
     l.add(std::make_unique<AudioParameterBool>(ParameterID { "retrigger", 1 }, "MIDI Retrigger (Hz mode)", false));
 
@@ -73,6 +73,10 @@ juce::AudioProcessorValueTreeState::ParameterLayout FreeLfoProcessor::createLayo
         l.add(std::make_unique<AudioParameterFloat>(ParameterID { "offset" + sfx, 1 }, nm + " Phase Offset",
                                                     NormalisableRange<float>(0.f, 1.f, 0.001f), 0.f));
     }
+    // Per-knob links: when on, every band follows one band's value for that control
+    l.add(std::make_unique<AudioParameterBool>(ParameterID { "linkDepth", 1 }, "Link Depth", false));
+    l.add(std::make_unique<AudioParameterBool>(ParameterID { "linkSmooth", 1 }, "Link Smooth", false));
+    l.add(std::make_unique<AudioParameterBool>(ParameterID { "linkOffset", 1 }, "Link Offset", false));
     return l;
 }
 
@@ -113,6 +117,9 @@ FreeLfoProcessor::FreeLfoProcessor()
     pSlopeLow = apvts.getRawParameterValue("slopeLow");
     pSlopeHigh = apvts.getRawParameterValue("slopeHigh");
     pLink = apvts.getRawParameterValue("mbLink");
+    pLinkDepth = apvts.getRawParameterValue("linkDepth");
+    pLinkSmooth = apvts.getRawParameterValue("linkSmooth");
+    pLinkOffset = apvts.getRawParameterValue("linkOffset");
     for (int b = 0; b < 3; ++b)
     {
         const juce::String sfx = bandSuffix(b);
@@ -527,6 +534,7 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const Hos
     const bool three = applied.three;
     const bool link = pLink->load() > 0.5f;
     const int rateSource = three ? 1 : 0; // when linked, every band follows this band's rate settings
+    const bool linkDepth = pLinkDepth->load() > 0.5f, linkSmooth = pLinkSmooth->load() > 0.5f, linkOffset = pLinkOffset->load() > 0.5f;
     const bool soloOn[3] = { pSoloBand[0]->load() > 0.5f, three && pSoloBand[1]->load() > 0.5f, pSoloBand[2]->load() > 0.5f };
     const bool anySolo = soloOn[0] || soloOn[1] || soloOn[2]; // soloed bands play, the others are muted
     const bool analyse = editorOpen.load(std::memory_order_relaxed);
@@ -570,10 +578,10 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const Hos
         auto& L = lane[b];
         L.freeInc = (syncMode ? (bpm / 60.0) / beats : hz) / sr;
         L.inc = useHost ? ppqPerSample / beats : L.freeInc;
-        const double off = band[b].offset->load();   // each band has its own phase offset
+        const double off = band[linkOffset ? rateSource : b].offset->load();   // each band has its own phase offset (unless linked)
         L.p = fract((useHost ? ppq / beats : bandFreePhase[b]) + off);
-        L.depth = band[b].depth->load();
-        const float ms = band[b].smooth->load();
+        L.depth = band[linkDepth ? rateSource : b].depth->load();
+        const float ms = band[linkSmooth ? rateSource : b].smooth->load();
         L.coef = ms < 0.01f ? 0.f : std::exp(-1.f / (ms * 0.001f * (float) sr));
         L.active = three || b != 1;
         L.declick = laneDeclick[b];

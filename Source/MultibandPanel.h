@@ -78,11 +78,12 @@ public:
 public:
     // These two live in the editor's header row (the editor adopts them), so they are public.
     juce::ComboBox modeBox, bandsBox;
-    LinkButton linkBtn;
 
 private:
+    LinkButton linkBtn;   // beside the Rate knob: all bands share one rate
     void timerCallback() override;
     int signature() const;
+    void copyToLinkSource(const char* base, const char* linkId); // turning a link on: the shown band's value goes to every band
     void rebind(); // point the knobs at the selected band's parameters
 
     FreeLfoProcessor& proc;
@@ -98,7 +99,8 @@ private:
     using BA = juce::AudioProcessorValueTreeState::ButtonAttachment;
     std::unique_ptr<CA> modeA, bandsA;
     std::unique_ptr<SA> rateA, depthA, smoothA, offsetA, waveA;
-    std::unique_ptr<BA> linkA, dotA, tripA;
+    std::unique_ptr<BA> linkA, dotA, tripA, linkDepthA, linkSmoothA, linkOffsetA;
+    LinkButton linkDepthBtn, linkSmoothBtn, linkOffsetBtn;   // sit beside the knobs: all bands follow one value
 
     int selected = 0;
     int lastSig = -1;

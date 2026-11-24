@@ -705,6 +705,44 @@ static bool presetRegression()
 }
 
 // Bezier handles snap to the grid with Option/Alt or Ctrl held, and move freely without.
+// Double-click removes a point (not the first / last one); right-click no longer does.
+static bool deletePointRegression()
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    EnvelopeEditor ed(p, 0);
+    ed.setBounds(0, 0, 800, 400);
+    auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 390.f - y * 380.f); };
+    bool ok = true;
+    auto check = [&](bool cond, const char* what) { std::printf("  %-64s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
+    std::printf("deleting points:\n");
+
+    p.setEnvelope(Envelope(), 0);
+    p.apvts.getParameter("bezier")->setValueNotifyingHost(1.f);
+    const auto before = p.getEnvelope(0);
+    const size_t n = before.points.size();
+    const auto pt = before.points[2];
+    const auto pos = toScreen(pt.x, pt.y);
+
+    MouseDriver m { ed };
+    m.down(pos);
+    m.ed.mouseUp(m.make(pos, false));
+    // (a right-click: press and release with the popup modifier)
+    ed.mouseDown(m.make(pos, false, juce::ModifierKeys::rightButtonModifier));
+    ed.mouseUp(m.make(pos, false));
+    check(p.getEnvelope(0).points.size() == n, "right-click leaves the point alone");
+
+    ed.mouseDoubleClick(m.make(pos, false, juce::ModifierKeys::leftButtonModifier));
+    check(p.getEnvelope(0).points.size() == n - 1, "double-click deletes an interior point");
+
+    const auto first = toScreen(before.points.front().x, before.points.front().y);
+    ed.mouseDoubleClick(m.make(first, false, juce::ModifierKeys::leftButtonModifier));
+    check(p.getEnvelope(0).points.size() == n - 1, "double-click on the first point does not delete it");
+    check(p.undo() && p.getEnvelope(0).points.size() == n, "the deletion can be undone");
+    return ok;
+}
+
 static bool handleSnapRegression()
 {
     FreeLfoProcessor p;
@@ -927,6 +965,6 @@ int main(int argc, char** argv)
         }
     }
     const bool rz = resizeRegression();
-    const bool un = undoRegression() && presetRegression() && handleSnapRegression();
+    const bool un = undoRegression() && presetRegression() && handleSnapRegression() && deletePointRegression();
     return un && a && b && c && d && f && g && h && k && m && n && o && q && rz ? 0 : 1;
 }

@@ -148,7 +148,7 @@ private:
     struct BandCtl { std::atomic<float> *mode, *division, *hz, *depth, *smooth, *dotted, *triplet, *offset; };
     BandCtl band[3] {};
     std::atomic<float> *pMb = nullptr, *pBands = nullptr, *pXLow = nullptr, *pXHigh = nullptr,
-                       *pLink = nullptr, *pSlopeLow = nullptr, *pSlopeHigh = nullptr;
+                       *pLink = nullptr, *pLinkDepth = nullptr, *pLinkSmooth = nullptr, *pLinkOffset = nullptr, *pSlopeLow = nullptr, *pSlopeHigh = nullptr;
 
     std::deque<UndoState> undoStack, redoStack;
     bool restoringUndo = false;

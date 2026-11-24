@@ -334,12 +334,37 @@ MultibandPanel::MultibandPanel(FreeLfoProcessor& p) : proc(p), strip(p), curve(p
     smooth.setTextValueSuffix(" ms");
 
 
+    struct { LinkButton* b; const char* what; const char* base; const char* id; std::unique_ptr<BA>* a; } links[] = {
+        { &linkDepthBtn, "depth", "depth", "linkDepth", &linkDepthA }, { &linkSmoothBtn, "smoothing", "smooth", "linkSmooth", &linkSmoothA },
+        { &linkOffsetBtn, "phase offset", "offset", "linkOffset", &linkOffsetA } };
+    for (auto& l : links)
+    {
+        l.b->setTooltip(juce::String("Link ") + l.what + ": every band follows one value");
+        addAndMakeVisible(*l.b);
+        *l.a = std::make_unique<BA>(proc.apvts, l.id, *l.b);
+        l.b->onClick = [this, b = l.b, base = l.base, id = l.id] { if (b->getToggleState()) copyToLinkSource(base, id); };
+    }
     bandsA = std::make_unique<CA>(proc.apvts, "mbBands", bandsBox);
+    linkBtn.setTooltip("Link rates: every band shares one rate");
+    addAndMakeVisible(linkBtn);
     linkA = std::make_unique<BA>(proc.apvts, "mbLink", linkBtn);
     waveA = std::make_unique<SA>(proc.apvts, "waveOpacity", wave);
 
     rebind();
     startTimerHz(10);
+}
+
+void MultibandPanel::copyToLinkSource(const char* base, const char*)
+{
+    const bool three = proc.apvts.getRawParameterValue("mbBands")->load() > 0.5f;
+    const int src = three ? 1 : 0;
+    if (selected == src) return;
+    auto* from = proc.apvts.getParameter(juce::String(base) + FreeLfoProcessor::bandSuffix(selected));
+    auto* to = proc.apvts.getParameter(juce::String(base) + FreeLfoProcessor::bandSuffix(src));
+    if (from == nullptr || to == nullptr) return;
+    to->beginChangeGesture();
+    to->setValueNotifyingHost(from->getValue());
+    to->endChangeGesture();
 }
 
 int MultibandPanel::signature() const
@@ -348,7 +373,8 @@ int MultibandPanel::signature() const
     const bool three = v("mbBands") > 0.5f, link = v("mbLink") > 0.5f;
     const int eff = link ? (three ? 1 : 0) : selected;
     const juce::String es = FreeLfoProcessor::bandSuffix(eff);
-    return (three ? 1 : 0) | (link ? 2 : 0) | (((int) v(("mode" + es).toRawUTF8())) << 2) | (selected << 3) | (paper::version << 8);
+    const int links = (v("linkDepth") > 0.5f ? 1 : 0) | (v("linkSmooth") > 0.5f ? 2 : 0) | (v("linkOffset") > 0.5f ? 4 : 0);
+    return (three ? 1 : 0) | (link ? 2 : 0) | (((int) v(("mode" + es).toRawUTF8())) << 2) | (selected << 3) | (links << 5) | (paper::version << 8);
 }
 
 void MultibandPanel::timerCallback()
@@ -398,14 +424,19 @@ void MultibandPanel::rebind()
     tripBtn.setVisible(syncMode);
     rate.updateText();
 
-    depthA = std::make_unique<SA>(proc.apvts, "depth" + ss, depth);
-    smoothA = std::make_unique<SA>(proc.apvts, "smooth" + ss, smooth);
-    offsetA = std::make_unique<SA>(proc.apvts, "offset" + ss, offset);
+    // a linked control shows (and edits) the one band every band follows
+    const juce::String src = FreeLfoProcessor::bandSuffix(three ? 1 : 0);
+    const bool ld = v("linkDepth") > 0.5f, ls = v("linkSmooth") > 0.5f, lo = v("linkOffset") > 0.5f;
+    depthA = std::make_unique<SA>(proc.apvts, "depth" + (ld ? src : ss), depth);
+    smoothA = std::make_unique<SA>(proc.apvts, "smooth" + (ls ? src : ss), smooth);
+    offsetA = std::make_unique<SA>(proc.apvts, "offset" + (lo ? src : ss), offset);
+    depthL.setText(ld ? "Depth (all bands)" : "Depth", juce::dontSendNotification);
+    smoothL.setText(ls ? "Smooth (all bands)" : "Smooth", juce::dontSendNotification);
+    offsetL.setText(lo ? "Offset (all bands)" : "Offset", juce::dontSendNotification);
 
     curve.setSlot(selected + 1);
     strip.setSelected(selected);
 
-    const char* names[3] = { "Low band", "Mid band", "High band" };
     rateL.setText(link ? "Rate (all bands)" : "Rate", juce::dontSendNotification);
 
     lastSig = signature();
@@ -428,10 +459,17 @@ void MultibandPanel::resized()
     };
     const auto rateColumn = knobs.withWidth(w);
     place(rateL, rate);
+    linkBtn.setBounds(rate.getBounds().getCentreX() + 36, rate.getBounds().getY() + 14, 22, 22);
     dotBtn.setBounds(rateColumn.getCentreX() - 56, rateColumn.getBottom() - 22, 24, 20);
     tripBtn.setBounds(rateColumn.getCentreX() + 32, rateColumn.getBottom() - 22, 24, 20);
+    auto chain = [&](LinkButton& b, const juce::Slider& s) {   // beside the knob, like dotted / triplet beside the rate
+        b.setBounds(s.getBounds().getCentreX() + 36, s.getBounds().getY() + 14, 22, 22);
+    };
     place(depthL, depth);
+    chain(linkDepthBtn, depth);
     place(smoothL, smooth);
+    chain(linkSmoothBtn, smooth);
     place(offsetL, offset);
+    chain(linkOffsetBtn, offset);
     place(waveL, wave);
 }

@@ -27,7 +27,7 @@ It is an independent, from-scratch implementation inspired by the workflow of Xf
 - Draw any shape: double-click to add points, drag to move them.
 - **Bezier handles** on every point, After Effects style: all handles are visible at once, smooth by default, with Shift to break them apart.
 - **Simple mode**: one draggable diamond per segment instead of handles. It reaches much sharper bends than the handles can, and switching between the two styles converts your curve so it stays editable.
-- Easy-ease (double-click a point), straighten (double-click a Simple-mode diamond), delete (right-click a point).
+- Easy-ease (double-click a point), straighten (double-click a Simple-mode diamond), delete (double-click a point).
 - **Grid and snapping**: snapping is off by default; hold **Option (macOS) / Alt (Windows)** to snap, or turn the **Snap** switch on to reverse that. A draggable number sets how many grid lines there are (2, 3, 4, 6, 8, 12, 16, 24, 32, 36, 48, 64) and snapping lands exactly on the drawn lines.
 - **Undo / redo** for every edit (Ctrl/Cmd+Z, Shift+Ctrl/Cmd+Z or Ctrl+Y, or the arrows in the header): one step per drag, includes reset and the Bezier switch, and keeps the last 50 steps (about 40 KB).
 - **Presets and copy/paste** from the header's curve button: 20 factory shapes (house pump, soft and hard duck, long release, pump x2, nine kick-style rise/hold/drop shapes, sine, triangle, saws, flat) shown as small curve thumbnails, **Save curve as preset...** for your own, **Copy curve** and **Paste curve** (works between plugin instances and projects). A preset or pasted curve replaces only the curve you are editing (the selected band in Multiband) and is undoable.
@@ -42,14 +42,14 @@ It is an independent, from-scratch implementation inspired by the workflow of Xf
 **Multiband**
 - Split into **low / mid / high** (or just low / high) with draggable split lines on a frequency strip.
 - Each split has its own crossover slope: **6, 12, 24, 48, 72 or 96 dB/octave** (Linkwitz-Riley, so the bands add back to a flat response).
-- Every band has its **own curve**, its own **rate** (or link them all), its own depth, smoothing and phase offset, and a **solo** button; solo several bands at once.
+- Every band has its **own curve**, its own **rate** (or link them all), its own depth, smoothing and phase offset, and a **solo** button; solo several bands at once. A small chain beside the Depth, Smooth and Offset knobs links that control, so every band follows one value.
 - The strip draws each band's real filter response, so you can see how the bands overlap at each slope.
 - Defaults are a house-style sidechain pump where the lows stay ducked longest and the highs recover fastest.
 
 **Feedback while you work**
 - The input waveform is drawn folded onto the LFO cycle and coloured by frequency (red lows, green mids, blue highs), so you can see where the kick and the hats land against your curve.
 - An optional sidechain input is drawn too (display only, see [limitations](#known-limitations-and-roadmap)).
-- A grey line shows the **actual gain** after Depth, Smooth and Offset.
+- A grey line shows the **actual gain** after Depth, Smooth and Offset. The waveform behind the curve shows the input faintly with the **output** (input times that gain) drawn over it, so you see what the ducking does to the audio.
 - Light and dark themes (dark is the default, the choice is remembered).
 - **Resizable window** (880x500 up to 2000x1300): drag the bottom-right corner; the size is remembered.
 
@@ -77,7 +77,7 @@ Only the VST3 format is built (plus a standalone app for development). AU, AAX a
 | Shift while dragging a handle | Break the handles apart |
 | Option/Alt or Ctrl while dragging a handle | Snap the handle's tip to the grid |
 | Double-click a point | Toggle easy-ease (flat tangents) |
-| Right-click a point | Delete it |
+| Double-click a point | Delete it (the first and last points stay) |
 | Hold Option/Alt while dragging or adding | Snap to the grid (reversed if the Snap switch is on) |
 | Click empty space / click the curve | Hide / show all points and handles |
 | **Bezier handles** switch | Flip between handle editing and one-diamond Simple mode (curves are converted) |
