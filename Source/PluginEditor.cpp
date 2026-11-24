@@ -1,3 +1,4 @@
+#include "Fonts.h"
 #include "PluginEditor.h"
 
 // ---------------------------------------------------------------- FreeLfoEditor
@@ -29,7 +30,7 @@ static bool loadDarkPreference()
 static int toggleWidth(const juce::String& text)
 {
     juce::GlyphArrangement ga;
-    ga.addLineOfText(juce::FontOptions(13.f), text, 0.f, 0.f);
+    ga.addLineOfText(fonts::regular(13.f), text, 0.f, 0.f);
     return (int) std::ceil(ga.getBoundingBox(0, -1, true).getWidth()) + 6 + 30 + 2;
 }
 

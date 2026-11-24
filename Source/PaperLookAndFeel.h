@@ -1,5 +1,6 @@
 #pragma once
 #include <juce_gui_basics/juce_gui_basics.h>
+#include "Fonts.h"
 
 // Two themes: "light paper" (default) and a dark one inspired by After Effects' graph editor
 // (charcoal panels, near-black graph area, blue highlight, yellow keyframe handles).
@@ -150,6 +151,26 @@ public:
 class PaperLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
+    PaperLookAndFeel() { setDefaultSansSerifTypeface(fonts::regularFace()); }
+
+    // Small uppercase captions (knob names); the value boxes inside sliders keep a normal readable font
+    void drawLabel(juce::Graphics& g, juce::Label& l) override
+    {
+        if (dynamic_cast<juce::Slider*>(l.getParentComponent()) != nullptr || dynamic_cast<juce::ComboBox*>(l.getParentComponent()) != nullptr
+            || l.isBeingEdited())
+        {
+            LookAndFeel_V4::drawLabel(g, l);
+            return;
+        }
+        g.setColour(l.findColour(juce::Label::textColourId));
+        g.setFont(fonts::semibold(10.5f).withExtraKerningFactor(0.09f));
+        g.drawText(l.getText().toUpperCase(), l.getLocalBounds(), l.getJustificationType(), false);
+    }
+
+    juce::Font getLabelFont(juce::Label&) override { return fonts::regular(13.f); }
+    juce::Font getTextButtonFont(juce::TextButton&, int) override { return fonts::semibold(13.f); }
+    juce::Font getPopupMenuFont() override { return fonts::regular(14.f); }
+
     // (re)load the theme colours; call after paper::setDark(), then sendLookAndFeelChange() on the editor
     void applyColours()
     {
@@ -202,7 +223,7 @@ public:
         g.setColour(juce::Colours::white);
         g.fillEllipse(knobX, sw.getY() + 2.f, 10.f, 10.f);
         g.setColour(paper::sub);
-        g.setFont(13.f);
+        g.setFont(fonts::regular(13.f));
         g.drawText(bt.getButtonText(), b.withTrimmedRight(6.f), juce::Justification::centredRight);
     }
 
@@ -230,7 +251,7 @@ public:
         g.strokePath(p, juce::PathStrokeType(1.5f));
     }
 
-    juce::Font getComboBoxFont(juce::ComboBox&) override { return juce::FontOptions(14.f); }
+    juce::Font getComboBoxFont(juce::ComboBox&) override { return fonts::regular(14.f); }
 
     // Bar-style sliders are used as small draggable number boxes (drag up / down to change the value)
     void drawLinearSlider(juce::Graphics& g, int x, int y, int w, int h, float pos, float minPos, float maxPos,

@@ -30,7 +30,7 @@ It is an independent, from-scratch implementation inspired by the workflow of Xf
 - Easy-ease (double-click a point), straighten (double-click a Simple-mode diamond), delete (right-click a point).
 - **Grid and snapping**: snapping is off by default; hold **Option (macOS) / Alt (Windows)** to snap, or turn the **Snap** switch on to reverse that. A draggable number sets how many grid lines there are (2, 3, 4, 6, 8, 12, 16, 24, 32, 36, 48, 64) and snapping lands exactly on the drawn lines.
 - **Undo / redo** for every edit (Ctrl/Cmd+Z, Shift+Ctrl/Cmd+Z or Ctrl+Y, or the arrows in the header): one step per drag, includes reset and the Bezier switch, and keeps the last 50 steps (about 40 KB).
-- **Presets and copy/paste** from the header's curve button: 11 factory shapes (house pump, soft duck, hard duck, long release, pump x2, sine, triangle, saw down, saw up, flat) shown as small curve thumbnails, **Save curve as preset...** for your own, **Copy curve** and **Paste curve** (works between plugin instances and projects). A preset or pasted curve replaces only the curve you are editing (the selected band in Multiband) and is undoable.
+- **Presets and copy/paste** from the header's curve button: 20 factory shapes (house pump, soft and hard duck, long release, pump x2, nine kick-style rise/hold/drop shapes, sine, triangle, saws, flat) shown as small curve thumbnails, **Save curve as preset...** for your own, **Copy curve** and **Paste curve** (works between plugin instances and projects). A preset or pasted curve replaces only the curve you are editing (the selected band in Multiband) and is undoable.
 - Click empty space to hide every point and handle and see the bare curve; click the curve to bring them back.
 - The first and last points always share one height, so the loop has no click where it wraps around.
 
@@ -165,6 +165,8 @@ Source/
   EnvelopeEditor.*      the curve editor (points, handles, snapping, drawing)
   MultibandPanel.*      the frequency strip and the multiband tab
   PaperLookAndFeel.h    the light and dark themes and the custom controls
+  Fonts.h               the bundled Inter font
+Assets/Fonts/           Inter Regular and SemiBold, plus its license
 tests/                  the test programs above and the shared fake DAW
 docs/images/            screenshots used in this README
 .github/workflows/      CI: builds and tests on Windows and macOS
@@ -179,6 +181,8 @@ docs/images/            screenshots used in this README
 
 ## License and credits
 
-No license has been chosen for this project yet, so for now all rights are reserved by the author. It is built with [JUCE](https://juce.com), which is available under an open-source license (AGPLv3 for JUCE 8) or a commercial license; whichever you choose for this plugin must be compatible with that. Check JUCE's current terms before you distribute binaries.
+Free LFO Tool is open source under the [GNU Affero General Public License v3](LICENSE) (AGPL-3.0), the same license JUCE 8 is offered under. You can use, study, modify and share it, and if you distribute a modified version you must share its source under the same license.
 
 VST is a trademark of Steinberg Media Technologies GmbH. The VST3 SDK is used through JUCE. LFOTool and ShaperBox are products of their respective owners, mentioned only as inspiration.
+
+The interface font is [Inter](https://rsms.me/inter/) by Rasmus Andersson, bundled under the SIL Open Font License 1.1 (`Assets/Fonts/Inter-LICENSE.txt`).

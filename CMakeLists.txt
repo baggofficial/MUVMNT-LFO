@@ -22,6 +22,11 @@ juce_add_plugin(FreeLfoTool
     NEEDS_MIDI_OUTPUT FALSE
     COPY_PLUGIN_AFTER_BUILD FALSE)
 
+# Bundled UI font (Inter, SIL Open Font License; see Assets/Fonts/Inter-LICENSE.txt)
+juce_add_binary_data(FreeLfoFonts HEADER_NAME "FreeLfoFontData.h" NAMESPACE FreeLfoFontData
+    SOURCES Assets/Fonts/Inter-Regular.ttf Assets/Fonts/Inter-SemiBold.ttf)
+set_target_properties(FreeLfoFonts PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 target_sources(FreeLfoTool PRIVATE
     Source/PluginProcessor.cpp
     Source/PluginEditor.cpp
@@ -35,7 +40,7 @@ target_compile_definitions(FreeLfoTool PUBLIC
     JUCE_VST3_CAN_REPLACE_VST2=0)
 
 target_link_libraries(FreeLfoTool
-    PRIVATE juce::juce_audio_utils
+    PRIVATE FreeLfoFonts juce::juce_audio_utils
     PUBLIC
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags
@@ -53,6 +58,7 @@ if(FREELFO_BENCH)
         Source/MultibandPanel.cpp
     Source/PresetMenu.cpp)
     target_link_libraries(LfoBench PRIVATE
+        FreeLfoFonts
         juce::juce_audio_utils
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags)
@@ -67,6 +73,7 @@ if(FREELFO_BENCH)
         Source/MultibandPanel.cpp
     Source/PresetMenu.cpp)
     target_link_libraries(LfoAudioTest PRIVATE
+        FreeLfoFonts
         juce::juce_audio_utils
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags)
@@ -81,6 +88,7 @@ if(FREELFO_BENCH)
         Source/MultibandPanel.cpp
     Source/PresetMenu.cpp)
     target_link_libraries(LfoSnap PRIVATE
+        FreeLfoFonts
         juce::juce_audio_utils
         juce::juce_recommended_config_flags
         juce::juce_recommended_lto_flags)

@@ -1,3 +1,4 @@
+#include "Fonts.h"
 #include "MultibandPanel.h"
 
 namespace
@@ -127,7 +128,7 @@ void BandStrip::paint(juce::Graphics& g)
     g.setColour(paper::ink(0.10f));
     g.drawHorizontalLine((int) y6, freqToX(minHz), freqToX(maxHz));
     g.setColour(paper::sub.withAlpha(0.8f));
-    g.setFont(10.f);
+    g.setFont(fonts::regular(10.f));
     g.drawText("-6 dB", juce::Rectangle<float>(freqToX(minHz) + 4.f, y6 - 12.f, 40.f, 11.f), juce::Justification::centredLeft);
 
     // Each band's real filter response (the actual crossover maths), drawn across the whole axis,
@@ -178,7 +179,7 @@ void BandStrip::paint(juce::Graphics& g)
         const auto area = juce::Rectangle<float>(r.x0, 1.f, r.x1 - r.x0, h - 2.f);
         const bool sel = r.band == selected;
         g.setColour(paper::text.withAlpha(sel ? 0.9f : 0.55f));
-        g.setFont(juce::FontOptions(13.f, juce::Font::bold));
+        g.setFont(fonts::semibold(13.f));
         g.drawText(names[r.band], area.withTrimmedLeft(8.f).withHeight(24.f), juce::Justification::centredLeft);
 
         const auto chip = soloChip(r.x1);
@@ -186,7 +187,7 @@ void BandStrip::paint(juce::Graphics& g)
         g.setColour(on ? paper::accent : paper::panel);
         g.fillRoundedRectangle(chip, 4.f);
         g.setColour(on ? juce::Colours::white : paper::sub);
-        g.setFont(11.f);
+        g.setFont(fonts::semibold(11.f));
         g.drawText("S", chip, juce::Justification::centred);
     }
 
@@ -205,14 +206,14 @@ void BandStrip::paint(juce::Graphics& g)
         g.setColour(paper::text.withAlpha(0.7f));
         g.drawRoundedRectangle(chip, 9.f, 1.f);
         g.setColour(paper::text);
-        g.setFont(11.f);
+        g.setFont(fonts::semibold(11.f));
         g.drawText(slopeText[juce::jlimit(0, numSlopes - 1, juce::roundToInt(v(i == 0 ? "slopeLow" : "slopeHigh")))], chip, juce::Justification::centred);
 
         // No drag knob: the split line itself is the handle. The frequency chip sits at its foot.
         const auto label = juce::Rectangle<float>(x - 28.f, h - 22.f, 56.f, 15.f);
         g.setColour(paper::bg.withAlpha(0.92f)); // keeps the split line from running through the text
         g.fillRoundedRectangle(label, 4.f);
-        g.setFont(11.f);
+        g.setFont(fonts::semibold(11.f));
         g.setColour(paper::sub);
         g.drawText(hzText(hz), label, juce::Justification::centred);
     }

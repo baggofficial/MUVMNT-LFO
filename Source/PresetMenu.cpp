@@ -1,3 +1,4 @@
+#include "Fonts.h"
 #include "PresetMenu.h"
 
 namespace
@@ -47,11 +48,11 @@ namespace
         void paint(juce::Graphics& g) override
         {
             g.fillAll(paper::panel);
-            g.setFont(juce::FontOptions(12.f));
+            g.setFont(fonts::semibold(11.f).withExtraKerningFactor(0.06f));
             for (auto& h : headings)
             {
                 g.setColour(paper::sub);
-                g.drawText(h.text, h.area, juce::Justification::centredLeft);
+                g.drawText(h.text.toUpperCase(), h.area, juce::Justification::centredLeft);
             }
             for (int i = 0; i < (int) tiles.size(); ++i)
             {

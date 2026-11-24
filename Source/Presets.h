@@ -80,6 +80,37 @@ namespace presets
 
         add("Sidechain", "Pump x2", tile(pump, 2));
 
+        // ---- Kick shapes: the usual "rise, hold, drop" and "drop, hold, return" volume shapes of kick-sidechain tools.
+        add("Kick shapes", "Fast rise", make({ { 0.00f, 0.f, 0.f, 0.f, 0.08f, 0.f },
+                                               { 0.22f, 1.f, -0.08f, 0.f, 0.f, 0.f },
+                                               { 0.98f, 1.f }, { 1.00f, 0.f } }));
+        add("Kick shapes", "Smooth rise", make({ { 0.00f, 0.f, 0.f, 0.f, 0.14f, 0.f },
+                                                 { 0.38f, 1.f, -0.14f, 0.f, 0.f, 0.f },
+                                                 { 0.98f, 1.f }, { 1.00f, 0.f } }));
+        add("Kick shapes", "Slow rise", make({ { 0.00f, 0.f, 0.f, 0.f, 0.25f, 0.f },
+                                               { 0.65f, 1.f, -0.25f, 0.f, 0.f, 0.f },
+                                               { 0.98f, 1.f }, { 1.00f, 0.f } }));
+        add("Kick shapes", "Rounded pump", make({ { 0.00f, 0.f, 0.f, 0.f, 0.10f, 0.f },
+                                                  { 0.30f, 1.f, -0.10f, 0.f, 0.f, 0.f },
+                                                  { 0.55f, 1.f, 0.f, 0.f, 0.20f, 0.f },
+                                                  { 1.00f, 0.f, -0.20f, 0.f, 0.f, 0.f } }));
+        add("Kick shapes", "Hump", make({ { 0.00f, 0.f, 0.f, 0.f, 0.f, 0.f },
+                                          { 0.25f, 0.f, 0.f, 0.f, 0.15f, 0.f },
+                                          { 0.62f, 1.f, -0.15f, 0.f, 0.15f, 0.f },
+                                          { 1.00f, 0.f, -0.22f, 0.f, 0.f, 0.f } }));
+        add("Kick shapes", "Late rise", make({ { 0.00f, 1.f }, { 0.03f, 0.f },
+                                               { 0.55f, 0.f, 0.f, 0.f, 0.20f, 0.f },
+                                               { 1.00f, 1.f, -0.20f, 0.f, 0.f, 0.f } }));
+        add("Kick shapes", "Dip & snap", make({ { 0.00f, 1.f, 0.f, 0.f, 0.15f, 0.f },
+                                                { 0.40f, 0.f, -0.15f, 0.f, 0.f, 0.f },
+                                                { 0.97f, 0.f }, { 1.00f, 1.f } }));
+        add("Kick shapes", "Ramp dip", make({ { 0.00f, 1.f }, { 0.45f, 0.f }, { 0.97f, 0.f }, { 1.00f, 1.f } }));
+        add("Kick shapes", "Double bump", make({ { 0.00f, 0.f, 0.f, 0.f, 0.06f, 0.f },
+                                                 { 0.18f, 0.7f, -0.06f, 0.f, 0.06f, 0.f },
+                                                 { 0.34f, 0.3f, -0.06f, 0.f, 0.20f, 0.f },
+                                                 { 0.95f, 1.f, -0.30f, 0.f, 0.f, 0.f },
+                                                 { 1.00f, 0.f } }));
+
         // ---- Shapes: tremolo and ramps.
         add("Shapes", "Sine", make({ { 0.0f, 1.f, 0.f, 0.f, 0.18f, 0.f },
                                      { 0.5f, 0.f, -0.18f, 0.f, 0.18f, 0.f },
