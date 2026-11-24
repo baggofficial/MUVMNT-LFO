@@ -148,6 +148,92 @@ public:
     }
 };
 
+// The Single / Multiband switch: one button that shows the current mode as an icon (one wave = Single, three stacked waves =
+// Multiband) and flips to the other mode when clicked.
+class ModeSwitchButton : public juce::Button
+{
+public:
+    ModeSwitchButton() : juce::Button("mode") { setMouseCursor(juce::MouseCursor::PointingHandCursor); setMode(false); }
+
+    void setMode(bool multiband)
+    {
+        multi = multiband;
+        setTooltip(multi ? "Multiband: a curve for each of the lows, mids and highs. Click for Single band."
+                         : "Single band: one curve for the whole signal. Click for Multiband.");
+        repaint();
+    }
+
+    void paintButton(juce::Graphics& g, bool hover, bool down) override
+    {
+        const auto b = getLocalBounds().toFloat().reduced(0.5f);
+        g.setColour(down ? paper::track : hover ? paper::bg : paper::panel);
+        g.fillRoundedRectangle(b, 6.f);
+        g.setColour(hover ? paper::accent.withAlpha(0.7f) : paper::line);
+        g.drawRoundedRectangle(b, 6.f, 1.f);
+
+        g.setColour(paper::accent);
+        const int numWaves = multi ? 3 : 1;
+        const auto area = b.reduced(11.f, multi ? 7.f : 6.f);
+        const float amp = multi ? 2.1f : 4.2f;
+        for (int k = 0; k < numWaves; ++k)
+        {
+            const float cy = multi ? area.getY() + area.getHeight() * ((float) k + 0.5f) / 3.f : area.getCentreY();
+            juce::Path wave;
+            for (float x = 0.f; x <= 1.001f; x += 0.04f)
+            {
+                const float y = cy - amp * std::sin(x * juce::MathConstants<float>::twoPi + (float) k * 0.9f);
+                if (x == 0.f) wave.startNewSubPath(area.getX() + x * area.getWidth(), y);
+                else wave.lineTo(area.getX() + x * area.getWidth(), y);
+            }
+            g.strokePath(wave, juce::PathStrokeType(multi ? 1.4f : 2.f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
+    }
+
+private:
+    bool multi = false;
+};
+
+// Bypass: a power icon. Lit (accent) while the plugin is working; amber with a glow while it is bypassed.
+class BypassButton : public juce::ToggleButton
+{
+public:
+    BypassButton()
+    {
+        setClickingTogglesState(true);
+        setTooltip("Bypass: pass the audio through untouched");
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    }
+
+    void paintButton(juce::Graphics& g, bool hover, bool) override
+    {
+        const auto b = getLocalBounds().toFloat().reduced(0.5f);
+        const bool bypassed = getToggleState();
+        const auto amber = juce::Colour(0xfff0b429);
+        g.setColour(bypassed ? amber.withAlpha(0.22f) : hover ? paper::bg : paper::panel);
+        g.fillRoundedRectangle(b, 6.f);
+        g.setColour(bypassed ? amber : paper::line);
+        g.drawRoundedRectangle(b, 6.f, 1.f);
+
+        const auto c = bypassed ? amber : paper::accent.withAlpha(hover ? 1.f : 0.9f);
+        const auto ctr = b.getCentre();
+        const float r = 6.5f;
+        if (bypassed)   // a soft glow
+            for (const auto glow : { std::pair<float, float> { 3.f, 0.08f }, { 2.f, 0.13f } })
+            {
+                g.setColour(amber.withAlpha(glow.second));
+                juce::Path p;
+                p.addCentredArc(ctr.x, ctr.y + 0.5f, r, r, 0.f, 0.55f, juce::MathConstants<float>::twoPi - 0.55f, true);
+                g.strokePath(p, juce::PathStrokeType(1.8f + glow.first, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            }
+        g.setColour(c);
+        juce::Path power;   // the power symbol: an open ring with a line through the gap
+        power.addCentredArc(ctr.x, ctr.y + 0.5f, r, r, 0.f, 0.55f, juce::MathConstants<float>::twoPi - 0.55f, true);
+        power.startNewSubPath(ctr.x, ctr.y - r - 0.5f);
+        power.lineTo(ctr.x, ctr.y - 0.5f);
+        g.strokePath(power, juce::PathStrokeType(1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    }
+};
+
 // A rotary knob you can also type into: double-click the knob (or choose it from the right-click menu) to enter an
 // exact value; right-click also resets to the default. (Cmd / Ctrl-click still resets, like any JUCE slider.)
 class Knob : public juce::Slider

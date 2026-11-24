@@ -870,6 +870,28 @@ int main(int argc, char** argv)
         }
     }
 
+    { // bypass switched on from the parameter side (what the host's bypass button does): the button must light up
+        {   // the bypass button must be what a click on it lands on, in both tabs
+            auto* fe = dynamic_cast<FreeLfoEditor*>(ed.get());
+            (void) fe;
+            ed->setVisible(true);   // only so getComponentAt works on this off-screen editor
+            for (bool mbOn : { false, true })
+            {
+                setParam(p, "mb", mbOn ? 1.f : 0.f);
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+                juce::Component* hit = ed->getComponentAt(ed->getWidth() - 18 - 20, ed->getHeight() - 18 - 92 + 6 + 14);
+                std::printf("bypass click target (%s tab): %s (%s)\n", mbOn ? "multiband" : "single", hit != nullptr && dynamic_cast<juce::ToggleButton*>(hit) != nullptr ? "the bypass button" : "SOMETHING ELSE", hit != nullptr ? typeid(*hit).name() : "none");
+            }
+            setParam(p, "mb", 0.f);
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+        }
+        setParam(p, "bypass", 1.f);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+        save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("bypass_on.png"));
+        setParam(p, "bypass", 0.f);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(200);
+    }
+
     setParam(p, "mb", 1.f);
     juce::MessageManager::getInstance()->runDispatchLoopUntil(300); // lets the tab switch and the band controls rebind
     std::printf("mb raw value after set: %.1f, blockCounter %u\n", p.apvts.getRawParameterValue("mb")->load(), p.blockCounter.load());

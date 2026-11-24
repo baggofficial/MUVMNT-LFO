@@ -33,7 +33,9 @@ private:
     PresetButton presetBtn;
     std::unique_ptr<juce::Component> presetPopup; // the open preset popup (a layer inside this window), if any
     juce::TooltipWindow tooltipWindow { this, 500 }; // the icon buttons explain themselves on hover
-    juce::TextButton reset { "Reset" }, tabSingle { "Single" }, tabMulti { "Multiband" };
+    juce::TextButton reset { "Reset" };
+    ModeSwitchButton modeSwitch;   // Single <-> Multiband
+    BypassButton bypassBtn;        // under the IN / OUT meters
     juce::TextButton dotBtn { juce::String::fromUTF8("\xE2\x80\xA2") }, tripBtn { "3" }; // dotted / triplet, like Xfer's LFO Tool
     ThemeToggle themeBtn;
     HistoryButton undoBtn { false }, redoBtn { true };
@@ -45,7 +47,7 @@ private:
     using BA = juce::AudioProcessorValueTreeState::ButtonAttachment;
     std::unique_ptr<CA> modeA;
     std::unique_ptr<SA> rateA, depthA, smoothA, offsetA, waveA;
-    std::unique_ptr<BA> retrigA, bezierA, dotA, tripA;
+    std::unique_ptr<BA> retrigA, bezierA, dotA, tripA, bypassA;
     std::unique_ptr<SA> gridA;
 
     bool multibandOn() const { return proc.apvts.getRawParameterValue("mb")->load() > 0.5f; }

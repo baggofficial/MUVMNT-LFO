@@ -110,10 +110,24 @@ private:
 // A thin vertical meter beside the curve editor: where the output signal (what the plugin lets through, -1 .. +1, same scale as the scope) was at the last
 // point of the cycle (the arrow), plus a bar for the lowest to highest output over the last 4% of the cycle (the end zone). The big dot is the newest cycle, the small ones the cycles before it.
 // A dot far from the centre line means that note is still swinging when the gain falls: that is where bass clicks.
-class WrapMeter : public juce::Component, private juce::Timer
+class WrapMeter : public juce::Component, public juce::SettableTooltipClient, private juce::Timer
 {
 public:
-    WrapMeter(FreeLfoProcessor& p, const EnvelopeEditor& e) : proc(p), editor(e) { startTimerHz(60); setInterceptsMouseClicks(false, false); }
+    WrapMeter(FreeLfoProcessor& p, const EnvelopeEditor& e) : proc(p), editor(e) {
+        startTimerHz(60);
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+        setTooltip("End-of-cycle meter: the level at the cycle's last point.\nClick to show the end-zone bar (last 4%)");
+    }
+
+    // 28 px with the end-zone bar, 20 px without it
+    int preferredWidth() const { return proc.showEndZone.load() ? 28 : 20; }
+
+    void mouseDown(const juce::MouseEvent&) override
+    {
+        proc.showEndZone.store(!proc.showEndZone.load());
+        if (auto* parent = getParentComponent()) parent->resized();   // the column changes width
+        repaint();
+    }
     ~WrapMeter() override { stopTimer(); }
 
     void paint(juce::Graphics& g) override
@@ -168,11 +182,14 @@ public:
 
         if (count > 0)
         {
-            // the end zone bar: lowest to highest output over the last few percent of the cycle
+            // the end zone bar (click the meter to show it): lowest to highest output over the last few percent of the cycle
+            if (proc.showEndZone.load())
+            {
             const float y0 = yOf(dispHi), y1 = yOf(dispLo);
             const auto bar = juce::Rectangle<float>(b.getRight() - 9.f, y0 - 1.5f, 5.f, juce::jmax(3.f, y1 - y0 + 3.f));
             g.setColour(colourFor(juce::jmax(std::abs(dispLo), std::abs(dispHi))).withAlpha(0.9f));
             g.fillRoundedRectangle(bar, 2.5f);
+            }
             drawArrow(dispArrow, 6.f, 11.f, 1.f, true);   // the very last point of the newest cycle
         }
     }

@@ -357,6 +357,43 @@ static void testMeters()
 }
 
 // ---------------------------------------------------------------------------------------------
+// Bypass: bit-exact pass-through once the 10 ms crossfade is done, no jump while it fades, and back again.
+// ---------------------------------------------------------------------------------------------
+static void testBypass()
+{
+    section("3d. Bypass");
+    for (bool multiband : { false, true })
+    {
+        Rig r; r.param("mb", multiband ? 1.f : 0.f);
+        const auto in = noise(48000, 21);
+        const auto warm = r.render(in);   // processed: not equal to the input
+        (void) warm;
+        r.param("bypass", 1.f);
+        const auto byp = r.render(in);
+        // the first 10 ms are the crossfade; after that the output is the input, bit for bit
+        const size_t from = 1000;
+        float diff = 0.f;
+        for (size_t i = from; i < in[0].size(); ++i) diff = std::max(diff, std::abs(byp[0][i] - in[0][i]));
+        check(diff == 0.f, multiband ? "multiband: bypassed output equals the input exactly" : "single band: bypassed output equals the input exactly", fmt("max diff %.1e", diff));
+        {   // no jump while fading: a steady 0.5 signal, so any step in the output comes from the crossfade itself
+            Rig d; d.param("mb", multiband ? 1.f : 0.f);
+            Stereo dc { Sig(4800, 0.5f), Sig(4800, 0.5f) };
+            d.render(dc);
+            d.param("bypass", 1.f);
+            const auto o = d.render(dc);
+            float step = 0.f;
+            for (size_t i = 1; i < 1500; ++i) step = std::max(step, std::abs(o[0][i] - o[0][i - 1]));
+            check(step < 0.02f, "the crossfade has no jump", fmt("largest step %.4f (signal 0.5)", step));
+        }
+        r.param("bypass", 0.f);
+        const auto back = r.render(in);
+        float movement = 0.f;
+        for (size_t i = 0; i < 48000; i += 997) movement = std::max(movement, std::abs(back[0][i] - in[0][i]));
+        check(movement > 1e-3f, "switching bypass off processes the audio again", fmt("deviation from input %.3f", movement));
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // 4. Block-size independence
 // ---------------------------------------------------------------------------------------------
 static void testBlockSizes()
@@ -743,17 +780,36 @@ static void testRealTimeSafety()
     section("12. Real-time safety: no memory allocation on the audio thread");
     for (bool multiband : { false, true })
         for (bool editorOpen : { false, true })
+        for (bool bypassed : { false, true })
         {
-            Rig r; r.param("mb", multiband ? 1.f : 0.f); r.p.editorOpen.store(editorOpen);
+            Rig r; r.param("mb", multiband ? 1.f : 0.f); r.param("bypass", bypassed ? 1.f : 0.f); r.p.editorOpen.store(editorOpen);
             juce::AudioBuffer<float> buf(2, 512); juce::MidiBuffer midi;
             midi.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8) 100), 10);
             for (int i = 0; i < 200; ++i) { for (int k = 0; k < 512; ++k) { buf.setSample(0, k, 0.1f); buf.setSample(1, k, 0.1f); } r.p.processBlock(buf, midi); }
             t_isAudioThread = true; g_allocs = 0; g_otherThreadAllocs = 0; g_countAllocs = true;
             for (int i = 0; i < 2000; ++i) r.p.processBlock(buf, midi);
             g_countAllocs = false; t_isAudioThread = false;
-            check(g_allocs.load() == 0, fmt("%s, editor %s", multiband ? "multiband" : "single band", editorOpen ? "open" : "closed"),
+            check(g_allocs.load() == 0, fmt("%s, editor %s%s", multiband ? "multiband" : "single band", editorOpen ? "open" : "closed", bypassed ? ", bypassed" : ""),
                   fmt("%ld allocations in 2000 blocks (%ld by other threads, not counted)", g_allocs.load(), g_otherThreadAllocs.load()));
         }
+
+    // the bypass crossfade itself (switching on and off, every few blocks) must not allocate either
+    for (bool multiband : { false, true })
+    {
+        Rig r; r.param("mb", multiband ? 1.f : 0.f); r.p.editorOpen.store(true);
+        juce::AudioBuffer<float> buf(2, 512); juce::MidiBuffer midi;
+        for (int i = 0; i < 200; ++i) { for (int k = 0; k < 512; ++k) { buf.setSample(0, k, 0.1f); buf.setSample(1, k, 0.1f); } r.p.processBlock(buf, midi); }
+        t_isAudioThread = true; g_allocs = 0; g_otherThreadAllocs = 0;
+        for (int i = 0; i < 2000; ++i)
+        {
+            if (i % 5 == 0) { g_countAllocs = false; r.param("bypass", (i / 5) % 2 == 0 ? 1.f : 0.f); }   // the switch itself is a UI-side call
+            g_countAllocs = true;
+            r.p.processBlock(buf, midi);
+        }
+        g_countAllocs = false; t_isAudioThread = false;
+        check(g_allocs.load() == 0, multiband ? "multiband, bypass switching on and off" : "single band, bypass switching on and off",
+              fmt("%ld allocations in 2000 blocks", g_allocs.load()));
+    }
 }
 
 static void testThreads()
@@ -875,6 +931,7 @@ int main()
     testMultibandTransparent();
     testKnobLinks();
     testMeters();
+    testBypass();
     testBlockSizes();
     testSmoothingSlew();
     testClicks();

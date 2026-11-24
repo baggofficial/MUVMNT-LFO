@@ -442,6 +442,8 @@ MultibandPanel::MultibandPanel(FreeLfoProcessor& p) : proc(p), strip(p), curve(p
     setup(depth, depthL, "Depth");
     setup(smooth, smoothL, "Smooth");
     setup(offset, offsetL, "Offset");
+    // the grey gain line follows these knobs: redraw as soon as one moves, even when no audio is running
+    for (auto* k : { &depth, &smooth, &offset }) k->onValueChange = [this] { curve.repaint(); };
     setup(wave, waveL, "Waveform");
     smooth.setTextValueSuffix(" ms");
 
@@ -566,7 +568,7 @@ void MultibandPanel::resized()
         area.removeFromRight(4);
         inMeter.setBounds(area.removeFromRight(18));
         area.removeFromRight(6);
-        curveMeter.setBounds(area.removeFromRight(28));
+        curveMeter.setBounds(area.removeFromRight(curveMeter.preferredWidth()));
         area.removeFromRight(6);
         curve.setBounds(area);
     }

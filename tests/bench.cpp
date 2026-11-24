@@ -11,7 +11,7 @@ static void setParam(FreeLfoProcessor& p, const char* id, float plain)
     prm->setValueNotifyingHost(prm->convertTo0to1(plain));
 }
 
-struct Scenario { const char* name; bool hostSync; bool sync; bool editorOpen; bool sidechain; };
+struct Scenario { const char* name; bool hostSync; bool sync; bool editorOpen; bool sidechain; bool bypass = false; };
 
 int main()
 {
@@ -24,6 +24,8 @@ int main()
         { "Sync, host transport, editor open  ", true, true, true, false },
         { "Hz mode (free run), editor closed  ", false, false, false, false },
         { "Sync + sidechain, editor open      ", true, true, true, true },
+        { "Bypassed, editor closed            ", true, true, false, false, true },
+        { "Bypassed, editor open              ", true, true, true, false, true },
     };
 
     for (auto& s : scenarios)
@@ -37,6 +39,7 @@ int main()
         setParam(p, "hz", 3.f);
         setParam(p, "smooth", 0.f);
         p.editorOpen.store(s.editorOpen);
+        setParam(p, "bypass", s.bypass ? 1.f : 0.f);
         (void) s.sidechain;
 
         juce::AudioBuffer<float> buf(2, blockSize);

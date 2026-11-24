@@ -74,6 +74,7 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     addAndMakeVisible(inMeter);
     addAndMakeVisible(outMeter);
     addAndMakeVisible(mbPanel);
+    addAndMakeVisible(bypassBtn);   // after the panel, so it sits on top of it
     addChildComponent(mbPanel.modeBox);    // the multiband tab's Sync/Hz and band-count dropdowns sit in this header, like the single tab's
     addChildComponent(mbPanel.bandsBox);
 
@@ -137,14 +138,15 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     themeBtn.onClick = [this] { setDarkMode(!paper::dark); };
 
     // Tabs: Single = the original one-curve LFO (bit-exact pass-through), Multiband = per-band curves
-    tabSingle.onClick = [this] { setMultiband(false); };
-    tabMulti.onClick = [this] { setMultiband(true); };
-    addAndMakeVisible(tabSingle);
-    addAndMakeVisible(tabMulti);
+    bypassA = std::make_unique<BA>(proc.apvts, "bypass", bypassBtn);
+    modeSwitch.onClick = [this] { setMultiband(!multibandOn()); };
+    addAndMakeVisible(modeSwitch);
 
     depthA = std::make_unique<SA>(proc.apvts, "depth", depth);
     smoothA = std::make_unique<SA>(proc.apvts, "smooth", smooth);
     offsetA = std::make_unique<SA>(proc.apvts, "offset", offset);
+    // The grey gain line follows these knobs: redraw as soon as one moves, even when no audio is running (idle = no redraws)
+    for (auto* k : { &depth, &smooth, &offset }) k->onValueChange = [this] { curve.repaint(); };
     waveA = std::make_unique<SA>(proc.apvts, "waveOpacity", wave);
     retrigA = std::make_unique<BA>(proc.apvts, "retrigger", retrigger);
     bezierA = std::make_unique<BA>(proc.apvts, "bezier", bezier);
@@ -187,8 +189,7 @@ void FreeLfoEditor::updateTab()
 {
     const bool mb = multibandOn();
     shownMb = mb;
-    tabSingle.setToggleState(!mb, juce::dontSendNotification);
-    tabMulti.setToggleState(mb, juce::dontSendNotification);
+    modeSwitch.setMode(mb);
 
     for (juce::Component* c : std::initializer_list<juce::Component*> { &curve, &curveMeter, &inMeter, &outMeter, &mode, &rate, &depth, &smooth, &offset, &wave,
                                                                         &rateL, &depthL, &smoothL, &offsetL, &waveL })
@@ -256,8 +257,7 @@ void FreeLfoEditor::resized()
     const bool mb = multibandOn();
     auto r = getLocalBounds().reduced(18);
     auto top = r.removeFromTop(36);
-    tabSingle.setBounds(top.removeFromLeft(74).reduced(0, 4));
-    tabMulti.setBounds(top.removeFromLeft(96).reduced(0, 4));
+    modeSwitch.setBounds(top.removeFromLeft(64).reduced(0, 4));
     top.removeFromLeft(14);
     if (!mb) mode.setBounds(top.removeFromLeft(80).reduced(0, 4));
     else
@@ -287,6 +287,8 @@ void FreeLfoEditor::resized()
     retrigger.setBounds(top.removeFromRight(toggleWidth("MIDI retrigger")));
 
     r.removeFromTop(8);
+    bypassBtn.setBounds(r.getRight() - 40, r.getBottom() - 92 + 6, 40, 28);   // under the IN / OUT meters, in both tabs
+    bypassBtn.toFront(false);   // above the knob row of the single tab, which otherwise catches the clicks
     if (mb) { mbPanel.setBounds(r); return; }
 
     auto knobs = r.removeFromBottom(92);   // compact knobs: more room for the curve
@@ -296,7 +298,7 @@ void FreeLfoEditor::resized()
         area.removeFromRight(4);
         inMeter.setBounds(area.removeFromRight(18));
         area.removeFromRight(6);
-        curveMeter.setBounds(area.removeFromRight(28));
+        curveMeter.setBounds(area.removeFromRight(curveMeter.preferredWidth()));
         area.removeFromRight(6);
         curve.setBounds(area);
     }

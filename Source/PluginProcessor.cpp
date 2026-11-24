@@ -41,6 +41,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout FreeLfoProcessor::createLayo
 
     // ---- Multiband tab ----
     l.add(std::make_unique<AudioParameterBool>(ParameterID { "mb", 1 }, "Multiband", false));
+    l.add(std::make_unique<AudioParameterBool>(ParameterID { "bypass", 1 }, "Bypass", false));
     l.add(std::make_unique<AudioParameterChoice>(ParameterID { "mbBands", 1 }, "Bands", StringArray { "2 bands", "3 bands" }, 1));
     l.add(std::make_unique<AudioParameterFloat>(ParameterID { "xLow", 1 }, "Low Split",
                                                 NormalisableRange<float>(40.f, 12000.f, 1.f, 0.3f), 200.f));
@@ -110,6 +111,8 @@ FreeLfoProcessor::FreeLfoProcessor()
     pRetrigger = apvts.getRawParameterValue("retrigger");
 
     pMb = apvts.getRawParameterValue("mb");
+    pBypass = apvts.getRawParameterValue("bypass");
+    bypassParam = dynamic_cast<juce::RangedAudioParameter*>(apvts.getParameter("bypass"));
     pBands = apvts.getRawParameterValue("mbBands");
     pXLow = apvts.getRawParameterValue("xLow");
     pXHigh = apvts.getRawParameterValue("xHigh");
@@ -151,8 +154,10 @@ bool FreeLfoProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
     return sc.isDisabled() || sc == juce::AudioChannelSet::mono() || sc == juce::AudioChannelSet::stereo();
 }
 
-void FreeLfoProcessor::prepareToPlay(double sampleRate, int)
+void FreeLfoProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
+    dryScratch.setSize(2, juce::jmax(samplesPerBlock, 8192));
+    bypassMix = pBypass != nullptr && pBypass->load() > 0.5f ? 1.f : 0.f;
     zcrCoef = 1.f - std::exp(-1.f / (0.025f * (float) sampleRate));
     zcrSmooth = zcEnv = 0.f; zcState = 0;
     c150 = 1.f - std::exp(-juce::MathConstants<float>::twoPi * 150.f / (float) sampleRate);
@@ -280,7 +285,52 @@ static inline float smoothStep(float y, float target, float c)
     return (next == y || std::fabs(next - target) < 1e-7f) ? target : next;
 }
 
+// Bypass: the audio passes untouched. Switching crossfades dry and processed over 10 ms, so it never clicks; while fully
+// bypassed nothing is processed (no CPU).
 void FreeLfoProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
+{
+    juce::ScopedNoDenormals noDenormals;   // also covers the crossfade arithmetic below
+    const float target = pBypass->load() > 0.5f ? 1.f : 0.f;
+    const int n = buffer.getNumSamples();
+    auto mainBuf = getBusBuffer(buffer, false, 0);
+    const int nch = mainBuf.getNumChannels();
+
+    if (bypassMix >= 1.f && target >= 1.f)
+    {
+        if (editorOpen.load(std::memory_order_relaxed) && nch > 0 && n > 0)   // keep the IN / OUT meters honest
+        {
+            float pk = 0.f;
+            for (int ch = 0; ch < nch; ++ch) pk = juce::jmax(pk, mainBuf.getMagnitude(ch, 0, n));
+            const float fall = std::pow(10.f, -80.f * ((float) n / (float) getSampleRate()) / 20.f);
+            for (auto* m : { &meterIn, &meterOut }) m->store(juce::jmax(m->load(std::memory_order_relaxed) * fall, pk), std::memory_order_relaxed);
+        }
+        return;
+    }
+    if (bypassMix <= 0.f && target <= 0.f) { processActive(buffer, midi); return; }
+
+    if (n > dryScratch.getNumSamples() || nch > dryScratch.getNumChannels())   // a host block larger than promised: switch at once
+    {
+        bypassMix = target;
+        if (target < 1.f) processActive(buffer, midi);
+        return;
+    }
+    for (int ch = 0; ch < nch; ++ch) dryScratch.copyFrom(ch, 0, mainBuf, ch, 0, n);
+    processActive(buffer, midi);
+    const float step = 1.f / juce::jmax(1.f, 0.010f * (float) getSampleRate());
+    float m = bypassMix;
+    for (int i = 0; i < n; ++i)
+    {
+        m = m < target ? juce::jmin(target, m + step) : juce::jmax(target, m - step);
+        for (int ch = 0; ch < nch; ++ch)
+        {
+            auto* wet = mainBuf.getWritePointer(ch);
+            wet[i] = wet[i] * (1.f - m) + dryScratch.getReadPointer(ch)[i] * m;
+        }
+    }
+    bypassMix = m;
+}
+
+void FreeLfoProcessor::processActive(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
     for (int sl = 0; sl < numSlots; ++sl) syncTable(sl);
@@ -304,7 +354,7 @@ void FreeLfoProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
     // peak meters and the live spectrum only run while the editor is open
     const bool watching = editorOpen.load(std::memory_order_relaxed) && numChannels > 0;
     auto meterUpdate = [&](std::atomic<float>& m, float peak) {
-        const float fall = std::pow(10.f, -24.f * ((float) numSamples / (float) sr) / 20.f);   // 24 dB per second
+        const float fall = std::pow(10.f, -80.f * ((float) numSamples / (float) sr) / 20.f);   // 80 dB per second: follows loud, pumping material
         m.store(juce::jmax(m.load(std::memory_order_relaxed) * fall, peak), std::memory_order_relaxed);
     };
     if (watching)
@@ -792,6 +842,7 @@ void FreeLfoProcessor::getStateInformation(juce::MemoryBlock& dest)
     state.setProperty("envLow", juce::String(getEnvelope(1).serialize()), nullptr);
     state.setProperty("envMid", juce::String(getEnvelope(2).serialize()), nullptr);
     state.setProperty("envHigh", juce::String(getEnvelope(3).serialize()), nullptr);
+    state.setProperty("endZone", showEndZone.load(), nullptr);
     if (auto xml = state.createXml())
         copyXmlToBinary(*xml, dest);
 }
@@ -804,6 +855,7 @@ void FreeLfoProcessor::setStateInformation(const void* data, int size)
         if (state.isValid())
         {
             apvts.replaceState(state);
+            showEndZone.store(state.hasProperty("endZone") && (bool) state["endZone"]);
             if (state.hasProperty("envelope"))
                 setEnvelope(Envelope::deserialize(state["envelope"].toString().toStdString()));
             const char* keys[3] = { "envLow", "envMid", "envHigh" };

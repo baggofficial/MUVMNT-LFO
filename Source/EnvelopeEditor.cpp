@@ -312,10 +312,14 @@ void EnvelopeEditor::drawWaveforms(juce::Graphics& g)
             w.lineTo(toScreen((float) i / (bins - 1), 0.5f + 0.5f * mn));
         }
         w.closeSubPath();
-        g.setColour(paper::amber.withAlpha(waveOpacity * 0.8f));
+        // A contrasting halo (dark on the dark theme, light on the light one), a see-through fill so the scope underneath still
+        // shows, and a bright line on top: the kick stays readable over the rainbow and the grey input.
+        g.setColour((paper::dark ? juce::Colours::black : juce::Colours::white).withAlpha(0.55f * juce::jmax(0.3f, waveOpacity)));
+        g.strokePath(w, juce::PathStrokeType(4.f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        g.setColour(paper::amber.withAlpha(waveOpacity * 0.5f));
         g.fillPath(w);
-        g.setColour(paper::amber.darker(0.3f).withAlpha(juce::jmin(1.f, waveOpacity + 0.2f)));
-        g.strokePath(w, juce::PathStrokeType(1.f));
+        g.setColour(paper::amber.brighter(paper::dark ? 0.35f : 0.f).withAlpha(juce::jmin(1.f, waveOpacity + 0.2f)));
+        g.strokePath(w, juce::PathStrokeType(1.7f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 }
 

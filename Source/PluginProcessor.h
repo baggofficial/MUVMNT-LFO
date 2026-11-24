@@ -16,6 +16,7 @@ public:
     void releaseResources() override {}
     bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    juce::AudioProcessorParameter* getBypassParameter() const override { return bypassParam; }   // the host's bypass button drives this too
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
@@ -99,8 +100,9 @@ public:
     std::array<std::atomic<float>, specSize> specFifo {};
     std::atomic<int> specPos { 0 };
     std::array<std::atomic<float>, specSize> specFifoOut {};   // the same samples after the plugin: the output spectrum
-    // Peak meters (linear, 0..1+): input and output, with a fall of 24 dB/s applied here so the UI can just read them.
+    // Peak meters (linear, 0..1+): input and output, with a fast fall (80 dB/s) applied here so the UI can just read them.
     std::atomic<float> meterIn { 0.f }, meterOut { 0.f };
+    std::atomic<bool> showEndZone { false };   // the end-zone bar beside the end-of-cycle arrow (click the arrow meter to toggle); saved with the project
 
     // Multiband tab: each band's own input signal folded onto that band's own LFO cycle.
     std::array<std::array<std::atomic<float>, waveBins>, 3> bwMin {}, bwMax {};
@@ -175,6 +177,11 @@ private:
 
     struct BandCtl { std::atomic<float> *mode, *division, *hz, *depth, *smooth, *dotted, *triplet, *offset; };
     BandCtl band[3] {};
+    void processActive(juce::AudioBuffer<float>&, juce::MidiBuffer&);   // the real processing (processBlock adds the bypass crossfade)
+    juce::RangedAudioParameter* bypassParam = nullptr;
+    std::atomic<float>* pBypass = nullptr;
+    float bypassMix = 0.f;                // 0 = processed, 1 = dry; ramps over 10 ms so bypass never clicks
+    juce::AudioBuffer<float> dryScratch;  // the dry copy during a bypass crossfade (sized in prepareToPlay)
     std::atomic<float> *pMb = nullptr, *pBands = nullptr, *pXLow = nullptr, *pXHigh = nullptr,
                        *pLink = nullptr, *pLinkDepth = nullptr, *pLinkSmooth = nullptr, *pLinkOffset = nullptr, *pSlopeLow = nullptr, *pSlopeHigh = nullptr;
 
