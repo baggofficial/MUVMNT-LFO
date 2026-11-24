@@ -804,6 +804,12 @@ int main(int argc, char** argv)
         juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
         run(30);
         save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("dark_single.png"));
+        for (auto* c : ed->getChildren())   // the first knob is Rate: open its type-in box
+            if (auto* k = dynamic_cast<Knob*>(c)) { k->showTextBox(); break; }
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(200);
+        save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("knob_typein.png"));
+        juce::Component::unfocusAllComponents();
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(200);
         fe->setDarkMode(false, false);
         juce::MessageManager::getInstance()->runDispatchLoopUntil(200);
         run(30);

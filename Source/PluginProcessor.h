@@ -87,6 +87,8 @@ public:
 
     static constexpr int numDivisions = 10;
     static const std::array<const char*, numDivisions> divisionNames;
+    // Typed text -> division index ("1/8", "8", "2 bars", "1 bar", optional trailing D / T); -1 if it is not a division
+    static int parseDivisionText(const juce::String& text);
     static const std::array<double, numDivisions> divisionBeats; // quarter-note beats per LFO cycle
     static double rateModifier(bool dotted, bool triplet) { return dotted ? 1.5 : triplet ? 2.0 / 3.0 : 1.0; }
 

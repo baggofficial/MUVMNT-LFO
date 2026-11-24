@@ -24,7 +24,7 @@ private:
     MultibandPanel mbPanel;
 
     juce::ComboBox mode;
-    juce::Slider rate, depth, smooth, offset, wave;
+    Knob rate, depth, smooth, offset, wave;
     juce::ToggleButton retrigger { "MIDI retrigger" }, snap { "Snap" };
     BezierToggle bezier;
     PresetButton presetBtn;

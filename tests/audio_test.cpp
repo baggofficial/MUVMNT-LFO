@@ -810,10 +810,19 @@ static void testCpu()
     check(tiny < normal * (kLenientTiming ? 5.0 : 2.5), "denormal-range input costs no more CPU than normal input (flush-to-zero works)", fmt("normal %.3f%%, denormal input %.3f%%", normal, tiny));
 }
 
+static void testTypedDivisions()
+{
+    using P = FreeLfoProcessor;
+    check(P::parseDivisionText("1/8") == 6 && P::parseDivisionText(" 1/4 D") == 5 && P::parseDivisionText("1/16T") == 7, "typed rates: 1/8, 1/4 D, 1/16T");
+    check(P::parseDivisionText("8") == 6 && P::parseDivisionText("1") == 3 && P::parseDivisionText("1 bar") == 3 && P::parseDivisionText("2 bars") == 2, "typed rates: 8, 1, 1 bar, 2 bars");
+    check(P::parseDivisionText("banana") == -1 && P::parseDivisionText("") == -1, "typed rates: nonsense is rejected");
+}
+
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
     std::printf("Free LFO Tool audio tests (fake DAW at %.0f bpm)\n", kTestBpm);
+    testTypedDivisions();
     testNull();
     testSilence();
     testMultibandTransparent();

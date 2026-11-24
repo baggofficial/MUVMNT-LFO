@@ -214,6 +214,7 @@ void FreeLfoEditor::bindRate()
             return juce::String(FreeLfoProcessor::divisionNames[(size_t) juce::jlimit(0, FreeLfoProcessor::numDivisions - 1, (int) std::round(v))])
                    + (dotBtn.getToggleState() ? " D" : tripBtn.getToggleState() ? " T" : "");
         };
+        rate.valueFromTextFunction = [this](const juce::String& t) { const int i = FreeLfoProcessor::parseDivisionText(t); return i < 0 ? rate.getValue() : (double) i; };
     }
     else
     {
@@ -221,6 +222,7 @@ void FreeLfoEditor::bindRate()
         rate.textFromValueFunction = [](double v) {
             return juce::String(v, v < 10.0 ? 2 : 1) + " Hz";
         };
+        rate.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
     }
     rate.updateText();
     dotBtn.setVisible(syncMode && !multibandOn());   // dotted / triplet only mean something in Sync mode

@@ -90,7 +90,7 @@ private:
     EnvelopeEditor curve;
 
     juce::TextButton dotBtn { juce::String::fromUTF8("\xE2\x80\xA2") }, tripBtn { "3" };
-    juce::Slider rate, depth, smooth, offset, wave;
+    Knob rate, depth, smooth, offset, wave;
     juce::Label rateL, depthL, smoothL, offsetL, waveL;
 
     using CA = juce::AudioProcessorValueTreeState::ComboBoxAttachment;

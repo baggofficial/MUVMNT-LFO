@@ -384,11 +384,13 @@ void MultibandPanel::rebind()
             return juce::String(FreeLfoProcessor::divisionNames[(size_t) juce::jlimit(0, FreeLfoProcessor::numDivisions - 1, (int) std::round(x))])
                    + (dotBtn.getToggleState() ? " D" : tripBtn.getToggleState() ? " T" : "");
         };
+        rate.valueFromTextFunction = [this](const juce::String& t) { const int i = FreeLfoProcessor::parseDivisionText(t); return i < 0 ? rate.getValue() : (double) i; };
     }
     else
     {
         rateA = std::make_unique<SA>(proc.apvts, "hz" + es, rate);
         rate.textFromValueFunction = [](double x) { return juce::String(x, x < 10.0 ? 2 : 1) + " Hz"; };
+        rate.valueFromTextFunction = [](const juce::String& t) { return t.getDoubleValue(); };
     }
     dotA = std::make_unique<BA>(proc.apvts, "dot" + es, dotBtn);   // dotted / triplet follow the same band as the rate
     tripA = std::make_unique<BA>(proc.apvts, "trip" + es, tripBtn);

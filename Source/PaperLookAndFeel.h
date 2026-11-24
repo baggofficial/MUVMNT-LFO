@@ -148,6 +148,32 @@ public:
     }
 };
 
+// A rotary knob you can also type into: double-click the knob (or choose it from the right-click menu) to enter an
+// exact value; right-click also resets to the default. (Cmd / Ctrl-click still resets, like any JUCE slider.)
+class Knob : public juce::Slider
+{
+public:
+    Knob() { setMouseCursor(juce::MouseCursor::PointingHandCursor); }
+
+    void mouseDoubleClick(const juce::MouseEvent&) override { showTextBox(); }
+
+    void mouseDown(const juce::MouseEvent& e) override
+    {
+        if (!e.mods.isPopupMenu()) { juce::Slider::mouseDown(e); return; }
+        juce::PopupMenu m;
+        m.setLookAndFeel(&getLookAndFeel());   // the menu is its own native window, so give it our font and colours explicitly
+        m.addItem(1, "Enter value...");
+        m.addItem(2, "Reset to default", isDoubleClickReturnEnabled());
+        juce::Component::SafePointer<Knob> safe(this);
+        m.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea(juce::Rectangle<int>(e.getScreenPosition(), e.getScreenPosition()).expanded(1)),
+                        [safe](int r) {
+                            if (safe == nullptr) return;
+                            if (r == 1) safe->showTextBox();
+                            else if (r == 2) safe->setValue(safe->getDoubleClickReturnValue(), juce::sendNotificationSync);
+                        });
+    }
+};
+
 class PaperLookAndFeel : public juce::LookAndFeel_V4
 {
 public:
@@ -169,7 +195,41 @@ public:
 
     juce::Font getLabelFont(juce::Label&) override { return fonts::regular(13.f); }
     juce::Font getTextButtonFont(juce::TextButton&, int) override { return fonts::semibold(13.f); }
-    juce::Font getPopupMenuFont() override { return fonts::regular(14.f); }
+    juce::Font getPopupMenuFont() override { return fonts::regular(13.f); }
+
+    // The value readout under a knob: when you type into it, the editor is a narrow, centred box in the caption font
+    struct ValueLabel : public juce::Label
+    {
+        void resized() override
+        {
+            juce::Label::resized();
+            if (auto* ed = getCurrentTextEditor())
+                ed->setBounds(getLocalBounds().withSizeKeepingCentre(juce::jmin(60, getWidth()), getHeight()));
+        }
+        juce::TextEditor* createEditorComponent() override
+        {
+            auto* ed = juce::Label::createEditorComponent();
+            ed->setFont(fonts::semibold(11.5f));
+            ed->setJustification(juce::Justification::centred);
+            ed->setIndents(0, 0);
+            ed->setBorder(juce::BorderSize<int>(0));
+            return ed;
+        }
+    };
+    juce::Label* createSliderTextBox(juce::Slider& s) override
+    {
+        if (s.getSliderStyle() == juce::Slider::RotaryHorizontalVerticalDrag)
+        {
+            auto* l = new ValueLabel();
+            l->setJustificationType(juce::Justification::centred);
+            l->setKeyboardType(juce::TextInputTarget::decimalKeyboard);
+            l->setColour(juce::Label::textColourId, s.findColour(juce::Slider::textBoxTextColourId));
+            l->setColour(juce::Label::textWhenEditingColourId, s.findColour(juce::Slider::textBoxTextColourId));
+            l->setColour(juce::Label::outlineWhenEditingColourId, paper::accent);
+            return l;
+        }
+        return LookAndFeel_V4::createSliderTextBox(s);
+    }
 
     // (re)load the theme colours; call after paper::setDark(), then sendLookAndFeelChange() on the editor
     void applyColours()

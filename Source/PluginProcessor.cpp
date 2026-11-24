@@ -31,7 +31,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout FreeLfoProcessor::createLayo
     l.add(std::make_unique<AudioParameterFloat>(ParameterID { "depth", 1 }, "Depth",
                                                 NormalisableRange<float>(0.f, 1.f, 0.001f), 1.f));
     l.add(std::make_unique<AudioParameterFloat>(ParameterID { "smooth", 1 }, "Smooth (ms)",
-                                                NormalisableRange<float>(0.f, 50.f, 0.01f, 0.5f), 0.f));
+                                                NormalisableRange<float>(0.f, 200.f, 0.01f, 0.4f), 0.f));
     l.add(std::make_unique<AudioParameterFloat>(ParameterID { "offset", 1 }, "Phase Offset",
                                                 NormalisableRange<float>(0.f, 1.f, 0.001f), 0.f));
     l.add(std::make_unique<AudioParameterFloat>(ParameterID { "waveOpacity", 1 }, "Waveform Opacity",
@@ -69,11 +69,23 @@ juce::AudioProcessorValueTreeState::ParameterLayout FreeLfoProcessor::createLayo
         l.add(std::make_unique<AudioParameterFloat>(ParameterID { "depth" + sfx, 1 }, nm + " Depth",
                                                     NormalisableRange<float>(0.f, 1.f, 0.001f), 1.f));
         l.add(std::make_unique<AudioParameterFloat>(ParameterID { "smooth" + sfx, 1 }, nm + " Smooth (ms)",
-                                                    NormalisableRange<float>(0.f, 50.f, 0.01f, 0.5f), 0.f));
+                                                    NormalisableRange<float>(0.f, 200.f, 0.01f, 0.4f), 0.f));
         l.add(std::make_unique<AudioParameterFloat>(ParameterID { "offset" + sfx, 1 }, nm + " Phase Offset",
                                                     NormalisableRange<float>(0.f, 1.f, 0.001f), 0.f));
     }
     return l;
+}
+
+int FreeLfoProcessor::parseDivisionText(const juce::String& text)
+{
+    auto t = text.trim().toLowerCase().removeCharacters(" ");
+    if (t.endsWithChar('d') || t.endsWithChar('t')) t = t.dropLastCharacters(1);
+    if (t.containsOnly("0123456789"))            // "8" means 1/8; plain "1" means one bar
+        t = t == "1" ? juce::String("1bar") : "1/" + t;
+    for (int i = 0; i < numDivisions; ++i)
+        if (juce::String(divisionNames[(size_t) i]).toLowerCase().removeCharacters(" ") == t) return i;
+    if (t == "1bars") return 3;
+    return -1;
 }
 
 FreeLfoProcessor::FreeLfoProcessor()

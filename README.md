@@ -37,7 +37,7 @@ It is an independent, from-scratch implementation inspired by the workflow of Xf
 **Timing**
 - **Sync** to the host tempo and song position with note values from 8 bars to 1/64, plus **dotted** and **triplet** buttons. The LFO position depends only on the song position, so it stays locked through jumps, loops and tempo changes.
 - **Hz** mode: a free-running rate from 0.01 to 40 Hz, optionally restarted by MIDI notes.
-- **Offset** shifts the LFO within its cycle, **Smooth** (0 to 50 ms) rounds off hard edges, **Depth** sets how deep the ducking goes.
+- **Offset** shifts the LFO within its cycle, **Smooth** (0 to 200 ms) rounds off hard edges, **Depth** sets how deep the ducking goes.
 
 **Multiband**
 - Split into **low / mid / high** (or just low / high) with draggable split lines on a frequency strip.
@@ -70,6 +70,7 @@ Only the VST3 format is built (plus a standalone app for development). AU, AAX a
 
 | Do this | To get this |
 |---|---|
+| Double-click a knob, or right-click it | Type an exact value (rates accept `1/8`, `8`, `1 bar`...). Right-click also offers Reset to default; Cmd/Ctrl-click resets too |
 | Double-click empty space | Add a point (new points start smooth, with their handles spread out) |
 | Drag a point | Move it (the first and last points move together vertically) |
 | Drag a handle | Bend the curve; the opposite handle follows on smooth points |
