@@ -834,6 +834,7 @@ int main(int argc, char** argv)
             }
             p.processBlock(buf, midi);
         }
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(500); // the meter eases toward its values
         save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("click_risk.png"));
     }
 

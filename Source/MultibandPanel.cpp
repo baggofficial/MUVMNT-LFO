@@ -45,70 +45,102 @@ void BandStrip::timerCallback()
     if (s != lastSig || specLive || wasLive) { lastSig = s; repaint(); }
 }
 
-// Live spectrum of the plugin's input: newest samples -> FFT -> dB, fast attack and slow release so it is easy to read.
+// Live spectrum of the plugin's input and output: newest samples -> FFT -> dB, fast attack and slow release so it is easy to read.
 void BandStrip::updateSpectrum()
 {
     const unsigned bc = proc.blockCounter.load(std::memory_order_relaxed);
     const bool flowing = bc != lastBlock;
     lastBlock = bc;
-    if (specDb.empty()) specDb.assign((size_t) spectrum::fftSize / 2, -120.f);
+    if (specDb.empty()) { specDb.assign((size_t) spectrum::fftSize / 2, -120.f); specDbOut = specDb; }
 
-    if (flowing)
-    {
+    auto analyse = [&](const std::array<std::atomic<float>, FreeLfoProcessor::specSize>& fifo, std::vector<float>& smooth) {
         std::vector<float> samples((size_t) spectrum::fftSize);
         const int w = proc.specPos.load(std::memory_order_acquire);
         for (int i = 0; i < spectrum::fftSize; ++i)
-            samples[(size_t) i] = proc.specFifo[(size_t) ((w + FreeLfoProcessor::specSize - spectrum::fftSize + i) % FreeLfoProcessor::specSize)]
+            samples[(size_t) i] = fifo[(size_t) ((w + FreeLfoProcessor::specSize - spectrum::fftSize + i) % FreeLfoProcessor::specSize)]
                                       .load(std::memory_order_relaxed);
         std::vector<float> db;
         spectrum::magnitudesDb(samples.data(), db);
-        for (size_t k = 0; k < specDb.size(); ++k)
-            specDb[k] += (db[k] - specDb[k]) * (db[k] > specDb[k] ? 0.6f : 0.12f);
+        for (size_t k = 0; k < smooth.size(); ++k)
+            smooth[k] += (db[k] - smooth[k]) * (db[k] > smooth[k] ? 0.6f : 0.12f);
+    };
+
+    if (flowing)
+    {
+        analyse(proc.specFifo, specDb);
+        analyse(proc.specFifoOut, specDbOut);
     }
     else
+    {
         for (auto& v : specDb) v = juce::jmax(-120.f, v - 4.f);   // no audio: fade out
+        for (auto& v : specDbOut) v = juce::jmax(-120.f, v - 4.f);
+    }
 
     specLive = false;
     for (float v : specDb) if (v > -100.f) { specLive = true; break; }
 }
 
-void BandStrip::drawSpectrum(juce::Graphics& g, float plotTop, float plotBottom) const
+// One spectrum as a line (and optionally a closed fill) across the whole frequency axis.
+juce::Path BandStrip::spectrumPath(const std::vector<float>& db, float plotTop, float plotBottom, juce::Path* fill) const
 {
-    if (!specLive || specDb.empty()) return;
     const double sr = proc.getSampleRate() > 0.0 ? proc.getSampleRate() : 48000.0;
     const double binHz = sr / (double) spectrum::fftSize;
     const float xa = freqToX(minHz), xb = freqToX(maxHz);
 
-    juce::Path line, fill;
+    juce::Path line;
     bool first = true;
     for (float x = xa; x <= xb + 0.5f; x += 2.f)
     {
         const double f0 = xToFreq(x - 1.f), f1 = xToFreq(x + 1.f), fc = xToFreq(x);
         const double b0 = f0 / binHz, b1 = f1 / binHz;
-        float db;
+        float v;
         if (b1 - b0 < 1.0) // low frequencies: fewer bins than pixels, so interpolate
         {
             const double b = fc / binHz;
-            const int i = juce::jlimit(0, (int) specDb.size() - 2, (int) b);
+            const int i = juce::jlimit(0, (int) db.size() - 2, (int) b);
             const float t = (float) juce::jlimit(0.0, 1.0, b - i);
-            db = specDb[(size_t) i] + (specDb[(size_t) i + 1] - specDb[(size_t) i]) * t;
+            v = db[(size_t) i] + (db[(size_t) i + 1] - db[(size_t) i]) * t;
         }
         else
         {
-            db = -120.f;
-            for (int i = juce::jmax(1, (int) b0); i <= juce::jmin((int) specDb.size() - 1, (int) b1); ++i) db = juce::jmax(db, specDb[(size_t) i]);
+            v = -120.f;
+            for (int i = juce::jmax(1, (int) b0); i <= juce::jmin((int) db.size() - 1, (int) b1); ++i) v = juce::jmax(v, db[(size_t) i]);
         }
-        db += 3.f * (float) std::log2(fc / 1000.0);   // 3 dB per octave tilt: pink-ish music reads roughly flat
-        const float y = plotBottom - juce::jlimit(0.f, 1.f, (db + 90.f) / 80.f) * (plotBottom - plotTop);
-        if (first) { line.startNewSubPath(x, y); fill.startNewSubPath(x, plotBottom); fill.lineTo(x, y); first = false; }
-        else { line.lineTo(x, y); fill.lineTo(x, y); }
+        v += 3.f * (float) std::log2(fc / 1000.0);   // 3 dB per octave tilt: pink-ish music reads roughly flat
+        const float y = plotBottom - juce::jlimit(0.f, 1.f, (v + 90.f) / 80.f) * (plotBottom - plotTop);
+        if (first)
+        {
+            line.startNewSubPath(x, y);
+            if (fill != nullptr) { fill->startNewSubPath(x, plotBottom); fill->lineTo(x, y); }
+            first = false;
+        }
+        else { line.lineTo(x, y); if (fill != nullptr) fill->lineTo(x, y); }
     }
-    fill.lineTo(xb, plotBottom);
-    fill.closeSubPath();
+    if (fill != nullptr) { fill->lineTo(xb, plotBottom); fill->closeSubPath(); }
+    return line;
+}
+
+void BandStrip::drawSpectrum(juce::Graphics& g, float plotTop, float plotBottom) const
+{
+    if (!specLive || specDb.empty()) return;
+    juce::Path fill;
+    const auto inLine = spectrumPath(specDb, plotTop, plotBottom, &fill);
     g.setColour(paper::ink(0.15f));
     g.fillPath(fill);
     g.setColour(paper::ink(0.42f));
-    g.strokePath(line, juce::PathStrokeType(1.f));
+    g.strokePath(inLine, juce::PathStrokeType(1.f));
+
+    // after the plugin: a bright line, so you can see what the ducking does to the balance
+    g.setColour(paper::accent.withAlpha(0.9f));
+    g.strokePath(spectrumPath(specDbOut, plotTop, plotBottom, nullptr), juce::PathStrokeType(1.4f));
+
+    // tiny legend
+    const float xr = freqToX(maxHz) - 6.f, y = plotBottom - 12.f;
+    g.setFont(fonts::regular(9.5f));
+    g.setColour(paper::accent);
+    g.drawText("OUT", juce::Rectangle<float>(xr - 30.f, y, 30.f, 10.f), juce::Justification::centredRight);
+    g.setColour(paper::ink(0.55f));
+    g.drawText("IN", juce::Rectangle<float>(xr - 62.f, y, 24.f, 10.f), juce::Justification::centredRight);
 }
 
 float BandStrip::freqToX(double hz) const
@@ -388,6 +420,8 @@ MultibandPanel::MultibandPanel(FreeLfoProcessor& p) : proc(p), strip(p), curve(p
     addAndMakeVisible(strip);
     addAndMakeVisible(curve);
     addAndMakeVisible(curveMeter);
+    addAndMakeVisible(inMeter);
+    addAndMakeVisible(outMeter);
     strip.onSelect = [this](int b) { selectBand(b); };
 
     modeBox.addItemList({ "Sync", "Hz" }, 1);
@@ -528,7 +562,11 @@ void MultibandPanel::resized()
     auto knobs = r.removeFromBottom(92);   // compact knobs: more room for the curve
     {
         auto area = r.withTrimmedBottom(8);
-        curveMeter.setBounds(area.removeFromRight(20));
+        outMeter.setBounds(area.removeFromRight(18));
+        area.removeFromRight(4);
+        inMeter.setBounds(area.removeFromRight(18));
+        area.removeFromRight(6);
+        curveMeter.setBounds(area.removeFromRight(28));
         area.removeFromRight(6);
         curve.setBounds(area);
     }

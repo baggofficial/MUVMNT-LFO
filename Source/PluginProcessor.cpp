@@ -300,10 +300,25 @@ void FreeLfoProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
     }
     sidechainActive.store(scChannels > 0, std::memory_order_relaxed);
 
+    // peak meters and the live spectrum only run while the editor is open
+    const bool watching = editorOpen.load(std::memory_order_relaxed) && numChannels > 0;
+    auto meterUpdate = [&](std::atomic<float>& m, float peak) {
+        const float fall = std::pow(10.f, -24.f * ((float) numSamples / (float) sr) / 20.f);   // 24 dB per second
+        m.store(juce::jmax(m.load(std::memory_order_relaxed) * fall, peak), std::memory_order_relaxed);
+    };
+    if (watching)
+    {
+        float pk = 0.f;
+        for (int ch = 0; ch < numChannels; ++ch) pk = juce::jmax(pk, mainBuf.getMagnitude(ch, 0, numSamples));
+        meterUpdate(meterIn, pk);
+    }
+
     // live spectrum (multiband strip): keep the newest input samples, before any processing
-    if (editorOpen.load(std::memory_order_relaxed) && pMb->load() > 0.5f && numChannels > 0)
+    int specStart = -1;
+    if (watching && pMb->load() > 0.5f)
     {
         int w = specPos.load(std::memory_order_relaxed);
+        specStart = w;
         for (int i = 0; i < numSamples; ++i)
         {
             float m = 0.f;
@@ -388,6 +403,20 @@ void FreeLfoProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
             fadeInLeft -= seg;
 
         pos += seg;
+    }
+
+    if (watching)
+    {
+        float pk = 0.f;
+        for (int ch = 0; ch < numChannels; ++ch) pk = juce::jmax(pk, mainBuf.getMagnitude(ch, 0, numSamples));
+        meterUpdate(meterOut, pk);
+        if (specStart >= 0) // the same stretch of samples, after the plugin (for the before / after spectrum)
+            for (int i = 0; i < numSamples; ++i)
+            {
+                float m = 0.f;
+                for (int ch = 0; ch < numChannels; ++ch) m += mainBuf.getReadPointer(ch)[i];
+                specFifoOut[(size_t) ((specStart + i) % specSize)].store(m / (float) numChannels, std::memory_order_relaxed);
+            }
     }
 
     uiPhaseTimeMs.store(juce::Time::getMillisecondCounterHiRes(), std::memory_order_relaxed);
@@ -503,7 +532,15 @@ void FreeLfoProcessor::processSingle(juce::AudioBuffer<float>& mainBuf, const Ho
                     if (v < lo.load(std::memory_order_relaxed)) lo.store(v, std::memory_order_relaxed);
                     if (v > hi.load(std::memory_order_relaxed)) hi.store(v, std::memory_order_relaxed);
                 };
-                if (isNew && lastWaveBin >= 0 && bin < lastWaveBin) pushWrap(0, mono); // the cycle just wrapped
+                // output = input x gain. At the wrap: the level at the last point of the cycle, and the range over the end zone
+                const float outNow = mono * gain[i];
+                if (isNew && lastWaveBin >= 0 && bin < lastWaveBin)
+                {
+                    pushWrap(0, lastOut, endLo > endHi ? lastOut : endLo, endLo > endHi ? lastOut : endHi);
+                    endLo = 1e9f; endHi = -1e9f;
+                }
+                if (bin >= (int) ((1.f - wrapWindow) * waveBins)) { endLo = juce::jmin(endLo, outNow); endHi = juce::jmax(endHi, outNow); }
+                lastOut = outNow;
                 track(waveMin, waveMax, mono);
                 if (scChannels > 0) track(scMin, scMax, scMono);
 
@@ -689,7 +726,15 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const Hos
                 if (!lane[b].active) continue;
                 const float v = (float) (avg[b] / numCh);
                 const bool isNew = bin[b] != bandLastBin[b];
-                if (isNew && bandLastBin[b] >= 0 && bin[b] < bandLastBin[b]) pushWrap(b + 1, v);
+                const float outNow = v * g[b];
+                if (isNew && bandLastBin[b] >= 0 && bin[b] < bandLastBin[b])
+                {
+                    pushWrap(b + 1, bandLastOut[b], bandEndLo[b] > bandEndHi[b] ? bandLastOut[b] : bandEndLo[b],
+                             bandEndLo[b] > bandEndHi[b] ? bandLastOut[b] : bandEndHi[b]);
+                    bandEndLo[b] = 1e9f; bandEndHi[b] = -1e9f;
+                }
+                if (bin[b] >= (int) ((1.f - wrapWindow) * waveBins)) { bandEndLo[b] = juce::jmin(bandEndLo[b], outNow); bandEndHi[b] = juce::jmax(bandEndHi[b], outNow); }
+                bandLastOut[b] = outNow;
                 auto& lo = bwMin[(size_t) b][(size_t) bin[b]];
                 auto& hi = bwMax[(size_t) b][(size_t) bin[b]];
                 if (isNew) { lo.store(v, std::memory_order_relaxed); hi.store(v, std::memory_order_relaxed); }

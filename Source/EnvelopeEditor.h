@@ -103,13 +103,13 @@ private:
 };
 
 
-// A thin vertical meter beside the curve editor: where the input signal (-1 .. +1, same scale as the scope) was at the last
-// point of the cycle, the moment the curve drops. The big dot is the newest cycle, the small ones the cycles before it.
+// A thin vertical meter beside the curve editor: where the output signal (what the plugin lets through, -1 .. +1, same scale as the scope) was at the last
+// point of the cycle (the arrow), plus a bar for the lowest to highest output over the last 4% of the cycle (the end zone). The big dot is the newest cycle, the small ones the cycles before it.
 // A dot far from the centre line means that note is still swinging when the gain falls: that is where bass clicks.
 class WrapMeter : public juce::Component, private juce::Timer
 {
 public:
-    WrapMeter(FreeLfoProcessor& p, const EnvelopeEditor& e) : proc(p), editor(e) { startTimerHz(30); setInterceptsMouseClicks(false, false); }
+    WrapMeter(FreeLfoProcessor& p, const EnvelopeEditor& e) : proc(p), editor(e) { startTimerHz(60); setInterceptsMouseClicks(false, false); }
     ~WrapMeter() override { stopTimer(); }
 
     void paint(juce::Graphics& g) override
@@ -138,34 +138,84 @@ public:
 
         const int s = editor.getSlot();
         const int count = proc.wrapCount[(size_t) s].load(std::memory_order_acquire);
-        for (int k = juce::jmin(count, FreeLfoProcessor::wrapHistory) - 1; k >= 0; --k)   // oldest first, newest on top
-        {
-            const float v = proc.wrapVal[(size_t) s][(size_t) ((count - 1 - k) % FreeLfoProcessor::wrapHistory)].load(std::memory_order_relaxed);
-            const float y = yOf(v);
-            const float size = k == 0 ? 6.f : 3.5f;           // half height of the arrow
-            const float tipX = b.getX() + 2.f, baseX = tipX + (k == 0 ? 11.f : 7.f);
+        const int shown = juce::jmin(count, FreeLfoProcessor::wrapHistory - 1);
+        auto alphaFor = [](int k) { return k <= 0 ? 1.f : juce::jmax(0.f, 0.5f * (1.f - (float) k / (float) (FreeLfoProcessor::wrapHistory - 1))) + 0.04f; };
+        auto drawArrow = [&](float v, float size, float len, float alpha, bool outline) {
+            const float y = yOf(v), tipX = b.getX() + 2.f, baseX = tipX + len;
             juce::Path arrow;                                    // "<": points left, at the curve editor
             arrow.addTriangle(tipX, y, baseX, y - size, baseX, y + size);
-            const float a = k == 0 ? 1.f : 0.5f * (1.f - (float) k / FreeLfoProcessor::wrapHistory) + 0.1f;
-            if (k == 0)
+            if (outline)
             {
                 g.setColour(juce::Colours::black.withAlpha(0.5f));
                 g.strokePath(arrow, juce::PathStrokeType(2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
             }
-            g.setColour(colourFor(v).withAlpha(a));
+            g.setColour(colourFor(v).withAlpha(alpha));
             g.fillPath(arrow);
+        };
+
+        // older cycles: small, fading arrows. When a new cycle arrives they age one step, easing (not jumping) to the next look.
+        for (int k = shown; k >= 1; --k)
+        {
+            const float v = proc.wrapVal[(size_t) s][(size_t) ((count - 1 - k) % FreeLfoProcessor::wrapHistory)].load(std::memory_order_relaxed);
+            const float a = alphaFor(k - 1) + (alphaFor(k) - alphaFor(k - 1)) * ageProgress;
+            const float t = k == 1 ? ageProgress : 1.f;       // the one that was the newest shrinks to the small size
+            drawArrow(v, 6.f + (3.5f - 6.f) * t, 11.f + (7.f - 11.f) * t, a, false);
+        }
+
+        if (count > 0)
+        {
+            // the end zone bar: lowest to highest output over the last few percent of the cycle
+            const float y0 = yOf(dispHi), y1 = yOf(dispLo);
+            const auto bar = juce::Rectangle<float>(b.getRight() - 9.f, y0 - 1.5f, 5.f, juce::jmax(3.f, y1 - y0 + 3.f));
+            g.setColour(colourFor(juce::jmax(std::abs(dispLo), std::abs(dispHi))).withAlpha(0.9f));
+            g.fillRoundedRectangle(bar, 2.5f);
+            drawArrow(dispArrow, 6.f, 11.f, 1.f, true);   // the very last point of the newest cycle
         }
     }
 
 private:
+    // The values only change once per cycle, so the display eases toward them: the arrow glides (about 120 ms), and the end-zone
+    // bar grows quickly but falls back slowly, like a peak-hold meter.
     void timerCallback() override
     {
         const int s = editor.getSlot();
-        const int c = proc.wrapCount[(size_t) s].load(std::memory_order_relaxed);
-        if (c != lastCount || s != lastSlot) { lastCount = c; lastSlot = s; repaint(); }
+        const int c = proc.wrapCount[(size_t) s].load(std::memory_order_acquire);
+        const double now = juce::Time::getMillisecondCounterHiRes();
+        const float dt = (float) juce::jlimit(0.001, 0.1, (now - lastMs) / 1000.0);
+        lastMs = now;
+
+        float tv = 0.f, tlo = 0.f, thi = 0.f;
+        if (c > 0)
+        {
+            const size_t i = (size_t) ((c - 1) % FreeLfoProcessor::wrapHistory);
+            tv = proc.wrapVal[(size_t) s][i].load(std::memory_order_relaxed);
+            tlo = proc.wrapLo[(size_t) s][i].load(std::memory_order_relaxed);
+            thi = proc.wrapHi[(size_t) s][i].load(std::memory_order_relaxed);
+        }
+        if (s != lastSlot) // another band: show its values at once
+        {
+            lastSlot = s; lastCount = c; ageProgress = 1.f;
+            dispArrow = tv; dispLo = tlo; dispHi = thi;
+            repaint();
+            return;
+        }
+        if (c != lastCount) { lastCount = c; ageProgress = 0.f; }
+
+        auto ease = [dt](float cur, float target, float tau) { return cur + (target - cur) * (1.f - std::exp(-dt / tau)); };
+        const float nArrow = ease(dispArrow, tv, 0.04f);
+        const float nLo = ease(dispLo, tlo, tlo < dispLo ? 0.03f : 0.45f);    // grows down fast, falls back slowly
+        const float nHi = ease(dispHi, thi, thi > dispHi ? 0.03f : 0.45f);
+        const float nAge = 1.f - (1.f - ageProgress) * std::exp(-dt / 0.06f);
+        const bool moving = std::abs(nArrow - dispArrow) > 1e-4f || std::abs(nLo - dispLo) > 1e-4f
+                            || std::abs(nHi - dispHi) > 1e-4f || std::abs(nAge - ageProgress) > 1e-4f;
+        dispArrow = nArrow; dispLo = nLo; dispHi = nHi; ageProgress = nAge > 0.999f ? 1.f : nAge;
+        if (moving || firstPaint) { firstPaint = false; repaint(); }
     }
 
     FreeLfoProcessor& proc;
     const EnvelopeEditor& editor;
     int lastCount = -1, lastSlot = -1;
+    double lastMs = 0.0;
+    float dispArrow = 0.f, dispLo = 0.f, dispHi = 0.f, ageProgress = 1.f;
+    bool firstPaint = true;
 };

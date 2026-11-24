@@ -342,6 +342,21 @@ static void testKnobLinks()
 }
 
 // ---------------------------------------------------------------------------------------------
+// Peak meters: the input meter reads the input peak, the output meter never reads more than it (the plugin only ducks).
+// ---------------------------------------------------------------------------------------------
+static void testMeters()
+{
+    section("3c. Peak meters");
+    Rig r; r.p.editorOpen.store(true);
+    Stereo in { Sig(4800), Sig(4800) };
+    for (size_t i = 0; i < in[0].size(); ++i) in[0][i] = in[1][i] = 0.5f * (float) std::sin(0.05 * (double) i);
+    r.render(in, { 480 });
+    const float mi = r.p.meterIn.load(), mo = r.p.meterOut.load();
+    check(mi > 0.45f && mi < 0.52f, "input meter reads the input peak", fmt("%.3f (input peak 0.5)", mi));
+    check(mo <= mi + 1e-4f && mo > 0.f, "output meter reads at most the input peak", fmt("%.3f", mo));
+}
+
+// ---------------------------------------------------------------------------------------------
 // 4. Block-size independence
 // ---------------------------------------------------------------------------------------------
 static void testBlockSizes()
@@ -858,6 +873,7 @@ int main()
     testSilence();
     testMultibandTransparent();
     testKnobLinks();
+    testMeters();
     testBlockSizes();
     testSmoothingSlew();
     testClicks();

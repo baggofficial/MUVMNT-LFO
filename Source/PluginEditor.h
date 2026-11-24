@@ -3,6 +3,7 @@
 #include "PluginProcessor.h"
 #include "PaperLookAndFeel.h"
 #include "EnvelopeEditor.h"
+#include "LevelMeter.h"
 #include "MultibandPanel.h"
 #include "PresetMenu.h"
 
@@ -22,6 +23,7 @@ private:
     PaperLookAndFeel laf;
     EnvelopeEditor curve;
     WrapMeter curveMeter { proc, curve };
+    LevelMeter inMeter { proc, false, "IN" }, outMeter { proc, true, "OUT" };
     MultibandPanel mbPanel;
 
     juce::ComboBox mode;

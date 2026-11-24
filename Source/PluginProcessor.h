@@ -74,15 +74,20 @@ public:
     // Rough pitch of the input at each phase bin (0 = low ... 1 = high, on a log axis; -1 = not measured yet).
     // The single-tab scope uses it to colour the waveform like a rainbow.
     std::array<std::atomic<float>, waveBins> waveHue {};
-    // The input level (-1..+1) at the last point of the cycle, for the newest 8 cycles: slot 0 = single tab, 1..3 = bands.
+    // The OUTPUT level (-1..+1, input x the gain the plugin applies) at the last point of the cycle, for the newest 8 cycles: slot 0 = single tab, 1..3 = bands.
     // Shown by the thin meter beside the curve: a bass note that is away from 0 there will click when the curve drops.
     static constexpr int wrapHistory = 8;
-    std::array<std::array<std::atomic<float>, wrapHistory>, 4> wrapVal {};
+    static constexpr float wrapWindow = 0.04f;   // the "end zone": the last 4% of the cycle, where the curve usually drops
+    std::array<std::array<std::atomic<float>, wrapHistory>, 4> wrapVal {};              // output at the very last point
+    std::array<std::array<std::atomic<float>, wrapHistory>, 4> wrapLo {}, wrapHi {};   // lowest / highest output in the end zone
     std::array<std::atomic<int>, 4> wrapCount {};
-    void pushWrap(int slot, float v)
+    void pushWrap(int slot, float v, float lo, float hi)
     {
         const int n = wrapCount[(size_t) slot].load(std::memory_order_relaxed);
-        wrapVal[(size_t) slot][(size_t) (n % wrapHistory)].store(v, std::memory_order_relaxed);
+        const size_t i = (size_t) (n % wrapHistory);
+        wrapVal[(size_t) slot][i].store(v, std::memory_order_relaxed);
+        wrapLo[(size_t) slot][i].store(lo, std::memory_order_relaxed);
+        wrapHi[(size_t) slot][i].store(hi, std::memory_order_relaxed);
         wrapCount[(size_t) slot].store(n + 1, std::memory_order_release);
     }
     // How much bass and highs are present together (0..1); the scope tints that blend pink / purple.
@@ -91,6 +96,9 @@ public:
     static constexpr int specSize = 4096;
     std::array<std::atomic<float>, specSize> specFifo {};
     std::atomic<int> specPos { 0 };
+    std::array<std::atomic<float>, specSize> specFifoOut {};   // the same samples after the plugin: the output spectrum
+    // Peak meters (linear, 0..1+): input and output, with a fall of 24 dB/s applied here so the UI can just read them.
+    std::atomic<float> meterIn { 0.f }, meterOut { 0.f };
 
     // Multiband tab: each band's own input signal folded onto that band's own LFO cycle.
     std::array<std::array<std::atomic<float>, waveBins>, 3> bwMin {}, bwMax {};
@@ -192,6 +200,8 @@ private:
     float smoothedGain = 1.f;
     int lastWaveBin = -1;
     // zero-crossing pitch tracker for the rainbow scope
+    float endLo = 1e9f, endHi = -1e9f, lastOut = 0.f;                       // end-zone tracking (single tab)
+    float bandEndLo[3] = { 1e9f, 1e9f, 1e9f }, bandEndHi[3] = { -1e9f, -1e9f, -1e9f }, bandLastOut[3] = {};
     float zcrSmooth = 0.f, zcrCoef = 0.f, zcEnv = 0.f;
     float lp150 = 0.f, lp1500 = 0.f, eLow = 0.f, eHigh = 0.f, c150 = 0.f, c1500 = 0.f, eCoef = 0.f;
     int zcState = 0;

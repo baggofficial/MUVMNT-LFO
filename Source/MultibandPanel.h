@@ -4,6 +4,7 @@
 #include "PaperLookAndFeel.h"
 #include "EnvelopeEditor.h"
 #include "Spectrum.h"
+#include "LevelMeter.h"
 
 // Frequency strip: three coloured regions (low / mid / high) with two draggable split points
 // on a log-frequency axis. Click a region to edit that band; "S" solos a band.
@@ -41,10 +42,11 @@ private:
     int dragHandle = -1; // 0 = low split, 1 = high split
     int lastSig = -1;
     unsigned lastBlock = 0;
-    std::vector<float> specDb;      // smoothed live spectrum (dB per FFT bin)
+    std::vector<float> specDb, specDbOut;   // smoothed live spectrum (dB per FFT bin): input, and output after the plugin
     bool specLive = false;          // something is still visible
     void updateSpectrum();
     void drawSpectrum(juce::Graphics&, float plotTop, float plotBottom) const;
+    juce::Path spectrumPath(const std::vector<float>& db, float plotTop, float plotBottom, juce::Path* fill) const;
 };
 
 // The whole Multiband tab: strip, one curve editor (for the selected band) and that band's controls.
@@ -97,6 +99,7 @@ private:
     BandStrip strip;
     EnvelopeEditor curve;
     WrapMeter curveMeter { proc, curve };
+    LevelMeter inMeter { proc, false, "IN" }, outMeter { proc, true, "OUT" };
 
     juce::TextButton dotBtn { juce::String::fromUTF8("\xE2\x80\xA2") }, tripBtn { "3" };
     Knob rate, depth, smooth, offset, wave;
