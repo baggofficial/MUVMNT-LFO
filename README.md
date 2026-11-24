@@ -27,7 +27,7 @@ It is an independent, from-scratch implementation inspired by the workflow of Xf
 - Draw any shape: double-click to add points, drag to move them.
 - **Bezier handles** on every point, After Effects style: all handles are visible at once, smooth by default, with Shift to break them apart.
 - **Simple mode**: one draggable diamond per segment instead of handles. It reaches much sharper bends than the handles can, and switching between the two styles converts your curve so it stays editable.
-- Easy-ease (double-click a point), straighten (double-click a Simple-mode diamond), delete (double-click a point).
+- Delete a point with a double-click (the first and last points stay), straighten a Simple-mode segment by double-clicking its diamond, toggle easy-ease by double-clicking the first or last point.
 - **Grid and snapping**: snapping is off by default; hold **Option (macOS) / Alt (Windows)** to snap, or turn the **Snap** switch on to reverse that. A draggable number sets how many grid lines there are (2, 3, 4, 6, 8, 12, 16, 24, 32, 36, 48, 64) and snapping lands exactly on the drawn lines.
 - **Undo / redo** for every edit (Ctrl/Cmd+Z, Shift+Ctrl/Cmd+Z or Ctrl+Y, or the arrows in the header): one step per drag, includes reset and the Bezier switch, and keeps the last 50 steps (about 40 KB).
 - **Presets and copy/paste** from the header's curve button: 20 factory shapes (house pump, soft and hard duck, long release, pump x2, nine kick-style rise/hold/drop shapes, sine, triangle, saws, flat) shown as small curve thumbnails, **Save curve as preset...** for your own, **Copy curve** and **Paste curve** (works between plugin instances and projects). A preset or pasted curve replaces only the curve you are editing (the selected band in Multiband) and is undoable.
@@ -47,13 +47,17 @@ It is an independent, from-scratch implementation inspired by the workflow of Xf
 - Defaults are a house-style sidechain pump where the lows stay ducked longest and the highs recover fastest.
 
 **Feedback while you work**
-- The input waveform is drawn folded onto the LFO cycle and coloured by frequency (red lows, green mids, blue highs), so you can see where the kick and the hats land against your curve.
+- The input waveform is drawn folded onto the LFO cycle, faintly, with the **output** (what the plugin actually lets through) drawn over it in the curve's colour, so you can see where the kick and the hats land against your curve and what the ducking does to them. In Multiband each band shows its own signal in its own colour (red lows, green mids, blue highs). The **Waveform** knob sets how strong this is.
 - An optional sidechain input is drawn too (display only, see [limitations](#known-limitations-and-roadmap)).
-- A grey line shows the **actual gain** after Depth, Smooth and Offset. The waveform behind the curve shows the input faintly with the **output** (input times that gain) drawn over it, so you see what the ducking does to the audio.
+- A grey line shows the **actual gain** after Depth, Smooth and Offset; the output waveform is the input multiplied by exactly that gain.
 - Light and dark themes (dark is the default, the choice is remembered).
 - **Resizable window** (880x500 up to 2000x1300): drag the bottom-right corner; the size is remembered.
 
 ![Multiband, dark theme](docs/images/multiband-dark.png)
+
+![Presets popup](docs/images/presets-dark.png)
+
+![Single band, light theme](docs/images/single-light.png)
 
 ## Install
 
@@ -76,8 +80,8 @@ Only the VST3 format is built (plus a standalone app for development). AU, AAX a
 | Drag a handle | Bend the curve; the opposite handle follows on smooth points |
 | Shift while dragging a handle | Break the handles apart |
 | Option/Alt or Ctrl while dragging a handle | Snap the handle's tip to the grid |
-| Double-click a point | Toggle easy-ease (flat tangents) |
 | Double-click a point | Delete it (the first and last points stay) |
+| Double-click the first or last point | Toggle easy-ease (flat tangents) |
 | Hold Option/Alt while dragging or adding | Snap to the grid (reversed if the Snap switch is on) |
 | Click empty space / click the curve | Hide / show all points and handles |
 | **Bezier handles** switch | Flip between handle editing and one-diamond Simple mode (curves are converted) |
@@ -88,7 +92,7 @@ Only the VST3 format is built (plus a standalone app for development). AU, AAX a
 
 **Rate knob.** In Sync mode it steps through the straight note values from slow to fast; the **•** (dotted) and **3** (triplet) buttons next to it modify the value. In Hz mode it is a continuous frequency.
 
-**Multiband tab.** Click a coloured region on the strip to edit that band, drag a split line to move it, click the pill on a split line to pick its slope, and use the **S** chips to solo bands. The knobs below always belong to the selected band.
+**Multiband tab.** Click a coloured region on the strip to edit that band, drag a split line to move it, click the pill on a split line to pick its slope, and use the **S** chips to solo bands. The knobs below belong to the selected band. The chain beside each of Rate, Depth, Smooth and Offset links that control: every band then follows one value (the mid band's, or the low band's in 2-band mode), and turning a link on copies the value you were looking at.
 
 ## How it sounds: the design rules
 
@@ -130,7 +134,7 @@ Everything below runs offline, without a DAW or a sound card. A small **fake DAW
 
 | Program | What it checks | How to run |
 |---|---|---|
-| `LfoAudioTest` | **108 audio checks**: bit-exact null at 100%, exact silence at 0%, transparency of every crossover slope, block-size independence, clicks on 24 kinds of parameter change, filter stability across 4 sample rates, NaN/Inf and zero-length blocks, a fuzz test that randomises every parameter and the transport, tempo accuracy at 130 bpm, Hz accuracy, MIDI restart, the sidechain bus, state save/load, zero allocations on the audio thread, thread safety while the curve is edited, CPU worst cases and denormals | `build/LfoAudioTest_artefacts/Release/LfoAudioTest` |
+| `LfoAudioTest` | **117 audio checks**: bit-exact null at 100%, exact silence at 0%, transparency of every crossover slope, block-size independence, clicks on 24 kinds of parameter change, filter stability across 4 sample rates, NaN/Inf and zero-length blocks, a fuzz test that randomises every parameter and the transport, tempo accuracy at 130 bpm, Hz accuracy, MIDI restart, the sidechain bus, state save/load, zero allocations on the audio thread, thread safety while the curve is edited, CPU worst cases and denormals | `build/LfoAudioTest_artefacts/Release/LfoAudioTest` |
 | `tests/envelope_test.cpp` | The curve model: Bezier evaluation, Simple-mode bends, conversions between the two, the default curves, saving and loading | `clang++ -std=c++17 tests/envelope_test.cpp -o envtest && ./envtest` |
 | `tests/crossover_test.cpp` | The crossover maths for all six slopes, mixed slopes, and the drawn response curves | `clang++ -std=c++17 tests/crossover_test.cpp -o xotest && ./xotest` |
 | `LfoBench` | CPU per block, plus quick null and multiband sanity checks | `build/LfoBench_artefacts/Release/LfoBench` |
