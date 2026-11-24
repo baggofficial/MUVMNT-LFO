@@ -689,6 +689,7 @@ static void testSidechainBus()
         const auto expect = plain.render(a);
 
         Rig r; r.param("mb", multiband ? 1.f : 0.f);
+        r.p.editorOpen.store(true);   // the display analysis (incl. the kick split in Multiband) must not touch the audio either
         juce::AudioProcessor::BusesLayout layout;
         layout.inputBuses = { juce::AudioChannelSet::stereo(), juce::AudioChannelSet::stereo() };
         layout.outputBuses = { juce::AudioChannelSet::stereo() };

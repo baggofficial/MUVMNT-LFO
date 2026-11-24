@@ -291,19 +291,24 @@ void EnvelopeEditor::drawWaveforms(juce::Graphics& g)
     if (slot == 0) rainbowFill(waveOpacity, outFill); // single tab: rainbow; the multiband tab keeps its band colours
     fillWavePath(g, mnArr, mxArr, outGain, outFill);
 
-    if (slot == 0 && proc.sidechainActive.load())
+    if (proc.sidechainActive.load())
     {
+        // The sidechain signal (the kick routed in from another channel), and where it fights with the output
+        const auto& scMn = slot > 0 ? proc.bandScMin[(size_t) slot - 1] : proc.scMin;
+        const auto& scMx = slot > 0 ? proc.bandScMax[(size_t) slot - 1] : proc.scMax;
+        drawOverlap(g, mnArr, mxArr, scMn, scMx, waveOpacity);
+
         constexpr int bins = FreeLfoProcessor::waveBins;
         juce::Path w;
         for (int i = 0; i < bins; ++i)
         {
-            const float mx = juce::jlimit(-1.f, 1.f, proc.scMax[(size_t) i].load(std::memory_order_relaxed));
+            const float mx = juce::jlimit(-1.f, 1.f, scMx[(size_t) i].load(std::memory_order_relaxed));
             auto p = toScreen((float) i / (bins - 1), 0.5f + 0.5f * mx);
             if (i == 0) w.startNewSubPath(p); else w.lineTo(p);
         }
         for (int i = bins - 1; i >= 0; --i)
         {
-            const float mn = juce::jlimit(-1.f, 1.f, proc.scMin[(size_t) i].load(std::memory_order_relaxed));
+            const float mn = juce::jlimit(-1.f, 1.f, scMn[(size_t) i].load(std::memory_order_relaxed));
             w.lineTo(toScreen((float) i / (bins - 1), 0.5f + 0.5f * mn));
         }
         w.closeSubPath();
@@ -312,6 +317,62 @@ void EnvelopeEditor::drawWaveforms(juce::Graphics& g)
         g.setColour(paper::amber.darker(0.3f).withAlpha(juce::jmin(1.f, waveOpacity + 0.2f)));
         g.strokePath(w, juce::PathStrokeType(1.f));
     }
+}
+
+// Where the sidechain signal (the kick) and the plugin's output are both loud at the same position in the cycle: hatched
+// in the kick's colour. Each is measured against its own peak, so it does not depend on levels; the output is what is left
+// after the ducking, so a spot where the curve really ducks under the kick is not marked. In Multiband each band is
+// compared with the same band of the kick.
+void EnvelopeEditor::drawOverlap(juce::Graphics& g, const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& mnArr,
+                                 const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& mxArr,
+                                 const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& scMn,
+                                 const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& scMx, float opacity)
+{
+    constexpr int bins = FreeLfoProcessor::waveBins;
+    float kick[bins], out[bins];
+    float kMax = 0.f, oMax = 0.f;
+    for (int i = 0; i < bins; ++i)
+    {
+        kick[i] = juce::jmax(std::abs(scMn[(size_t) i].load(std::memory_order_relaxed)), std::abs(scMx[(size_t) i].load(std::memory_order_relaxed)));
+        out[i] = juce::jmax(std::abs(mnArr[(size_t) i].load(std::memory_order_relaxed)), std::abs(mxArr[(size_t) i].load(std::memory_order_relaxed))) * outGain[i];
+        kMax = juce::jmax(kMax, kick[i]);
+        oMax = juce::jmax(oMax, out[i]);
+    }
+    if (kMax < 0.01f || oMax < 0.01f) return;   // no kick, or no signal: nothing to compare
+
+    float c[bins];
+    for (int i = 0; i < bins; ++i) c[i] = juce::jmin(kick[i] / kMax, out[i] / oMax);
+    float sm[bins];                                      // a little smoothing, so single wiggles do not make confetti
+    for (int i = 0; i < bins; ++i)
+    {
+        float sum = 0.f; int n = 0;
+        for (int k = juce::jmax(0, i - 3); k <= juce::jmin(bins - 1, i + 3); ++k) { sum += c[k]; ++n; }
+        sm[i] = sum / (float) n;
+    }
+
+    const float top = toScreen(0.f, 1.f).y, bottom = toScreen(0.f, 0.f).y;
+    const auto ink = paper::dark ? juce::Colours::white : juce::Colours::black;
+    int runStart = -1;
+    auto flush = [&](int endBin) {
+        if (runStart < 0) return;
+        const float x0 = toScreen((float) runStart / (bins - 1), 0.f).x, x1 = toScreen((float) endBin / (bins - 1), 0.f).x;
+        const auto r = juce::Rectangle<float>(x0, top, juce::jmax(2.f, x1 - x0), bottom - top);
+        g.setColour(paper::amber.withAlpha(0.14f * juce::jmax(0.3f, opacity)));
+        g.fillRect(r);
+        g.saveState();
+        g.reduceClipRegion(r.toNearestInt());
+        g.setColour(ink.withAlpha(0.28f * juce::jmax(0.4f, opacity)));
+        for (float x = r.getX() - r.getHeight(); x < r.getRight(); x += 7.f)   // diagonal hatching
+            g.drawLine(x, r.getBottom(), x + r.getHeight(), r.getY(), 1.f);
+        g.restoreState();
+        runStart = -1;
+    };
+    for (int i = 0; i < bins; ++i)
+    {
+        if (sm[i] > 0.4f) { if (runStart < 0) runStart = i; }
+        else flush(i);
+    }
+    flush(bins - 1);
 }
 
 void EnvelopeEditor::renderCurveLayer(juce::Graphics& g)

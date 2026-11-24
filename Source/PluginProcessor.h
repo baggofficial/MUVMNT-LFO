@@ -69,6 +69,8 @@ public:
     // Same, for the optional sidechain input (e.g. the kick that triggers the pump).
     std::array<std::atomic<float>, waveBins> scMin {}, scMax {};
     std::atomic<bool> sidechainActive { false };
+    // Multiband: the sidechain signal split by a copy of the crossover, so each band can be compared with the same part of it.
+    std::array<std::array<std::atomic<float>, waveBins>, 3> bandScMin {}, bandScMax {};
     std::atomic<double> cycleSeconds { 0.5 }; // length of one LFO cycle, for the editor's smoothing preview
     std::atomic<bool> editorOpen { false }; // set by the editor; the waveform analysis only runs while it is true
     // Rough pitch of the input at each phase bin (0 = low ... 1 = high, on a log axis; -1 = not measured yet).
@@ -124,7 +126,7 @@ private:
     struct HostInfo { double bpm = 120.0, ppq = 0.0; bool havePpq = false, playing = false; };
     void processSingle(juce::AudioBuffer<float>& main, const HostInfo& host, const juce::MidiBuffer& midi, int midiOffset,
                        const float* const* scData, int scChannels);
-    void processMultiband(juce::AudioBuffer<float>& buf, const HostInfo& host);
+    void processMultiband(juce::AudioBuffer<float>& buf, const HostInfo& host, const float* const* scData, int scChannels);
 
     // Structure = things that rebuild the signal path. Changing them while playing would click, so the output dips
     // to silence for a few ms around the switch (old path fades out, new path fades in).
@@ -182,6 +184,7 @@ private:
 
     std::atomic<float>* pSoloBand[3] = { nullptr, nullptr, nullptr };
     Crossover crossover;
+    Crossover scCrossover;   // the same split for the sidechain signal (display only, runs while the editor is open)
     double bandFreePhase[3] = { 0, 0, 0 };
     float bandSmoothed[3] = { 1.f, 1.f, 1.f };
     int bandLastBin[3] = { -1, -1, -1 };

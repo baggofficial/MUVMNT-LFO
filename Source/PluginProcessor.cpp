@@ -165,6 +165,7 @@ void FreeLfoProcessor::prepareToPlay(double sampleRate, int)
     smoothedGain = 1.f;
     for (auto& sl : slots) sl.audioVersion = -1;
     crossover.prepare(sampleRate);
+    scCrossover.prepare(sampleRate);
     for (int b = 0; b < 3; ++b) { bandFreePhase[b] = 0.0; bandSmoothed[b] = 1.f; bandLastBin[b] = -1; laneSigValid[b] = false; laneDeclick[b] = 0; gate[b] = 1.f; }
     structureInit = false; fadeOutLeft = fadeInLeft = 0;
     singleSigValid = false; singleDeclick = 0;
@@ -376,7 +377,7 @@ void FreeLfoProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
         h.ppq = host.ppq + (double) pos * ppqPerSample;
         for (int c = 0; c < scChannels; ++c) scAt[c] = scData[c] + pos;
 
-        if (applied.multiband) processMultiband(view, h);
+        if (applied.multiband) processMultiband(view, h, scAt, scChannels);
         else processSingle(view, h, midi, pos, scAt, scChannels);
 
         if (g0 != 1.f || g1 != 1.f)
@@ -596,7 +597,7 @@ void FreeLfoProcessor::processSingle(juce::AudioBuffer<float>& mainBuf, const Ho
 // Multiband: split the signal into low / mid / high (or low / high), give every band its own
 // curve and its own LFO rate, then add the bands back together.
 // ---------------------------------------------------------------------------------------------
-void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const HostInfo& h)
+void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const HostInfo& h, const float* const* scData, int scChannels)
 {
     const int n = buf.getNumSamples();
     if (n == 0) return;
@@ -613,11 +614,14 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const Hos
 
     // Crossover: the structure is fixed (see processBlock); the split frequencies glide toward the knobs
     // (about 20 ms, in the log domain) so a jump of a knob never turns into a burst
+    const bool scOn = analyse && scChannels > 0;   // the kick (sidechain) is split like the audio, for the overlap display
     crossover.setSlopes((Slope) applied.slopeLow, (Slope) applied.slopeHigh);
+    if (scOn) scCrossover.setSlopes((Slope) applied.slopeLow, (Slope) applied.slopeHigh);
     const double targetLow = three ? juce::jmin(1000.0, (double) pXLow->load()) : (double) pXLow->load(), // 3 bands: low split tops out at 1 kHz
                  targetHigh = pXHigh->load();
     if (fcLowS < 0.0) { fcLowS = targetLow; fcHighS = targetHigh; }
     crossover.setFrequencies(fcLowS, fcHighS);
+    if (scOn) scCrossover.setFrequencies(fcLowS, fcHighS);
     constexpr int glideStep = 32; // while a knob is moving, the filters are retuned every 32 samples
     const double glideA = 1.0 - std::exp(-(double) glideStep / (0.030 * sr));
     auto glide = [&]() {
@@ -627,6 +631,7 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const Hos
         if (std::fabs(fcLowS / targetLow - 1.0) < 1e-4) fcLowS = targetLow;
         if (std::fabs(fcHighS / targetHigh - 1.0) < 1e-4) fcHighS = targetHigh;
         crossover.setFrequencies(fcLowS, fcHighS);
+        if (scOn) scCrossover.setFrequencies(fcLowS, fcHighS);
     };
 
     auto fract = [](double v) { return v - std::floor(v); };
@@ -720,6 +725,16 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const Hos
             if (analyse) { avg[0] += bands[0]; avg[1] += bands[1]; avg[2] += bands[2]; }
         }
 
+        double sb[3] = { 0.0, 0.0, 0.0 };
+        if (scOn)
+        {
+            double x = 0.0;
+            for (int c = 0; c < scChannels; ++c) x += scData[c][s];
+            x /= (double) scChannels;
+            if (!(std::fabs(x) < 1e9)) x = 0.0;
+            if (three) scCrossover.process3(0, x, sb); else scCrossover.process2(0, x, sb);
+        }
+
         if (analyse)
             for (int b = 0; b < 3; ++b)
             {
@@ -735,6 +750,18 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const Hos
                 }
                 if (bin[b] >= (int) ((1.f - wrapWindow) * waveBins)) { bandEndLo[b] = juce::jmin(bandEndLo[b], outNow); bandEndHi[b] = juce::jmax(bandEndHi[b], outNow); }
                 bandLastOut[b] = outNow;
+                if (scOn)
+                {
+                    auto& klo = bandScMin[(size_t) b][(size_t) bin[b]];
+                    auto& khi = bandScMax[(size_t) b][(size_t) bin[b]];
+                    const float kv = (float) sb[b];
+                    if (isNew) { klo.store(kv, std::memory_order_relaxed); khi.store(kv, std::memory_order_relaxed); }
+                    else
+                    {
+                        if (kv < klo.load(std::memory_order_relaxed)) klo.store(kv, std::memory_order_relaxed);
+                        if (kv > khi.load(std::memory_order_relaxed)) khi.store(kv, std::memory_order_relaxed);
+                    }
+                }
                 auto& lo = bwMin[(size_t) b][(size_t) bin[b]];
                 auto& hi = bwMax[(size_t) b][(size_t) bin[b]];
                 if (isNew) { lo.store(v, std::memory_order_relaxed); hi.store(v, std::memory_order_relaxed); }

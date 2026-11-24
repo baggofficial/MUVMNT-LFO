@@ -838,6 +838,38 @@ int main(int argc, char** argv)
         save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("click_risk.png"));
     }
 
+    { // a bass note and a kick routed in through the sidechain: where they overlap in the cycle is hatched
+        for (bool mbOn : { false, true })
+        {
+            FreeLfoProcessor q;
+            q.setRateAndBufferSizeDetails(sr, bs);
+            juce::AudioProcessor::BusesLayout layout;
+            layout.inputBuses = { juce::AudioChannelSet::stereo(), juce::AudioChannelSet::stereo() };
+            layout.outputBuses = { juce::AudioChannelSet::stereo() };
+            q.setBusesLayout(layout);
+            q.prepareToPlay(sr, bs);
+            std::unique_ptr<juce::AudioProcessorEditor> qe(q.createEditor());
+            qe->setSize(960, 610);
+            if (mbOn) setParam(q, "mb", 1.f); else setParam(q, "depth", 0.25f);   // weak ducking: the bass still sits on the kick
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+            juce::AudioBuffer<float> b4(4, bs);
+            long tq = 0;
+            for (int blk = 0; blk < 500; ++blk)
+            {
+                for (int i = 0; i < bs; ++i, ++tq)
+                {
+                    const double sec = (double) tq / sr, inBeat = std::fmod(sec, 0.5);
+                    const float bass = 0.6f * (float) std::sin(2.0 * juce::MathConstants<double>::pi * 55.0 * sec);
+                    const float kickSig = (float) (std::sin(2.0 * juce::MathConstants<double>::pi * 60.0 * inBeat) * std::exp(-inBeat * 14.0) * 0.9);
+                    b4.setSample(0, i, bass); b4.setSample(1, i, bass); b4.setSample(2, i, kickSig); b4.setSample(3, i, kickSig);
+                }
+                q.processBlock(b4, midi);
+            }
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+            save(qe->createComponentSnapshot(qe->getLocalBounds(), true, 1.0f), dir.getChildFile(mbOn ? "overlap_multiband.png" : "overlap_single.png"));
+        }
+    }
+
     setParam(p, "mb", 1.f);
     juce::MessageManager::getInstance()->runDispatchLoopUntil(300); // lets the tab switch and the band controls rebind
     std::printf("mb raw value after set: %.1f, blockCounter %u\n", p.apvts.getRawParameterValue("mb")->load(), p.blockCounter.load());

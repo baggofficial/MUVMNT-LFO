@@ -41,6 +41,10 @@ private:
     void frame(); // once per display refresh (VBlank), capped to ~60 fps
     void renderGrid(juce::Graphics&);
     void drawWaveforms(juce::Graphics&);
+    void drawOverlap(juce::Graphics&, const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& mn,
+                     const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& mx,
+                     const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& scMn,
+                     const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& scMx, float opacity);
     void renderCurveLayer(juce::Graphics&);
     size_t computeKey() const;
     float predictedPhase() const;
