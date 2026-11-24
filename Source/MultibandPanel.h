@@ -3,6 +3,7 @@
 #include "PluginProcessor.h"
 #include "PaperLookAndFeel.h"
 #include "EnvelopeEditor.h"
+#include "Spectrum.h"
 
 // Frequency strip: three coloured regions (low / mid / high) with two draggable split points
 // on a log-frequency axis. Click a region to edit that band; "S" solos a band.
@@ -25,6 +26,7 @@ private:
     void timerCallback() override;
     int signature() const;
     bool threeBands() const;
+    double splitHz(int split) const;
     float freqToX(double hz) const;
     double xToFreq(float x) const;
     juce::Rectangle<float> soloChip(float regionRight) const;
@@ -38,6 +40,11 @@ private:
     int selected = 0;
     int dragHandle = -1; // 0 = low split, 1 = high split
     int lastSig = -1;
+    unsigned lastBlock = 0;
+    std::vector<float> specDb;      // smoothed live spectrum (dB per FFT bin)
+    bool specLive = false;          // something is still visible
+    void updateSpectrum();
+    void drawSpectrum(juce::Graphics&, float plotTop, float plotBottom) const;
 };
 
 // The whole Multiband tab: strip, one curve editor (for the selected band) and that band's controls.

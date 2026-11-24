@@ -40,14 +40,14 @@ It is an independent, from-scratch implementation inspired by the workflow of Xf
 - **Offset** shifts the LFO within its cycle, **Smooth** (0 to 200 ms) rounds off hard edges, **Depth** sets how deep the ducking goes.
 
 **Multiband**
-- Split into **low / mid / high** (or just low / high) with draggable split lines on a frequency strip.
+- Split into **low / mid / high** (or just low / high) with draggable split lines on a frequency strip. A **live spectrum** of the input runs behind the band curves, so you can see where to split. With two bands the split goes up to 12 kHz; with three, the low split tops out at 1 kHz.
 - Each split has its own crossover slope: **6, 12, 24, 48, 72 or 96 dB/octave** (Linkwitz-Riley, so the bands add back to a flat response).
 - Every band has its **own curve**, its own **rate** (or link them all), its own depth, smoothing and phase offset, and a **solo** button; solo several bands at once. A small chain beside the Depth, Smooth and Offset knobs links that control, so every band follows one value.
 - The strip draws each band's real filter response, so you can see how the bands overlap at each slope.
 - Defaults are a house-style sidechain pump where the lows stay ducked longest and the highs recover fastest.
 
 **Feedback while you work**
-- The input waveform is drawn folded onto the LFO cycle, faintly, with the **output** (what the plugin actually lets through) drawn over it in the curve's colour, so you can see where the kick and the hats land against your curve and what the ducking does to them. In Multiband each band shows its own signal in its own colour (red lows, green mids, blue highs). The **Waveform** knob sets how strong this is.
+- The input waveform is drawn folded onto the LFO cycle, faintly, with the **output** (what the plugin actually lets through) drawn over it in the curve's colour, so you can see where the kick and the hats land against your curve and what the ducking does to them. In the Single tab the output is coloured like a rainbow by pitch (red lows through green mids to blue and violet highs), a rough zero-crossing estimate; the input stays grey. In Multiband each band shows its own signal in its own colour (red lows, green mids, blue highs). The **Waveform** knob sets how strong this is.
 - An optional sidechain input is drawn too (display only, see [limitations](#known-limitations-and-roadmap)).
 - A grey line shows the **actual gain** after Depth, Smooth and Offset; the output waveform is the input multiplied by exactly that gain.
 - Light and dark themes (dark is the default, the choice is remembered).
@@ -166,6 +166,7 @@ Source/
   PluginProcessor.*     audio engine: single band, multiband, smoothing, declick, state
   Envelope.h            the curve model (no JUCE; unit-testable)
   Crossover.h           the Linkwitz-Riley band splitter (no JUCE; unit-testable)
+  Spectrum.h            FFT + dB conversion for the live spectrum (no JUCE)
   PluginEditor.*        the window: header, tabs, knobs
   EnvelopeEditor.*      the curve editor (points, handles, snapping, drawing)
   MultibandPanel.*      the frequency strip and the multiband tab

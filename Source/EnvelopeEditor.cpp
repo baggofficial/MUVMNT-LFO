@@ -165,7 +165,7 @@ void EnvelopeEditor::commit()
 // the plugin applies at each position. A single path per frame: smooth, and cheap.
 void EnvelopeEditor::fillWavePath(juce::Graphics& g, const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& mnArr,
                                   const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& mxArr,
-                                  const float* gain, juce::Colour colour)
+                                  const float* gain, const juce::FillType& fill)
 {
     constexpr int bins = FreeLfoProcessor::waveBins;
     juce::Path w;
@@ -183,8 +183,46 @@ void EnvelopeEditor::fillWavePath(juce::Graphics& g, const std::array<std::atomi
         w.lineTo(toScreen((float) i / (bins - 1), 0.5f + 0.5f * mn));
     }
     w.closeSubPath();
-    g.setColour(colour);
+    g.setFillType(fill);
     g.fillPath(w);
+}
+
+// The output waveform in rainbow colours (like MiniMeters): low pitches red, then yellow, green, cyan, blue, violet for the
+// highest. The hue per position comes from the audio thread's rough pitch tracker. Returns false until something was measured.
+bool EnvelopeEditor::rainbowFill(float alpha, juce::FillType& out) const
+{
+    constexpr int stops = 64, bins = FreeLfoProcessor::waveBins, per = bins / stops;
+    float hue[stops];
+    bool any = false;
+    for (int k = 0; k < stops; ++k)
+    {
+        float sum = 0.f; int n = 0;
+        for (int i = k * per; i < (k + 1) * per; ++i)
+        {
+            const float h = proc.waveHue[(size_t) i].load(std::memory_order_relaxed);
+            if (h >= 0.f) { sum += h; ++n; }
+        }
+        hue[k] = n > 0 ? sum / (float) n : -1.f;
+        any = any || n > 0;
+    }
+    if (!any) return false;
+
+    float last = -1.f; // gaps (silence) take the colour of their neighbours
+    for (int k = 0; k < stops; ++k) { if (hue[k] >= 0.f) last = hue[k]; else hue[k] = last; }
+    last = -1.f;
+    for (int k = stops - 1; k >= 0; --k) { if (hue[k] >= 0.f) last = hue[k]; else hue[k] = last; }
+    float soft[stops];
+    for (int k = 0; k < stops; ++k) // a little blur, so the colours flow
+        soft[k] = (hue[juce::jmax(0, k - 1)] + 2.f * hue[k] + hue[juce::jmin(stops - 1, k + 1)]) * 0.25f;
+
+    const float x0 = toScreen(0.f, 0.5f).x, x1 = toScreen(1.f, 0.5f).x;
+    auto colourAt = [alpha](float t) {
+        return juce::Colour::fromHSV(juce::jlimit(0.f, 1.f, t) * 0.78f, 0.78f, paper::dark ? 1.f : 0.88f, alpha);
+    };
+    juce::ColourGradient grad(colourAt(soft[0]), x0, 0.f, colourAt(soft[stops - 1]), x1, 0.f, false);
+    for (int k = 1; k < stops - 1; ++k) grad.addColour((double) k / (stops - 1), colourAt(soft[k]));
+    out = juce::FillType(grad);
+    return true;
 }
 
 // Everything that only changes when the user edits (grid, curve, handles, gain preview) is drawn
@@ -228,7 +266,9 @@ void EnvelopeEditor::drawWaveforms(juce::Graphics& g)
     const auto& mxArr = slot > 0 ? proc.bwMax[(size_t) slot - 1] : proc.waveMax;
 
     fillWavePath(g, mnArr, mxArr, nullptr, in.withAlpha(waveOpacity * 0.30f));
-    fillWavePath(g, mnArr, mxArr, outGain, out.withAlpha(waveOpacity));
+    juce::FillType outFill(out.withAlpha(waveOpacity));
+    if (slot == 0) rainbowFill(waveOpacity, outFill); // single tab: rainbow; the multiband tab keeps its band colours
+    fillWavePath(g, mnArr, mxArr, outGain, outFill);
 
     if (slot == 0 && proc.sidechainActive.load())
     {

@@ -71,8 +71,13 @@ public:
     std::atomic<bool> sidechainActive { false };
     std::atomic<double> cycleSeconds { 0.5 }; // length of one LFO cycle, for the editor's smoothing preview
     std::atomic<bool> editorOpen { false }; // set by the editor; the waveform analysis only runs while it is true
-    // Peak level per band per phase bin (low < 250 Hz, mid, high > 3 kHz) for the coloured waveform.
-    std::array<std::atomic<float>, waveBins> bandLow {}, bandMid {}, bandHigh {};
+    // Rough pitch of the input at each phase bin (0 = low ... 1 = high, on a log axis; -1 = not measured yet).
+    // The single-tab scope uses it to colour the waveform like a rainbow.
+    std::array<std::atomic<float>, waveBins> waveHue {};
+    // The newest input samples (mono), for the live spectrum in the multiband strip. Only filled while the editor is open.
+    static constexpr int specSize = 4096;
+    std::array<std::atomic<float>, specSize> specFifo {};
+    std::atomic<int> specPos { 0 };
 
     // Multiband tab: each band's own input signal folded onto that band's own LFO cycle.
     std::array<std::array<std::atomic<float>, waveBins>, 3> bwMin {}, bwMax {};
@@ -173,7 +178,9 @@ private:
     double freePhase = 0.0;
     float smoothedGain = 1.f;
     int lastWaveBin = -1;
-    float lpLow = 0.f, lpHigh = 0.f, coefLow = 0.f, coefHigh = 0.f;
+    // zero-crossing pitch tracker for the rainbow scope
+    float zcrSmooth = 0.f, zcrCoef = 0.f, zcEnv = 0.f;
+    int zcState = 0;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(FreeLfoProcessor)
 };

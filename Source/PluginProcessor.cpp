@@ -43,7 +43,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout FreeLfoProcessor::createLayo
     l.add(std::make_unique<AudioParameterBool>(ParameterID { "mb", 1 }, "Multiband", false));
     l.add(std::make_unique<AudioParameterChoice>(ParameterID { "mbBands", 1 }, "Bands", StringArray { "2 bands", "3 bands" }, 1));
     l.add(std::make_unique<AudioParameterFloat>(ParameterID { "xLow", 1 }, "Low Split",
-                                                NormalisableRange<float>(40.f, 1000.f, 1.f, 0.4f), 200.f));
+                                                NormalisableRange<float>(40.f, 12000.f, 1.f, 0.3f), 200.f));
     l.add(std::make_unique<AudioParameterFloat>(ParameterID { "xHigh", 1 }, "High Split",
                                                 NormalisableRange<float>(500.f, 12000.f, 1.f, 0.4f), 2500.f));
     for (const char* id : { "slopeLow", "slopeHigh" })
@@ -153,9 +153,9 @@ bool FreeLfoProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 
 void FreeLfoProcessor::prepareToPlay(double sampleRate, int)
 {
-    coefLow = 1.f - std::exp(-juce::MathConstants<float>::twoPi * 250.f / (float) sampleRate);
-    coefHigh = 1.f - std::exp(-juce::MathConstants<float>::twoPi * 3000.f / (float) sampleRate);
-    lpLow = lpHigh = 0.f;
+    zcrCoef = 1.f - std::exp(-1.f / (0.012f * (float) sampleRate));
+    zcrSmooth = zcEnv = 0.f; zcState = 0;
+    for (auto& h : waveHue) h.store(-1.f, std::memory_order_relaxed);
     freePhase = 0.0;
     smoothedGain = 1.f;
     for (auto& sl : slots) sl.audioVersion = -1;
@@ -294,6 +294,20 @@ void FreeLfoProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
         for (int c = 0; c < scChannels; ++c) scData[c] = sc.getReadPointer(c);
     }
     sidechainActive.store(scChannels > 0, std::memory_order_relaxed);
+
+    // live spectrum (multiband strip): keep the newest input samples, before any processing
+    if (editorOpen.load(std::memory_order_relaxed) && pMb->load() > 0.5f && numChannels > 0)
+    {
+        int w = specPos.load(std::memory_order_relaxed);
+        for (int i = 0; i < numSamples; ++i)
+        {
+            float m = 0.f;
+            for (int ch = 0; ch < numChannels; ++ch) m += mainBuf.getReadPointer(ch)[i];
+            specFifo[(size_t) w].store(m / (float) numChannels, std::memory_order_relaxed);
+            w = (w + 1) % specSize;
+        }
+        specPos.store(w, std::memory_order_release);
+    }
 
     HostInfo host;
     if (auto* ph = getPlayHead())
@@ -487,17 +501,23 @@ void FreeLfoProcessor::processSingle(juce::AudioBuffer<float>& mainBuf, const Ho
                 track(waveMin, waveMax, mono);
                 if (scChannels > 0) track(scMin, scMax, scMono);
 
-                // three-band split with one-pole filters: low | mid | high
-                lpLow += coefLow * (mono - lpLow);
-                lpHigh += coefHigh * (mono - lpHigh);
-                const float bLow = std::abs(lpLow), bMid = std::abs(lpHigh - lpLow), bHigh = std::abs(mono - lpHigh);
-                auto peak = [bin, isNew](auto& arr, float v) {
-                    auto& a = arr[(size_t) bin];
-                    if (isNew || v > a.load(std::memory_order_relaxed)) a.store(v, std::memory_order_relaxed);
-                };
-                peak(bandLow, bLow);
-                peak(bandMid, bMid);
-                peak(bandHigh, bHigh);
+                // Rough pitch for the rainbow: zero crossings per sample (with hysteresis against noise), averaged over ~12 ms.
+                // A sine of f Hz crosses zero 2f/sr times per sample.
+                {
+                    const int st = mono > 0.004f ? 1 : mono < -0.004f ? -1 : zcState;
+                    const float crossed = (st != zcState && zcState != 0) ? 1.f : 0.f;
+                    zcState = st;
+                    zcrSmooth += zcrCoef * (crossed - zcrSmooth);
+                    zcEnv = juce::jmax(std::abs(mono), zcEnv * 0.9995f);
+                    if (zcEnv > 0.01f)
+                    {
+                        const float hz = juce::jlimit(40.f, 16000.f, zcrSmooth * 0.5f * (float) sr);
+                        const float t = std::log(hz / 40.f) / std::log(16000.f / 40.f);
+                        auto& hue = waveHue[(size_t) bin];
+                        const float old = hue.load(std::memory_order_relaxed);
+                        hue.store(old < 0.f ? t : old + (t - old) * 0.06f, std::memory_order_relaxed);
+                    }
+                }
                 lastWaveBin = bin;
             }
         }
@@ -543,7 +563,8 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const Hos
     // Crossover: the structure is fixed (see processBlock); the split frequencies glide toward the knobs
     // (about 20 ms, in the log domain) so a jump of a knob never turns into a burst
     crossover.setSlopes((Slope) applied.slopeLow, (Slope) applied.slopeHigh);
-    const double targetLow = pXLow->load(), targetHigh = pXHigh->load();
+    const double targetLow = three ? juce::jmin(1000.0, (double) pXLow->load()) : (double) pXLow->load(), // 3 bands: low split tops out at 1 kHz
+                 targetHigh = pXHigh->load();
     if (fcLowS < 0.0) { fcLowS = targetLow; fcHighS = targetHigh; }
     crossover.setFrequencies(fcLowS, fcHighS);
     constexpr int glideStep = 32; // while a knob is moving, the filters are retuned every 32 samples

@@ -18,7 +18,14 @@ namespace
 
 // ---------------------------------------------------------------- BandStrip
 
-BandStrip::BandStrip(FreeLfoProcessor& p) : proc(p) { startTimerHz(15); }
+BandStrip::BandStrip(FreeLfoProcessor& p) : proc(p) { startTimerHz(30); }
+
+double BandStrip::splitHz(int split) const
+{
+    const double lo = proc.apvts.getRawParameterValue("xLow")->load();
+    if (split == 1) return proc.apvts.getRawParameterValue("xHigh")->load();
+    return threeBands() ? juce::jmin(1000.0, lo) : lo;   // matches the audio: with 3 bands the low split tops out at 1 kHz
+}
 
 bool BandStrip::threeBands() const { return proc.apvts.getRawParameterValue("mbBands")->load() > 0.5f; }
 
@@ -33,7 +40,75 @@ int BandStrip::signature() const
 void BandStrip::timerCallback()
 {
     const int s = signature();
-    if (s != lastSig) { lastSig = s; repaint(); }
+    const bool wasLive = specLive;
+    updateSpectrum();
+    if (s != lastSig || specLive || wasLive) { lastSig = s; repaint(); }
+}
+
+// Live spectrum of the plugin's input: newest samples -> FFT -> dB, fast attack and slow release so it is easy to read.
+void BandStrip::updateSpectrum()
+{
+    const unsigned bc = proc.blockCounter.load(std::memory_order_relaxed);
+    const bool flowing = bc != lastBlock;
+    lastBlock = bc;
+    if (specDb.empty()) specDb.assign((size_t) spectrum::fftSize / 2, -120.f);
+
+    if (flowing)
+    {
+        std::vector<float> samples((size_t) spectrum::fftSize);
+        const int w = proc.specPos.load(std::memory_order_acquire);
+        for (int i = 0; i < spectrum::fftSize; ++i)
+            samples[(size_t) i] = proc.specFifo[(size_t) ((w + FreeLfoProcessor::specSize - spectrum::fftSize + i) % FreeLfoProcessor::specSize)]
+                                      .load(std::memory_order_relaxed);
+        std::vector<float> db;
+        spectrum::magnitudesDb(samples.data(), db);
+        for (size_t k = 0; k < specDb.size(); ++k)
+            specDb[k] += (db[k] - specDb[k]) * (db[k] > specDb[k] ? 0.6f : 0.12f);
+    }
+    else
+        for (auto& v : specDb) v = juce::jmax(-120.f, v - 4.f);   // no audio: fade out
+
+    specLive = false;
+    for (float v : specDb) if (v > -100.f) { specLive = true; break; }
+}
+
+void BandStrip::drawSpectrum(juce::Graphics& g, float plotTop, float plotBottom) const
+{
+    if (!specLive || specDb.empty()) return;
+    const double sr = proc.getSampleRate() > 0.0 ? proc.getSampleRate() : 48000.0;
+    const double binHz = sr / (double) spectrum::fftSize;
+    const float xa = freqToX(minHz), xb = freqToX(maxHz);
+
+    juce::Path line, fill;
+    bool first = true;
+    for (float x = xa; x <= xb + 0.5f; x += 2.f)
+    {
+        const double f0 = xToFreq(x - 1.f), f1 = xToFreq(x + 1.f), fc = xToFreq(x);
+        const double b0 = f0 / binHz, b1 = f1 / binHz;
+        float db;
+        if (b1 - b0 < 1.0) // low frequencies: fewer bins than pixels, so interpolate
+        {
+            const double b = fc / binHz;
+            const int i = juce::jlimit(0, (int) specDb.size() - 2, (int) b);
+            const float t = (float) juce::jlimit(0.0, 1.0, b - i);
+            db = specDb[(size_t) i] + (specDb[(size_t) i + 1] - specDb[(size_t) i]) * t;
+        }
+        else
+        {
+            db = -120.f;
+            for (int i = juce::jmax(1, (int) b0); i <= juce::jmin((int) specDb.size() - 1, (int) b1); ++i) db = juce::jmax(db, specDb[(size_t) i]);
+        }
+        db += 3.f * (float) std::log2(fc / 1000.0);   // 3 dB per octave tilt: pink-ish music reads roughly flat
+        const float y = plotBottom - juce::jlimit(0.f, 1.f, (db + 90.f) / 80.f) * (plotBottom - plotTop);
+        if (first) { line.startNewSubPath(x, y); fill.startNewSubPath(x, plotBottom); fill.lineTo(x, y); first = false; }
+        else { line.lineTo(x, y); fill.lineTo(x, y); }
+    }
+    fill.lineTo(xb, plotBottom);
+    fill.closeSubPath();
+    g.setColour(paper::ink(0.15f));
+    g.fillPath(fill);
+    g.setColour(paper::ink(0.42f));
+    g.strokePath(line, juce::PathStrokeType(1.f));
 }
 
 float BandStrip::freqToX(double hz) const
@@ -52,7 +127,7 @@ double BandStrip::xToFreq(float x) const
 
 std::array<BandStrip::Region, 3> BandStrip::regions(int& count) const
 {
-    const float lo = freqToX(proc.apvts.getRawParameterValue("xLow")->load());
+    const float lo = freqToX(splitHz(0));
     const float hi = freqToX(proc.apvts.getRawParameterValue("xHigh")->load());
     const float x0 = freqToX(minHz), x1 = freqToX(maxHz);
     if (threeBands()) { count = 3; return { Region { 0, x0, lo }, Region { 1, lo, hi }, Region { 2, hi, x1 } }; }
@@ -86,7 +161,7 @@ void BandStrip::openSlopeMenu(int split)
     juce::PopupMenu menu;
     for (int i = 0; i < numSlopes; ++i) menu.addItem(i + 1, names[i], true, i == current);
 
-    const double hz = proc.apvts.getRawParameterValue(split == 0 ? "xLow" : "xHigh")->load();
+    const double hz = splitHz(split);
     const auto area = localAreaToGlobal(slopeChip(freqToX(hz)).toNearestInt());
     juce::Component::SafePointer<BandStrip> safe(this);
     menu.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea(area), [safe, id](int result) {
@@ -131,14 +206,16 @@ void BandStrip::paint(juce::Graphics& g)
     g.setFont(fonts::regular(10.f));
     g.drawText("-6 dB", juce::Rectangle<float>(freqToX(minHz) + 4.f, y6 - 12.f, 40.f, 11.f), juce::Justification::centredLeft);
 
+    drawSpectrum(g, plotTop, plotBottom);
+
     // Each band's real filter response (the actual crossover maths), drawn across the whole axis,
     // so you can see how the neighbouring bands overlap at the split and how the slope changes it.
     {
         const double sr = proc.getSampleRate() > 0.0 ? proc.getSampleRate() : 48000.0;
         const bool three = count == 3;
         Splitter sp1, sp2;
-        sp1.set(v("xLow"), sr, (Slope) juce::jlimit(0, numSlopes - 1, juce::roundToInt(v("slopeLow"))));
-        sp2.set(juce::jmax(v("xHigh"), v("xLow") * 1.2f), sr, (Slope) juce::jlimit(0, numSlopes - 1, juce::roundToInt(v("slopeHigh"))));
+        sp1.set(splitHz(0), sr, (Slope) juce::jlimit(0, numSlopes - 1, juce::roundToInt(v("slopeLow"))));
+        sp2.set(juce::jmax((double) v("xHigh"), splitHz(0) * 1.2), sr, (Slope) juce::jlimit(0, numSlopes - 1, juce::roundToInt(v("slopeHigh"))));
 
         auto magnitude = [&](int band, double hz) {
             if (band == 0) return sp1.lowMagnitude(hz, sr);
@@ -195,7 +272,7 @@ void BandStrip::paint(juce::Graphics& g)
     const char* slopeText[numSlopes] = { "6 dB", "12 dB", "24 dB", "48 dB", "72 dB", "96 dB" };
     for (int i = 0; i < count - 1; ++i)
     {
-        const double hz = v(i == 0 ? "xLow" : "xHigh");
+        const double hz = splitHz(i);
         const float x = freqToX(hz);
         g.setColour(paper::text.withAlpha(0.6f));
         g.drawVerticalLine((int) x, 0.f, h);
@@ -236,7 +313,7 @@ void BandStrip::mouseDown(const juce::MouseEvent& e)
         }
 
     for (int i = 0; i < count - 1; ++i) // the pill on a split line opens that split's slope menu
-        if (slopeChip(freqToX(proc.apvts.getRawParameterValue(i == 0 ? "xLow" : "xHigh")->load())).contains(e.position))
+        if (slopeChip(freqToX(splitHz(i))).contains(e.position))
         {
             openSlopeMenu(i);
             return;
@@ -245,7 +322,7 @@ void BandStrip::mouseDown(const juce::MouseEvent& e)
     dragHandle = -1;
     for (int i = 0; i < count - 1; ++i)
     {
-        const double hz = proc.apvts.getRawParameterValue(i == 0 ? "xLow" : "xHigh")->load();
+        const double hz = splitHz(i);
         if (std::abs(freqToX(hz) - e.position.x) < 8.f)
         {
             dragHandle = i;
@@ -271,12 +348,12 @@ void BandStrip::mouseDrag(const juce::MouseEvent& e)
     if (dragHandle == 0)
     {
         const double hi = proc.apvts.getRawParameterValue("xHigh")->load();
-        hz = juce::jlimit(40.0, threeBands() ? juce::jmin(1000.0, hi / 1.2) : 1000.0, hz);
+        hz = juce::jlimit(40.0, threeBands() ? juce::jmin(1000.0, hi / 1.2) : 12000.0, hz);
         setParam(proc.apvts, "xLow", (float) hz);
     }
     else
     {
-        const double lo = proc.apvts.getRawParameterValue("xLow")->load();
+        const double lo = splitHz(0);
         hz = juce::jlimit(juce::jmax(500.0, lo * 1.2), 12000.0, hz);
         setParam(proc.apvts, "xHigh", (float) hz);
     }
@@ -291,7 +368,7 @@ void BandStrip::mouseMove(const juce::MouseEvent& e)
     bool overLine = false;
     for (int i = 0; i < count - 1 && !overLine; ++i)
     {
-        const double hz = proc.apvts.getRawParameterValue(i == 0 ? "xLow" : "xHigh")->load();
+        const double hz = splitHz(i);
         overLine = std::abs(freqToX(hz) - e.position.x) < 8.f && !slopeChip(freqToX(hz)).contains(e.position);
     }
     setMouseCursor(overLine ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::NormalCursor);

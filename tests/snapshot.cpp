@@ -830,6 +830,8 @@ int main(int argc, char** argv)
     run(400);
     juce::MessageManager::getInstance()->runDispatchLoopUntil(100);
     save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("multiband.png"));
+    for (int i = 0; i < 12; ++i) { run(10); juce::MessageManager::getInstance()->runDispatchLoopUntil(40); } // keeps the live spectrum fed
+    save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("multiband_spectrum.png"));
 
     // Dark theme: the same two tabs
     {

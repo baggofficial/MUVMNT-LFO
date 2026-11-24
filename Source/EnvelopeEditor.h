@@ -68,7 +68,8 @@ private:
                          : proc.bandCycleSeconds[(size_t) slot - 1].load(std::memory_order_relaxed);
     }
     void fillWavePath(juce::Graphics&, const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& mn,
-                      const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& mx, const float* gain, juce::Colour c);
+                      const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& mx, const float* gain, const juce::FillType& fill);
+    bool rainbowFill(float alpha, juce::FillType& out) const;
     float outGain[FreeLfoProcessor::waveBins] = {}; // the gain actually applied at each cycle position (filled with the curve layer)
     // Single tab: the accent colour. Multiband tab: the band's own colour (red / green / blue).
     juce::Colour mainColour() const { return slot == 0 ? paper::accent : paper::bandColour(slot - 1); }
