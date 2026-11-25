@@ -93,6 +93,9 @@ public:
 
 private:
     LinkButton linkBtn;   // beside the Rate knob: all bands share one rate
+    // Every control must be declared before the attachments below: members are destroyed in reverse order, and an
+    // attachment lets go of its control as it dies, so the control has to be alive until then.
+    LinkButton linkDepthBtn, linkSmoothBtn, linkOffsetBtn;   // sit beside the knobs: all bands follow one value
     void timerCallback() override;
     int signature() const;
     void copyToLinkSource(const char* base, const char* linkId); // turning a link on: the shown band's value goes to every band
@@ -114,7 +117,6 @@ private:
     std::unique_ptr<CA> modeA, bandsA, engineA;
     std::unique_ptr<SA> rateA, depthA, smoothA, offsetA, waveA;
     std::unique_ptr<BA> linkA, dotA, tripA, linkDepthA, linkSmoothA, linkOffsetA;
-    LinkButton linkDepthBtn, linkSmoothBtn, linkOffsetBtn;   // sit beside the knobs: all bands follow one value
 
     int selected = 0;
     int lastSig = -1;

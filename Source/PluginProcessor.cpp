@@ -164,11 +164,20 @@ bool FreeLfoProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
     return sc.isDisabled() || sc == juce::AudioChannelSet::mono() || sc == juce::AudioChannelSet::stereo();
 }
 
+// Every number the audio code takes from a setting goes through this. A NaN or infinity (typed text, damaged project
+// data, a misbehaving host) would otherwise stick in the smoothers for good, or turn the LFO phase into a table index
+// far outside the table and crash the whole DAW.
+static inline float readParam(const std::atomic<float>* p, float fallback) noexcept
+{
+    const float v = p->load(std::memory_order_relaxed);
+    return std::isfinite(v) ? v : fallback;
+}
+
 void FreeLfoProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     for (auto* g : { &inGain, &outGain }) g->reset(sampleRate, 0.020);
-    inGain.setCurrentAndTargetValue(juce::Decibels::decibelsToGain(pInGain->load()));
-    outGain.setCurrentAndTargetValue(juce::Decibels::decibelsToGain(pOutGain->load()));
+    inGain.setCurrentAndTargetValue(juce::Decibels::decibelsToGain(readParam(pInGain, 0.f)));
+    outGain.setCurrentAndTargetValue(juce::Decibels::decibelsToGain(readParam(pOutGain, 0.f)));
     dryScratch.setSize(2, juce::jmax(samplesPerBlock, 8192));
     bypassMix = pBypass != nullptr && pBypass->load() > 0.5f ? 1.f : 0.f;
     zcrCoef = 1.f - std::exp(-1.f / (0.025f * (float) sampleRate));
@@ -354,12 +363,12 @@ void FreeLfoProcessor::processActive(juce::AudioBuffer<float>& buffer, juce::Mid
     auto mainBuf = getBusBuffer(buffer, false, 0);
     const int numChannels = mainBuf.getNumChannels();
     const double sr = getSampleRate();
-    const int clipMode = pClip != nullptr ? juce::roundToInt(pClip->load()) : 0;
+    const int clipMode = pClip != nullptr ? juce::roundToInt(readParam(pClip, 0.f)) : 0;
 
     // IN trim first, so the meters, the displays and the processing all see the trimmed signal.
     // At 0 dB (and settled) the audio is not touched at all, which keeps the null bit-exact.
-    inGain.setTargetValue(juce::Decibels::decibelsToGain(pInGain->load(std::memory_order_relaxed)));
-    outGain.setTargetValue(juce::Decibels::decibelsToGain(pOutGain->load(std::memory_order_relaxed)));
+    inGain.setTargetValue(juce::Decibels::decibelsToGain(readParam(pInGain, 0.f)));
+    outGain.setTargetValue(juce::Decibels::decibelsToGain(readParam(pOutGain, 0.f)));
     if (inGain.isSmoothing() || inGain.getTargetValue() != 1.f) inGain.applyGain(mainBuf, numSamples);
 
     const float* scData[2] = { nullptr, nullptr };
@@ -409,13 +418,16 @@ void FreeLfoProcessor::processActive(juce::AudioBuffer<float>& buffer, juce::Mid
             if (auto p = pos->getPpqPosition()) { host.ppq = *p; host.havePpq = true; }
             host.playing = pos->getIsPlaying();
         }
+    // the host's numbers get the same distrust as the settings
+    if (! (std::isfinite(host.bpm) && host.bpm >= 1.0 && host.bpm <= 10000.0)) host.bpm = HostInfo{}.bpm;
+    if (! (std::isfinite(host.ppq) && std::fabs(host.ppq) < 1e12)) { host.ppq = 0.0; host.havePpq = false; }
 
     Structure live;
     live.multiband = pMb->load() > 0.5f;
     live.dynEq = pEngine->load() > 0.5f;
     live.three = pBands->load() > 0.5f;
-    live.slopeLow = juce::jlimit(0, numSlopes - 1, (int) pSlopeLow->load());
-    live.slopeHigh = juce::jlimit(0, numSlopes - 1, (int) pSlopeHigh->load());
+    live.slopeLow = juce::jlimit(0, numSlopes - 1, (int) readParam(pSlopeLow, 2.f));
+    live.slopeHigh = juce::jlimit(0, numSlopes - 1, (int) readParam(pSlopeHigh, 2.f));
     if (!structureInit) { applied = live; structureInit = true; }
 
     const double ppqPerSample = host.bpm / 60.0 / sr;
@@ -530,13 +542,13 @@ void FreeLfoProcessor::processSingle(juce::AudioBuffer<float>& mainBuf, const Ho
     const double bpm = h.bpm, ppq = h.ppq;
 
     const bool syncMode = pMode->load() < 0.5f;
-    const double beats = divisionBeats[(size_t) juce::jlimit(0, numDivisions - 1, (int) pDivision->load())]
+    const double beats = divisionBeats[(size_t) juce::jlimit(0, numDivisions - 1, (int) readParam(pDivision, 5.f))]
                          * rateModifier(pDotted->load() > 0.5f, pTriplet->load() > 0.5f);
-    const double offset = pOffset->load();
-    const float depth = pDepth->load();
-    const double hz = pHz->load();
+    const double offset = readParam(pOffset, 0.f);
+    const float depth = readParam(pDepth, 1.f);
+    const double hz = readParam(pHz, 2.f);
 
-    const float smoothMs = pSmooth->load();
+    const float smoothMs = readParam(pSmooth, 0.f);
     const float coef = smoothMs < 0.01f ? 0.f : std::exp(-1.f / (smoothMs * 0.001f * (float) sr));
 
     // First MIDI note-on inside this piece of the block (for Hz-mode retrigger)
@@ -558,7 +570,7 @@ void FreeLfoProcessor::processSingle(juce::AudioBuffer<float>& mainBuf, const Ho
     const float declickCoef = std::exp(-1.f / (0.003f * (float) sr));
     const int declickLen = (int) (0.016 * sr);
     LaneSig cur;
-    cur.division = pDivision->load(); cur.depth = depth; cur.offset = (float) offset;
+    cur.division = readParam(pDivision, 5.f); cur.depth = depth; cur.offset = (float) offset;
     cur.dotted = pDotted->load() > 0.5f; cur.triplet = pTriplet->load() > 0.5f; cur.sync = syncMode; cur.useHost = useHost;
     const bool relocated = useHost && expectedPpqValid && std::fabs(ppq - expectedPpq) > 5e-4;
     if (!singleSigValid) singleSigValid = true;
@@ -713,8 +725,8 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const Hos
         crossover.setSlopes((Slope) applied.slopeLow, (Slope) applied.slopeHigh);
         if (scOn) scCrossover.setSlopes((Slope) applied.slopeLow, (Slope) applied.slopeHigh);
     }
-    const double targetLow = three ? juce::jmin(1000.0, (double) pXLow->load()) : (double) pXLow->load(), // 3 bands: low split tops out at 1 kHz
-                 targetHigh = pXHigh->load();
+    const double targetLow = three ? juce::jmin(1000.0, (double) readParam(pXLow, 200.f)) : (double) readParam(pXLow, 200.f), // 3 bands: low split tops out at 1 kHz
+                 targetHigh = readParam(pXHigh, 2500.f);
     if (fcLowS < 0.0) { fcLowS = targetLow; fcHighS = targetHigh; }
     auto tune = [&]() {
         if constexpr (useDynamicEq)
@@ -753,18 +765,18 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const Hos
     {
         const auto& rate = band[link ? rateSource : b];
         const bool syncMode = rate.mode->load() < 0.5f;
-        const double beats = divisionBeats[(size_t) juce::jlimit(0, numDivisions - 1, (int) rate.division->load())]
+        const double beats = divisionBeats[(size_t) juce::jlimit(0, numDivisions - 1, (int) readParam(rate.division, 5.f))]
                              * rateModifier(rate.dotted->load() > 0.5f, rate.triplet->load() > 0.5f);
-        const double hz = rate.hz->load();
+        const double hz = readParam(rate.hz, 2.f);
         const bool useHost = syncMode && anyHost;
 
         auto& L = lane[b];
         L.freeInc = (syncMode ? (bpm / 60.0) / beats : hz) / sr;
         L.inc = useHost ? ppqPerSample / beats : L.freeInc;
-        const double off = band[linkOffset ? rateSource : b].offset->load();   // each band has its own phase offset (unless linked)
+        const double off = readParam(band[linkOffset ? rateSource : b].offset, 0.f);   // each band has its own phase offset (unless linked)
         L.p = fract((useHost ? ppq / beats : bandFreePhase[b]) + off);
-        L.depth = band[linkDepth ? rateSource : b].depth->load();
-        const float ms = band[linkSmooth ? rateSource : b].smooth->load();
+        L.depth = readParam(band[linkDepth ? rateSource : b].depth, 1.f);
+        const float ms = readParam(band[linkSmooth ? rateSource : b].smooth, 0.f);
         L.coef = ms < 0.01f ? 0.f : std::exp(-1.f / (ms * 0.001f * (float) sr));
         L.active = three || b != 1;
         L.declick = laneDeclick[b];
@@ -772,7 +784,7 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const Hos
                                            std::memory_order_relaxed);
 
         LaneSig cur;
-        cur.division = rate.division->load(); cur.depth = L.depth; cur.offset = (float) off;
+        cur.division = readParam(rate.division, 5.f); cur.depth = L.depth; cur.offset = (float) off;
         cur.dotted = rate.dotted->load() > 0.5f; cur.triplet = rate.triplet->load() > 0.5f;
         cur.sync = syncMode; cur.useHost = useHost; cur.link = link; cur.three = three;
         if (!laneSigValid[b]) laneSigValid[b] = true;
@@ -919,6 +931,10 @@ void FreeLfoProcessor::setStateInformation(const void* data, int size)
         if (state.isValid())
         {
             apvts.replaceState(state);
+            for (auto* prm : getParameters()) // a damaged project must not leave "not a number" settings behind
+                if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*>(prm))
+                    if (! std::isfinite(apvts.getRawParameterValue(ranged->paramID)->load()))
+                        ranged->setValueNotifyingHost(ranged->getDefaultValue());
             showEndZone.store(state.hasProperty("endZone") && (bool) state["endZone"]);
             if (state.hasProperty("envelope"))
                 setEnvelope(Envelope::deserialize(state["envelope"].toString().toStdString()));

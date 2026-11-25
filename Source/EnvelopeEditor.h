@@ -165,7 +165,7 @@ public:
 
         const int s = editor.getSlot();
         const int count = proc.wrapCount[(size_t) s].load(std::memory_order_acquire);
-        const int shown = juce::jmin(count, FreeLfoProcessor::wrapHistory - 1);
+        const int shown = juce::jmin(count - 1, FreeLfoProcessor::wrapHistory - 1);   // older cycles that exist
         auto alphaFor = [](int k) { return k <= 0 ? 1.f : juce::jmax(0.f, 0.5f * (1.f - (float) k / (float) (FreeLfoProcessor::wrapHistory - 1))) + 0.04f; };
         auto drawArrow = [&](float v, float size, float len, float alpha, bool outline) {
             const float y = yOf(v), tipX = b.getX() + 2.f, baseX = tipX + len;

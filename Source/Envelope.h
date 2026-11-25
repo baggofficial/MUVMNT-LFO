@@ -387,6 +387,14 @@ public:
     void normalize()
     {
         if (points.size() < 2) resetToPump();
+        // NaN / Inf first (pasted text or damaged data): they slip through clamps, and NaN even breaks the sort
+        for (auto& p : points)
+        {
+            auto fix = [](float& v, float fallback) { if (! std::isfinite(v)) v = fallback; };
+            fix(p.x, 0.f); fix(p.y, 1.f); // 1 = no ducking
+            for (float* h : { &p.inDx, &p.inDy, &p.outDx, &p.outDy, &p.bend }) fix(*h, 0.f);
+            fix(p.bendX, 0.5f);
+        }
         std::stable_sort(points.begin(), points.end(), [](auto& l, auto& r) { return l.x < r.x; });
         for (auto& p : points)
         {

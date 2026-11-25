@@ -19,6 +19,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <functional>
+#include <limits>
 #include <new>
 #include <random>
 #include <string>
@@ -975,6 +976,64 @@ static void testPointLimitState()
     }
 }
 
+static void testBadValues()
+{
+    section("11c. A setting or curve that turns into NaN / Inf never breaks the audio, or leaves it broken");
+    const auto in = noise(24000, 61);
+    auto allOk = [](const Stereo& s) { return allFinite(s[0]) && allFinite(s[1]) && maxAbs(s[0]) < 400.f && maxAbs(s[1]) < 400.f; };
+    const float bad[] = { std::numeric_limits<float>::quiet_NaN(), std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity() };
+    struct Mode { const char* name; float mb, engine, hz; };
+    const Mode modes[] = { { "single band", 0.f, 0.f, 0.f }, { "single band, Hz", 0.f, 0.f, 1.f }, { "multiband crossover", 1.f, 0.f, 0.f },
+                           { "multiband Dynamic EQ", 1.f, 1.f, 0.f }, { "multiband, Hz, unlinked", 1.f, 0.f, 1.f } };
+    for (const auto& m : modes)
+    {
+        std::string broke, stuck;
+        Rig probe;
+        for (auto* prm : probe.p.getParameters())
+        {
+            auto* ranged = dynamic_cast<juce::AudioParameterFloat*>(prm);
+            if (ranged == nullptr) continue;
+            const auto id = ranged->paramID;
+            for (float v : bad)
+            {
+                Rig r;
+                r.param("mb", m.mb); r.param("mbEngine", m.engine); r.param("mode", m.hz); r.param("smooth", 5.f);
+                for (const char* sfx : { "L", "M", "H" }) { r.param((juce::String("mode") + sfx).toRawUTF8(), m.hz); r.param((juce::String("smooth") + sfx).toRawUTF8(), 5.f); }
+                if (m.hz > 0.f) r.param("mbLink", 0.f);
+                r.render(in);
+                auto* raw = r.p.apvts.getRawParameterValue(id);
+                const float good = raw->load();
+                raw->store(v);   // however it got there: typed text, damaged project data, a misbehaving host
+                if (!allOk(r.render(in))) broke += " " + id.toStdString();
+                raw->store(good);
+                r.render(in);
+                if (!allOk(r.render(in))) stuck += " " + id.toStdString();
+            }
+        }
+        check(broke.empty(), fmt("%s: output stays valid while any one setting is NaN / Inf", m.name), broke);
+        check(stuck.empty(), fmt("%s: and is valid again once the setting is", m.name), stuck);
+    }
+    {
+        Envelope loaded = Envelope::deserialize("0,nan,0,0,0,0;0.5,inf,nan,0,0,nan;nan,1,0,nan,0,0,0,nan;1,nan,0,0,0,0;");
+        bool finite = true;
+        for (const auto& pt : loaded.points)
+            for (float v : { pt.x, pt.y, pt.inDx, pt.inDy, pt.outDx, pt.outDy, pt.bend, pt.bendX }) finite = finite && std::isfinite(v);
+        Rig r; r.p.setEnvelope(loaded, 0);
+        check(finite && allOk(r.render(in)), "curve text containing nan / inf (pasted, or in a damaged project) gives a valid curve");
+    }
+    {
+        Rig a; juce::MemoryBlock block; a.p.getStateInformation(block);
+        auto xml = juce::AudioProcessor::getXmlFromBinary(block.getData(), (int) block.getSize());
+        for (auto* node : xml->getChildIterator())
+            if (node->hasAttribute("value")) node->setAttribute("value", "nan");
+        juce::MemoryBlock damaged; juce::AudioProcessor::copyXmlToBinary(*xml, damaged);
+        Rig b; b.p.setStateInformation(damaged.getData(), (int) damaged.getSize());
+        bool finiteParams = true;
+        for (auto* prm : b.p.getParameters()) finiteParams = finiteParams && std::isfinite(prm->getValue());
+        check(finiteParams && allOk(b.render(in)), "a project whose every setting reads nan loads with usable settings");
+    }
+}
+
 static void testRealTimeSafety()
 {
     section("12. Real-time safety: no memory allocation on the audio thread");
@@ -1154,6 +1213,7 @@ int main()
     testSidechainBus();
     testState();
     testPointLimitState();
+    testBadValues();
     testRealTimeSafety();
     testThreads();
     testCpu();

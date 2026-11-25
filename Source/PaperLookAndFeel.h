@@ -283,6 +283,8 @@ public:
         if (resetClick) juce::Slider::mouseDoubleClick(e);   // JUCE's own reset, so the host sees a proper edit
         else juce::Slider::mouseDown(e);
     }
+    // typed text goes through here too: "nan" and friends are not values, so the knob stays where it is
+    double snapValue(double attempted, DragMode) override { return std::isfinite(attempted) ? attempted : getValue(); }
     void mouseDrag(const juce::MouseEvent& e) override { if (!resetClick) juce::Slider::mouseDrag(e); }
     void mouseUp(const juce::MouseEvent& e) override { if (!resetClick) juce::Slider::mouseUp(e); }
 

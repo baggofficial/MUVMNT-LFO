@@ -79,6 +79,21 @@ if(FREELFO_BENCH)
         juce::juce_recommended_lto_flags)
     target_compile_definitions(LfoAudioTest PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0)
 
+    juce_add_console_app(LfoMonkey PRODUCT_NAME "LfoMonkey")
+    target_sources(LfoMonkey PRIVATE
+        tests/monkey.cpp
+        Source/PluginProcessor.cpp
+        Source/PluginEditor.cpp
+        Source/EnvelopeEditor.cpp
+        Source/MultibandPanel.cpp
+        Source/PresetMenu.cpp)
+    target_link_libraries(LfoMonkey PRIVATE
+        FreeLfoFonts
+        juce::juce_audio_utils
+        juce::juce_recommended_config_flags
+        juce::juce_recommended_lto_flags)
+    target_compile_definitions(LfoMonkey PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1)
+
     juce_add_console_app(LfoSnap PRODUCT_NAME "LfoSnap")
     target_sources(LfoSnap PRIVATE
         tests/snapshot.cpp

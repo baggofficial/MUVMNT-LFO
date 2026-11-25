@@ -606,6 +606,16 @@ static bool resetClickRegression()
     { TrimKnob k; expect(k, juce::ModifierKeys::altModifier, "gain knob, Alt-click"); }
     { Knob k; k.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag); expect(k, juce::ModifierKeys::commandModifier, "main knob, Ctrl-click (Cmd on macOS)"); }
     { Knob k; k.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag); expect(k, juce::ModifierKeys::altModifier, "main knob, Alt-click"); }
+    {   // typing into the value box ends in snapValue(): "nan" and "inf" must leave the knob alone
+        Knob k; k.setRange(0.0, 200.0, 0.01); k.setValue(12.0, juce::dontSendNotification);
+        bool good = true;
+        for (const char* typed : { "nan", "NaN", "inf", "-inf" })
+            good = good && k.snapValue(juce::String(typed).getDoubleValue(), juce::Slider::notDragging) >= 0.0
+                        && std::isfinite(k.snapValue(juce::String(typed).getDoubleValue(), juce::Slider::notDragging));
+        good = good && k.snapValue(std::numeric_limits<double>::quiet_NaN(), juce::Slider::notDragging) == 12.0;
+        std::printf("  %-52s %s\n", "typing nan / inf into a knob is ignored", good ? "ok" : "FAILED");
+        ok = ok && good;
+    }
     return ok;
 }
 
