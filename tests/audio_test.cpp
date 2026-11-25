@@ -356,6 +356,19 @@ static void testMeters()
     const float mi = r.p.meterIn.load(), mo = r.p.meterOut.load();
     check(mi > 0.45f && mi < 0.52f, "input meter reads the input peak", fmt("%.3f (input peak 0.5)", mi));
     check(mo <= mi + 1e-4f && mo > 0.f, "output meter reads at most the input peak", fmt("%.3f", mo));
+    {   // and not just at the end: after every block, with levels jumping around and the meters falling in between
+        Rig q; q.p.editorOpen.store(true);
+        std::mt19937 rng(71);
+        std::uniform_real_distribution<float> u(0.f, 1.f);
+        double worst = -1.0;
+        for (int block = 0; block < 2000; ++block)
+        {
+            const size_t n = 1 + (size_t) (u(rng) * 700.f);
+            q.render(noise(n, 1000u + (unsigned) block, u(rng) < 0.2f ? 0.9f : 0.9f * u(rng) * u(rng)), { (int) n });
+            worst = std::max(worst, (double) q.p.meterOut.load() - (double) q.p.meterIn.load());
+        }
+        check(worst <= 1e-6, "single band: OUT is never above IN, after any of 2000 blocks", fmt("largest OUT minus IN %.6f", worst));
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

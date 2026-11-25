@@ -1062,10 +1062,12 @@ int main(int argc, char** argv)
         fe->setDarkMode(true, false);
         juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
         run(30);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(100); // the meters redraw on a timer: let them catch up with this audio
         save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("dark_multiband.png"));
         setParam(p, "mb", 0.f);
         juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
-        run(30);
+        run(200); // several whole cycles, so no part of the scope still shows earlier material
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(100); // the meters redraw on a timer: let them catch up with this audio
         save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("dark_single.png"));
         for (auto* c : ed->getChildren())   // the first knob is Rate: open its type-in box
             if (auto* k = dynamic_cast<Knob*>(c)) { k->showTextBox(); break; }
@@ -1076,6 +1078,7 @@ int main(int argc, char** argv)
         fe->setDarkMode(false, false);
         juce::MessageManager::getInstance()->runDispatchLoopUntil(200);
         run(30);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(100); // the meters redraw on a timer: let them catch up with this audio
         save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("light_single.png"));
         setParam(p, "mb", 1.f);
         juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
