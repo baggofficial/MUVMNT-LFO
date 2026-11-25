@@ -233,8 +233,20 @@ void FreeLfoProcessor::pushUndo(UndoState before)
     redoStack.clear();
 }
 
+static void setSwitch(juce::AudioProcessorValueTreeState& apvts, const char* id, bool on)
+{
+    if (auto* prm = apvts.getParameter(id))
+        if ((prm->getValue() > 0.5f) != on)
+        {
+            prm->beginChangeGesture();
+            prm->setValueNotifyingHost(on ? 1.f : 0.f);
+            prm->endChangeGesture();
+        }
+}
+
 void FreeLfoProcessor::applyUndoState(const UndoState& s)
 {
+    if (s.bands >= 0) setSwitch(apvts, "mbBands", s.bands == 1);
     restoringUndo = true; // setting the Bezier switch must not convert the curves a second time
     if (auto* prm = apvts.getParameter("bezier"))
         if ((prm->getValue() > 0.5f) != s.bezier)
@@ -254,12 +266,30 @@ void FreeLfoProcessor::applyCurve(Envelope e, int slot)
     setEnvelope(e, slot);
 }
 
+void FreeLfoProcessor::applyBandCurves(const std::array<Envelope, 3>& curves, bool threeBands)
+{
+    auto before = captureUndoState();
+    before.bands = apvts.getRawParameterValue("mbBands")->load() > 0.5f ? 1 : 0;
+    pushUndo(std::move(before));
+    const bool bezier = apvts.getRawParameterValue("bezier")->load() > 0.5f;
+    for (int b = 0; b < 3; ++b)
+    {
+        if (b == 1 && !threeBands) continue;
+        Envelope e = curves[(size_t) b];
+        if (bezier) e.convertToBezier(); else e = e.simplifiedCopy();
+        setEnvelope(e, b + 1);
+    }
+    setSwitch(apvts, "mbBands", threeBands);
+}
+
 bool FreeLfoProcessor::undo()
 {
     if (undoStack.empty()) return false;
-    redoStack.push_back(captureUndoState());
     const auto s = std::move(undoStack.back());
     undoStack.pop_back();
+    auto current = captureUndoState();
+    if (s.bands >= 0) current.bands = apvts.getRawParameterValue("mbBands")->load() > 0.5f ? 1 : 0;
+    redoStack.push_back(std::move(current));
     applyUndoState(s);
     return true;
 }
@@ -267,9 +297,11 @@ bool FreeLfoProcessor::undo()
 bool FreeLfoProcessor::redo()
 {
     if (redoStack.empty()) return false;
-    undoStack.push_back(captureUndoState());
     const auto s = std::move(redoStack.back());
     redoStack.pop_back();
+    auto current = captureUndoState();
+    if (s.bands >= 0) current.bands = apvts.getRawParameterValue("mbBands")->load() > 0.5f ? 1 : 0;
+    undoStack.push_back(std::move(current));
     applyUndoState(s);
     return true;
 }

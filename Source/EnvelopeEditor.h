@@ -22,6 +22,7 @@ public:
     bool keyPressed(const juce::KeyPress&) override; // Cmd/Ctrl+Z undo, Shift+Cmd/Ctrl+Z or Ctrl+Y redo
 
     bool areControlsHidden() const { return controlsHidden; }
+    void animate(); // one step of the editor's animation clock: redraws if anything is moving or changed
     bool isShowingLimitNote() const { return limitNoteUntil > juce::Time::getMillisecondCounterHiRes(); }
     // Note values at 1/4, 1/2, 3/4 and the end of the cycle ("1/16", "1/8", ...); empty strings in Hz mode
     std::array<juce::String, 4> positionLabels() const;
@@ -41,7 +42,6 @@ public:
     bool snapHandleNow(const juce::ModifierKeys& m) const { return snapToGrid != (m.isAltDown() || m.isCtrlDown()); }
 
 private:
-    void frame(); // once per display refresh (VBlank), capped to ~60 fps
     void renderGrid(juce::Graphics&);
     juce::Rectangle<float> plotBounds() const { return getLocalBounds().toFloat().reduced(10.f).withTrimmedBottom(4.f); } // room below for the labels
     juce::String cachedLabels; // the labels the cached grid image was drawn with
@@ -108,22 +108,19 @@ private:
 
     juce::Image gridImg, curveImg; // cached layers, see paint()
     size_t curveKey = 0;
-    double lastFrameMs = 0.0;
     double limitNoteUntil = 0.0;   // the "point limit" note is on screen until this time
     bool limitNoteDrawn = false;
     unsigned lastBlock = 0;
-    juce::VBlankAttachment vblank; // keep last: it calls frame() as soon as it exists
 };
 
 
 // A thin vertical meter beside the curve editor: where the output signal (what the plugin lets through, -1 .. +1, same scale as the scope) was at the last
 // point of the cycle (the arrow), plus a bar for the lowest to highest output over the last 4% of the cycle (the end zone). The big dot is the newest cycle, the small ones the cycles before it.
 // A dot far from the centre line means that note is still swinging when the gain falls: that is where bass clicks.
-class WrapMeter : public juce::Component, public juce::SettableTooltipClient, private juce::Timer
+class WrapMeter : public juce::Component, public juce::SettableTooltipClient
 {
 public:
     WrapMeter(FreeLfoProcessor& p, const EnvelopeEditor& e) : proc(p), editor(e) {
-        startTimerHz(60);
         setMouseCursor(juce::MouseCursor::PointingHandCursor);
         setTooltip("End-of-cycle meter: the level at the cycle's last point.\nClick to show the end-zone bar (last 4%)");
     }
@@ -137,7 +134,6 @@ public:
         if (auto* parent = getParentComponent()) parent->resized();   // the column changes width
         repaint();
     }
-    ~WrapMeter() override { stopTimer(); }
 
     void paint(juce::Graphics& g) override
     {
@@ -203,10 +199,9 @@ public:
         }
     }
 
-private:
     // The values only change once per cycle, so the display eases toward them: the arrow glides (about 120 ms), and the end-zone
     // bar grows quickly but falls back slowly, like a peak-hold meter.
-    void timerCallback() override
+    void animate() // one step of the editor's animation clock
     {
         const int s = editor.getSlot();
         const int c = proc.wrapCount[(size_t) s].load(std::memory_order_acquire);
@@ -242,6 +237,7 @@ private:
         if (moving || firstPaint) { firstPaint = false; repaint(); }
     }
 
+private:
     FreeLfoProcessor& proc;
     const EnvelopeEditor& editor;
     int lastCount = -1, lastSlot = -1;

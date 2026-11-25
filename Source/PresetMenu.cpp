@@ -69,8 +69,26 @@ namespace
                 g.setColour(paper::text.withAlpha(0.18f));                       // the 100% and 0% lines
                 g.drawLine(c.getX(), c.getY(), c.getRight(), c.getY(), 0.6f);
                 g.drawLine(c.getX(), c.getBottom(), c.getRight(), c.getBottom(), 0.6f);
-                g.setColour(over ? paper::accent.brighter(0.3f) : paper::accent);
-                g.strokePath(t.path, juce::PathStrokeType(1.7f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded), toRect(c));
+                const juce::PathStrokeType stroke(1.7f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+                if (t.bandSet < 0)
+                {
+                    g.setColour(over ? paper::accent.brighter(0.3f) : paper::accent);
+                    g.strokePath(t.path, stroke, toRect(c));
+                    continue;
+                }
+                // a multiband preset: every band's curve in its own colour, the lows on top
+                const auto& set = bandSets[(size_t) t.bandSet];
+                for (int b = 2; b >= 0; --b)
+                {
+                    if (b == 1 && !set.three) continue;
+                    g.setColour(paper::bandColour(b));
+                    g.strokePath(t.bandPaths[(size_t) b], stroke, toRect(c));
+                }
+            }
+            if (dividerX > 0)
+            {
+                g.setColour(paper::line);
+                g.drawLine((float) dividerX, 12.f, (float) dividerX, (float) saveBtn.getY() - 10.f, 1.f);
             }
         }
 
@@ -91,11 +109,20 @@ namespace
                                 [safe = juce::Component::SafePointer<PresetPanel>(this), file](int r) { if (r == 1) { file.deleteFile(); if (safe != nullptr) safe->reload(); } });
                 return;
             }
-            apply(tiles[(size_t) i].env);
+            const auto& t = tiles[(size_t) i];
+            if (t.bandSet < 0) { apply(t.env); return; }
+            const auto& set = bandSets[(size_t) t.bandSet];
+            proc.applyBandCurves({ set.low, set.mid, set.high }, set.three);
+            close();
         }
 
     private:
-        struct Tile { juce::String name; Envelope env; juce::Path path; juce::Rectangle<int> area; bool user = false; juce::File file; };
+        struct Tile
+        {
+            juce::String name; Envelope env; juce::Path path; juce::Rectangle<int> area; bool user = false; juce::File file;
+            int bandSet = -1; // >= 0: a multiband preset (an index into bandSets)
+            std::array<juce::Path, 3> bandPaths;
+        };
         struct Heading { juce::String text; juce::Rectangle<int> area; };
 
         void setHover(int i) { if (i != hover) { hover = i; repaint(); } }
@@ -184,22 +211,58 @@ namespace
             if (!mine.items.empty()) groups.push_back(std::move(mine));
 
             constexpr int pad = 12, tw = 56, th = 40, gap = 6, cols = 4, headH = 20;
+            constexpr int columnW = cols * tw + (cols - 1) * gap, columnGap = 20;
+
+            // In Multiband, a first column holds the presets that set every band at once (two per row, so they read well)
+            const bool multi = slot > 0;
+            int multiBottom = pad;
+            dividerX = 0;
+            bandSets.clear();
+            if (multi)
+            {
+                bandSets = presets::factoryMultiband();
+                constexpr int bw2 = (columnW - gap) / 2, bh = 54;
+                for (const bool three : { true, false })
+                {
+                    headings.push_back({ three ? "All bands: 3-band" : "All bands: 2-band", { pad, multiBottom, columnW, headH } });
+                    multiBottom += headH;
+                    int col = 0;
+                    for (size_t k = 0; k < bandSets.size(); ++k)
+                    {
+                        const auto& set = bandSets[k];
+                        if (set.three != three) continue;
+                        Tile t;
+                        t.name = juce::String(set.name) + (three ? " (sets 3 bands)" : " (sets 2 bands)");
+                        t.bandSet = (int) k;
+                        t.bandPaths = { curvePath(set.low), curvePath(set.mid), curvePath(set.high) };
+                        t.area = { pad + col * (bw2 + gap), multiBottom, bw2, bh };
+                        tiles.push_back(std::move(t));
+                        if (++col == 2) { col = 0; multiBottom += bh + gap; }
+                    }
+                    if (col != 0) multiBottom += bh + gap;
+                    multiBottom += 4;
+                }
+                dividerX = pad + columnW + columnGap / 2;
+            }
+
+            const int left = multi ? pad + columnW + columnGap : pad;
             int y = pad;
             for (auto& gr : groups)
             {
-                headings.push_back({ gr.name, { pad, y, 200, headH } });
+                headings.push_back({ multi && gr.name == "Sidechain" ? "This band: sidechain" : gr.name, { left, y, columnW, headH } });
                 y += headH;
                 int col = 0;
                 for (auto& t : gr.items)
                 {
-                    t.area = { pad + col * (tw + gap), y, tw, th };
+                    t.area = { left + col * (tw + gap), y, tw, th };
                     tiles.push_back(std::move(t));
                     if (++col == cols) { col = 0; y += th + gap; }
                 }
                 if (col != 0) y += th + gap;
                 y += 4;
             }
-            const int w = pad * 2 + cols * tw + (cols - 1) * gap;
+            y = juce::jmax(y, multiBottom);
+            const int w = left + columnW + pad;
             auto row = juce::Rectangle<int>(pad, y + 2, w - 2 * pad, 26);
             const int bw = (row.getWidth() - 2 * gap) / 3;
             saveBtn.setBounds(row.removeFromLeft(bw)); row.removeFromLeft(gap);
@@ -225,6 +288,8 @@ namespace
         std::function<void()> changed, dismiss;
         std::vector<Tile> tiles;
         std::vector<Heading> headings;
+        std::vector<BandPreset> bandSets;
+        int dividerX = 0;
         int hover = -1;
         juce::String note;
         juce::TextButton saveBtn { "Save as..." }, copyBtn { "Copy" }, pasteBtn { "Paste" };
@@ -319,7 +384,8 @@ namespace
             setBounds(host.getLocalBounds());
             const auto ab = host.getLocalArea(&anchor, anchor.getLocalBounds());
             const int x = juce::jlimit(4, juce::jmax(4, getWidth() - panel->getWidth() - 4), ab.getRight() - panel->getWidth());
-            panel->setTopLeftPosition(x, ab.getBottom() + 4);
+            const int y = juce::jmax(0, juce::jmin(ab.getBottom() + 4, getHeight() - panel->getHeight() - 2)); // inside a small window too
+            panel->setTopLeftPosition(x, y);
         }
         void componentMovedOrResized(juce::Component&, bool, bool) override { fit(); }
 

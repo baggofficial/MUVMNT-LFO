@@ -34,6 +34,7 @@ It is an independent, from-scratch implementation inspired by the workflow of Xf
 - In Sync mode, **very small note values under the graph** mark the quarters of the cycle (at a 1/4 rate: 1/16, 1/8, 3/16, 1/4; dotted and triplet rates add D or T), so you can find the middle at a glance. They are hidden in Hz mode.
 - **Undo / redo** for every edit (Ctrl/Cmd+Z, Shift+Ctrl/Cmd+Z or Ctrl+Y, or the arrows in the header): one step per drag, includes reset and the Bezier switch, and keeps the last 50 steps (about 40 KB).
 - **Presets and copy/paste** from the header's curve button: 20 factory shapes (house pump, soft and hard duck, long release, pump x2, nine kick-style rise/hold/drop shapes, sine, triangle, saws, flat) shown as small curve thumbnails, **Save curve as preset...** for your own, **Copy curve** and **Paste curve** (works between plugin instances and projects). A preset or pasted curve replaces only the curve you are editing (the selected band in Multiband) and is undoable.
+- **All-band presets** (Multiband only, in their own column, drawn in the band colours): four for 3 bands (Low-end focus, Waterfall, Gentle glue, Off-beat tops) and four for 2 bands (Lows only, Soft top, Long lows with quick highs, Seesaw). One click sets every band's curve and switches to that band count (with 2 bands, the mid curve is left as it was). Rates, depths and split frequencies stay as you set them, and one undo brings back both the curves and the band count.
 - Click empty space to hide every point and handle and see the bare curve; click the curve to bring them back.
 - The first and last points always share one height, so the loop has no click where it wraps around.
 
@@ -182,11 +183,11 @@ These are the promises the plugin is built to keep, and the test suite checks ea
 - **Crossover**: Linkwitz-Riley filters built from cascaded Butterworth biquads in double precision (a first-order pair for 6 dB). In three-band mode the low band also passes through an allpass copy of the upper split, which keeps the sum flat. The two splits can have different slopes.
 - **Dynamic EQ**: one 2nd-order state-variable filter per split. The filters depend only on the split frequencies; the band gains only change how their outputs are mixed with the input (the geometric mean of two neighbouring gains weights the middle term). So the gains can move every sample, all the way to 0, with nothing to destabilise, equal gains are a plain volume change, and in the tests no combination of gains boosts a tone by more than 0.01 dB.
 - **Smoothing**: a one-pole smoother that is guaranteed to land exactly on its target (a plain one-pole stalls a few units short, which would break the null).
-- **UI**: the grid, curve and handles are drawn once into cached images; each frame only blits those and draws the playhead and waveform. Redraws are tied to the display refresh, capped at about 60 fps, and skipped when nothing is moving.
+- **UI**: the grid, curve and handles are drawn once into cached images; each frame only blits those and draws the playhead and waveform. Everything that moves (graph, meters and spectrum) is redrawn from one clock tied to the display refresh, at about 30 fps, because each window update has a large fixed cost. The graph stops redrawing when the host stops sending audio and nothing has changed; dragging redraws straight away.
 
 ## Performance
 
-Share of **one CPU core**, measured by the offline test suite on an Apple Silicon Mac (lower is better; stereo, Release build):
+**Audio processing**: share of **one CPU core**, measured by the offline test suite on an Apple Silicon Mac (lower is better; stereo, Release build). These figures do **not** include drawing the window, which costs far more (see below). "Editor open" here means only the extra audio-side analysis that feeds the displays.
 
 | Mode | 44.1 kHz | 48 kHz | 96 kHz | 192 kHz |
 |---|---|---|---|---|
@@ -199,7 +200,9 @@ Share of **one CPU core**, measured by the offline test suite on an Apple Silico
 | Multiband Dynamic EQ, editor open | 0.14% | 0.14% | 0.28% | 0.53% |
 | Bypassed | ~0% | ~0% | ~0% | ~0% |
 
-(512-sample blocks; 32-sample blocks cost up to about 30% more.) The editor only costs anything while it is open (the waveform, spectrum and meters are only analysed then), and a bypassed plugin does nothing at all. These figures are from one machine and will differ on yours, but the ratios hold: single band is almost free, and the heaviest multiband setting at 192 kHz is still around 2% of a core.
+(512-sample blocks; 32-sample blocks cost up to about 30% more.) A bypassed plugin does no audio processing. These figures are from one machine and will differ on yours: single band is almost free, and the heaviest multiband setting at 192 kHz is still around 2% of a core.
+
+**The open window** is the expensive part. On an Apple M1 Pro with audio running, a test program showing the window used about **13 to 14% of one core in Single** and **about 21% in 3-band Multiband** (whole process, audio included). Closing the plugin window removes that cost. It has **not been measured on Windows**, which draws the window differently.
 
 ## Testing
 

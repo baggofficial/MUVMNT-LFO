@@ -978,6 +978,40 @@ static bool presetRegression()
     check(presets::fromText(text, back) && back.serialize() == p.getEnvelope(1).serialize(), "copy then paste gives the same curve");
     check(!presets::fromText("not a curve", back), "pasting something else is refused");
 
+    // multiband presets set every band and the band count, as one undo step
+    {
+        const auto sets = presets::factoryMultiband();
+        const BandPreset *three = nullptr, *two = nullptr;
+        for (const auto& s : sets) { if (s.three && three == nullptr) three = &s; if (!s.three && two == nullptr) two = &s; }
+        auto bands = [&] { return p.apvts.getRawParameterValue("mbBands")->load() > 0.5f ? 3 : 2; };
+        auto curves = [&] { juce::String s; for (int k = 0; k < FreeLfoProcessor::numSlots; ++k) s << p.getEnvelope(k).serialize() << "|"; return s; };
+        auto follows = [&](int slot, const Envelope& want) {
+            float worstGap = 0.f;
+            for (int i = 0; i <= 200; ++i) worstGap = std::max(worstGap, std::fabs(p.getEnvelope(slot).evaluate(i / 200.f) - want.evaluate(i / 200.f)));
+            return worstGap < 0.03f;
+        };
+        const auto start = curves();
+        const auto singleBefore = p.getEnvelope(0).serialize(), midBefore = p.getEnvelope(2).serialize();
+        p.applyBandCurves({ two->low, two->mid, two->high }, false);
+        check(bands() == 2 && follows(1, two->low) && follows(3, two->high), "a 2-band preset sets low and high and switches to 2 bands");
+        check(p.getEnvelope(2).serialize() == midBefore && p.getEnvelope(0).serialize() == singleBefore, "it leaves the mid and single curves alone");
+        const auto afterTwo = curves();
+        p.undo();
+        check(bands() == 3 && curves() == start, "one undo restores the curves and the band count");
+        p.redo();
+        check(bands() == 2 && curves() == afterTwo, "redo brings both back");
+        p.applyBandCurves({ three->low, three->mid, three->high }, true);
+        check(bands() == 3 && follows(1, three->low) && follows(2, three->mid) && follows(3, three->high), "a 3-band preset sets all three and switches to 3 bands");
+        p.undo(); p.undo();
+        check(bands() == 3 && curves() == start, "undoing both gets back to where we started");
+        // an ordinary curve edit must not drag the band count back with it
+        p.applyCurve(three->low, 1);
+        p.apvts.getParameter("mbBands")->setValueNotifyingHost(0.f);
+        p.undo();
+        check(bands() == 2, "undoing a single-curve change leaves the band count alone");
+        p.apvts.getParameter("mbBands")->setValueNotifyingHost(1.f);
+    }
+
     // user preset files
     const auto f = juce::File::getSpecialLocation(juce::File::tempDirectory).getChildFile("FreeLfoTestPresets");
     f.createDirectory();
@@ -1092,6 +1126,14 @@ int main(int argc, char** argv)
     juce::MidiBuffer midi;
     juce::Random rng(5);
     long t = 0;
+    // Without a screen nothing drives the window's animation clock, so step it while the message loop runs
+    auto settle = [](juce::AudioProcessorEditor& window, int ms) {
+        for (int done = 0; done < ms; done += 33)
+        {
+            juce::MessageManager::getInstance()->runDispatchLoopUntil(33);
+            if (auto* lfo = dynamic_cast<FreeLfoEditor*>(&window)) lfo->animate();
+        }
+    };
     auto run = [&](int blocks) {
         for (int b = 0; b < blocks; ++b)
         {
@@ -1119,7 +1161,7 @@ int main(int argc, char** argv)
             }
             p.processBlock(buf, midi);
         }
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(500); // the meter eases toward its values
+        settle(*ed, 500); // the meter eases toward its values
         save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("click_risk.png"));
     }
 
@@ -1136,7 +1178,7 @@ int main(int argc, char** argv)
             std::unique_ptr<juce::AudioProcessorEditor> qe(q.createEditor());
             qe->setSize(960, 610);
             if (mbOn) setParam(q, "mb", 1.f); else setParam(q, "depth", 0.25f);   // weak ducking: the bass still sits on the kick
-            juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+            settle(*qe, 300);
             juce::AudioBuffer<float> b4(4, bs);
             long tq = 0;
             for (int blk = 0; blk < 500; ++blk)
@@ -1150,7 +1192,7 @@ int main(int argc, char** argv)
                 }
                 q.processBlock(b4, midi);
             }
-            juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+            settle(*qe, 300);
             save(qe->createComponentSnapshot(qe->getLocalBounds(), true, 1.0f), dir.getChildFile(mbOn ? "overlap_multiband.png" : "overlap_single.png"));
         }
     }
@@ -1163,68 +1205,68 @@ int main(int argc, char** argv)
             for (bool mbOn : { false, true })
             {
                 setParam(p, "mb", mbOn ? 1.f : 0.f);
-                juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+                settle(*ed, 300);
                 juce::Component* hit = ed->getComponentAt(ed->getWidth() - 18 - 17, 18 + 18);
                 std::printf("bypass click target (%s tab): %s (%s)\n", mbOn ? "multiband" : "single", hit != nullptr && dynamic_cast<juce::ToggleButton*>(hit) != nullptr ? "the bypass button" : "SOMETHING ELSE", hit != nullptr ? typeid(*hit).name() : "none");
             }
             setParam(p, "mb", 0.f);
-            juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+            settle(*ed, 300);
         }
         setParam(p, "mb", 1.f);
         setParam(p, "clip", 1.f);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+        settle(*ed, 300);
         save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("clipper_soft.png"));
         setParam(p, "clip", 2.f);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+        settle(*ed, 300);
         save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("clipper_hard.png"));
         setParam(p, "clip", 0.f);
         setParam(p, "mbEngine", 1.f);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+        settle(*ed, 300);
         save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("multiband_dyneq.png"));
         setParam(p, "mbEngine", 0.f);
         setParam(p, "mb", 0.f);
         setParam(p, "bypass", 1.f);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+        settle(*ed, 300);
         save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("bypass_on.png"));
         setParam(p, "bypass", 0.f);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(200);
+        settle(*ed, 200);
     }
 
     setParam(p, "mb", 1.f);
-    juce::MessageManager::getInstance()->runDispatchLoopUntil(300); // lets the tab switch and the band controls rebind
+    settle(*ed, 300); // lets the tab switch and the band controls rebind
     std::printf("mb raw value after set: %.1f, blockCounter %u\n", p.apvts.getRawParameterValue("mb")->load(), p.blockCounter.load());
     run(400);
-    juce::MessageManager::getInstance()->runDispatchLoopUntil(100);
+    settle(*ed, 100);
     save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("multiband.png"));
-    for (int i = 0; i < 12; ++i) { run(10); juce::MessageManager::getInstance()->runDispatchLoopUntil(40); } // keeps the live spectrum fed
+    for (int i = 0; i < 12; ++i) { run(10); settle(*ed, 40); } // keeps the live spectrum fed
     save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("multiband_spectrum.png"));
 
     // Dark theme: the same two tabs
     {
         auto* fe = static_cast<FreeLfoEditor*>(ed.get());
         fe->setDarkMode(true, false);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+        settle(*ed, 300);
         run(30);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(100); // the meters redraw on a timer: let them catch up with this audio
+        settle(*ed, 100); // the meters redraw on a timer: let them catch up with this audio
         save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("dark_multiband.png"));
         setParam(p, "mb", 0.f);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+        settle(*ed, 300);
         run(200); // several whole cycles, so no part of the scope still shows earlier material
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(100); // the meters redraw on a timer: let them catch up with this audio
+        settle(*ed, 100); // the meters redraw on a timer: let them catch up with this audio
         save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("dark_single.png"));
         for (auto* c : ed->getChildren())   // the first knob is Rate: open its type-in box
             if (auto* k = dynamic_cast<Knob*>(c)) { k->showTextBox(); break; }
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(200);
+        settle(*ed, 200);
         save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("knob_typein.png"));
         juce::Component::unfocusAllComponents();
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(200);
+        settle(*ed, 200);
         fe->setDarkMode(false, false);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(200);
+        settle(*ed, 200);
         run(30);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(100); // the meters redraw on a timer: let them catch up with this audio
+        settle(*ed, 100); // the meters redraw on a timer: let them catch up with this audio
         save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("light_single.png"));
         setParam(p, "mb", 1.f);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+        settle(*ed, 300);
         run(30);
     }
 
@@ -1235,11 +1277,11 @@ int main(int argc, char** argv)
         p.setEnvelope(dip, 2);
         p.setEnvelope(saw, 3);
         static_cast<FreeLfoEditor*>(ed.get())->selectBandForSnapshot(1);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+        settle(*ed, 300);
         run(50);
         save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("multiband_mid.png"));
         static_cast<FreeLfoEditor*>(ed.get())->selectBandForSnapshot(2);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+        settle(*ed, 300);
         run(50);
         save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("multiband_high.png"));
         static_cast<FreeLfoEditor*>(ed.get())->selectBandForSnapshot(0);
@@ -1254,9 +1296,9 @@ int main(int argc, char** argv)
         p.setEnvelope(sharp, 1);
         // no display refresh runs headless, so hop to another band and back to make the editor reload this curve
         static_cast<FreeLfoEditor*>(ed.get())->selectBandForSnapshot(1);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(150);
+        settle(*ed, 150);
         static_cast<FreeLfoEditor*>(ed.get())->selectBandForSnapshot(0);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+        settle(*ed, 300);
         run(20);
         save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("simple_sharp.png"));
         setParam(p, "bezier", 1.f);
@@ -1268,9 +1310,9 @@ int main(int argc, char** argv)
         setParam(p, "bezier", 0.f);
         p.convertCurveMode(false);
         static_cast<FreeLfoEditor*>(ed.get())->selectBandForSnapshot(1);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(150);
+        settle(*ed, 150);
         static_cast<FreeLfoEditor*>(ed.get())->selectBandForSnapshot(0);
-        juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+        settle(*ed, 300);
         run(20);
         save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("converted_to_simple.png"));
         setParam(p, "bezier", 1.f);
@@ -1280,7 +1322,7 @@ int main(int argc, char** argv)
     setParam(p, "slopeLow", 5.f);  // 96 dB/oct on the low split
     setParam(p, "soloL", 1.f); setParam(p, "soloM", 1.f); // and two bands soloed at once
     setParam(p, "slopeHigh", 0.f); // 6 dB/oct on the high split
-    juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+    settle(*ed, 300);
     run(100);
     save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("multiband_slopes.png"));
     {
@@ -1333,6 +1375,15 @@ int main(int argc, char** argv)
         {
             auto popup = PresetMenu::open(fe, *btn, pp, 0, nullptr, nullptr);
             save(fe.createComponentSnapshot(fe.getLocalBounds(), true, 1.0f), dir.getChildFile("preset_popup_open.png"));
+            popup.reset();
+            // the multiband popup, at the smallest window size, in both themes
+            fe.setSize(880, 500);
+            for (const bool dark : { true, false })
+            {
+                fe.setDarkMode(dark, false);
+                auto mbPopup = PresetMenu::open(fe, *btn, pp, 1, nullptr, nullptr);
+                save(fe.createComponentSnapshot(fe.getLocalBounds(), true, 2.0f), dir.getChildFile(dark ? "preset_popup_multiband.png" : "preset_popup_multiband_light.png"));
+            }
         }
     }
     const bool rz = resizeRegression() && labelRegression() && resetClickRegression() && hostMenuRegression() && pointLimitRegression() && loudScopeRegression();

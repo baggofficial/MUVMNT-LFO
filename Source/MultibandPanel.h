@@ -8,11 +8,10 @@
 
 // Frequency strip: three coloured regions (low / mid / high) with two draggable split points
 // on a log-frequency axis. Click a region to edit that band; "S" solos a band.
-class BandStrip : public juce::Component, private juce::Timer
+class BandStrip : public juce::Component
 {
 public:
     explicit BandStrip(FreeLfoProcessor&);
-    ~BandStrip() override { stopTimer(); }
 
     void paint(juce::Graphics&) override;
     void mouseDown(const juce::MouseEvent&) override;
@@ -22,9 +21,9 @@ public:
 
     void setSelected(int band) { selected = band; repaint(); }
     std::function<void(int)> onSelect;
+    void animate(); // one step of the editor's animation clock: the live spectrum
 
 private:
-    void timerCallback() override;
     int signature() const;
     bool threeBands() const;
     bool dynamicEq() const;
@@ -86,6 +85,14 @@ public:
     void resetCurve() { curve.resetCurve(); }
     void selectBand(int band); // which band's curve is edited (also used by the headless snapshot tool)
     void setSnap(bool on) { curve.snapToGrid = on; }
+    void animate() // one step of the editor's animation clock, for everything that moves in this tab
+    {
+        strip.animate();
+        curve.animate();
+        curveMeter.animate();
+        inMeter.animate();
+        outMeter.animate();
+    }
 
 public:
     // These two live in the editor's header row (the editor adopts them), so they are public.

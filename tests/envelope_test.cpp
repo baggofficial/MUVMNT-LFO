@@ -239,6 +239,29 @@ int main()
     Envelope old = Envelope::deserialize("0,0,0.2,0.5;1,1,0,0.5;");
     assert(old.points.size() == 2 && near(old.points[0].outDx, 0.f));
 
+    // Multiband presets: 4 with three bands and 4 with two, and every band's curve obeys the same rules
+    {
+        const auto list = presets::factoryMultiband();
+        int three = 0, two = 0;
+        for (const auto& pr : list)
+        {
+            (pr.three ? three : two) += 1;
+            for (const Envelope* ep : { &pr.low, &pr.mid, &pr.high })
+            {
+                assert(ep->points.size() >= 2 && ep->points.size() <= 6);
+                assert(near(ep->points.front().x, 0.f) && near(ep->points.back().x, 1.f));
+                assert(near(ep->points.front().y, ep->points.back().y, 1e-6f));
+                for (size_t i = 1; i < ep->points.size(); ++i) assert(ep->points[i].x > ep->points[i - 1].x);
+                for (int i = 0; i < 4096; ++i)
+                {
+                    const float v = ep->evaluate((float) i / 4096.f);
+                    assert(v >= -1e-4f && v <= 1.0001f);
+                }
+            }
+        }
+        assert(three == 4 && two == 4);
+    }
+
     // Factory presets: every one must be a valid, click-free, duck-only loop
     {
         const auto list = presets::factory();

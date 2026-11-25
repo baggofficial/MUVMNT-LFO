@@ -17,6 +17,15 @@ public:
     bool keyPressed(const juce::KeyPress&) override;
     void setDarkMode(bool dark, bool persist = true); // light / dark theme; persist = remember it for next time
     void selectBandForSnapshot(int band) { mbPanel.selectBand(band); }
+    // One step of everything that moves in the window. Normally driven by the display; public for the screenless tests.
+    void animate()
+    {
+        if (shownMb) { mbPanel.animate(); return; }
+        curve.animate();
+        curveMeter.animate();
+        inMeter.animate();
+        outMeter.animate();
+    }
 
 private:
     FreeLfoProcessor& proc;
@@ -67,4 +76,15 @@ private:
     }
 
     bool shownMb = false;
+
+    // The one animation clock. Everything that moves is redrawn in the same step, because each window update has a
+    // large fixed cost: separate timers meant two or three times as many updates. 30 steps a second.
+    static constexpr double minStepMs = 30.0; // every 2nd refresh at 60 Hz, every 4th at 120 Hz
+    double lastStepMs = 0.0;
+    juce::VBlankAttachment clock { this, [this] {   // keep last: it can fire as soon as it exists
+        const double now = juce::Time::getMillisecondCounterHiRes();
+        if (now - lastStepMs < minStepMs) return;
+        lastStepMs = now;
+        animate();
+    } };
 };

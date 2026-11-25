@@ -18,7 +18,7 @@ namespace
 
 // ---------------------------------------------------------------- BandStrip
 
-BandStrip::BandStrip(FreeLfoProcessor& p) : proc(p) { startTimerHz(30); }
+BandStrip::BandStrip(FreeLfoProcessor& p) : proc(p) {}
 
 double BandStrip::splitHz(int split) const
 {
@@ -39,7 +39,7 @@ int BandStrip::signature() const
                   + v("mbEngine") * 500009.f + v("slopeLow") * 1009.f + v("slopeHigh") * 2003.f + (float) paper::version * 31337.f);
 }
 
-void BandStrip::timerCallback()
+void BandStrip::animate()
 {
     const int s = signature();
     const bool wasLive = specLive;

@@ -46,7 +46,12 @@ public:
     void convertCurveMode(bool toBezier);
     // Undo / redo for the curves (message thread only). One entry is a snapshot of all four curves plus the
     // Bezier switch, so an entry costs well under 2 KB; the history is capped at maxUndo entries (about 100 KB).
-    struct UndoState { std::array<Envelope, numSlots> env; bool bezier = true; };
+    struct UndoState
+    {
+        std::array<Envelope, numSlots> env;
+        bool bezier = true;
+        int bands = -1; // 0 = two bands, 1 = three; -1 = this step leaves the band count alone
+    };
     static constexpr size_t maxUndo = 50;
     UndoState captureUndoState() const;
     void pushUndo(UndoState before);          // call just before a change; a new change clears the redo history
@@ -56,6 +61,9 @@ public:
     // Replace one curve with a preset / pasted curve: converted to the current style (Bezier handles or simple
     // bend), recorded for undo.
     void applyCurve(Envelope e, int slot);
+    // Replace every band's curve at once (a multiband preset) and switch to its band count: one undo step for both.
+    // With two bands only low and high are replaced.
+    void applyBandCurves(const std::array<Envelope, 3>& curves, bool threeBands);
     bool undo();
     bool redo();
     static const char* bandSuffix(int band) { return band == 0 ? "L" : band == 1 ? "M" : "H"; }

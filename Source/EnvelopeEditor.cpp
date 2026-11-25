@@ -3,7 +3,7 @@
 // ---------------------------------------------------------------- EnvelopeEditor
 
 EnvelopeEditor::EnvelopeEditor(FreeLfoProcessor& p, int slotIndex)
-    : proc(p), slot(slotIndex), env(p.getEnvelope(slotIndex)), vblank(this, [this] { frame(); })
+    : proc(p), slot(slotIndex), env(p.getEnvelope(slotIndex))
 {
     setWantsKeyboardFocus(true);
     initParams();
@@ -604,13 +604,11 @@ float EnvelopeEditor::predictedPhase() const
     return (float) (ph - std::floor(ph));
 }
 
-void EnvelopeEditor::frame()
+void EnvelopeEditor::animate()
 {
     const double now = juce::Time::getMillisecondCounterHiRes();
-    if (now - lastFrameMs < 14.0) return; // ~60 fps cap, even on 120 Hz displays
-    lastFrameMs = now;
 
-    // Copy a curve only when it changed (60 times a second would otherwise copy up to three curves for nothing)
+    // Copy a curve only when it changed (many times a second would otherwise copy up to three curves for nothing)
     if (dragPoint < 0 && dragKind == 0 && dragSeg < 0)
     {
         const int v = proc.envelopeVersion(slot);

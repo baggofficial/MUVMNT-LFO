@@ -212,6 +212,12 @@ int main(int argc, char** argv)
         {
             const auto list = presets::factory();
             proc.applyCurve(list[(size_t) pick((int) list.size())].env, pick(FreeLfoProcessor::numSlots));
+            if (unit() < 0.4f) // a multiband preset: all the bands and the band count at once
+            {
+                const auto sets = presets::factoryMultiband();
+                const auto& set = sets[(size_t) pick((int) sets.size())];
+                proc.applyBandCurves({ set.low, set.mid, set.high }, set.three);
+            }
         }
         else if (what < 0.86f) editor->setSize(880 + pick(1121), 500 + pick(801));
         else if (what < 0.875f) { popup.reset(); proc.editorBeingDeleted(editor.get()); editor.reset(); } // as a host closes it

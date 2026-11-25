@@ -16,6 +16,14 @@ struct CurvePreset
     Envelope env;
 };
 
+// A multiband preset: one curve for each band, applied together. A 2-band preset uses only low and high.
+struct BandPreset
+{
+    std::string name;
+    bool three = true;
+    Envelope low, mid, high;
+};
+
 namespace presets
 {
     // Repeat a one-cycle shape n times inside the cycle. The first and last point of the shape share one height,
@@ -119,6 +127,39 @@ namespace presets
         add("Shapes", "Saw down", make({ { 0.000f, 1.f }, { 0.998f, 0.f }, { 1.000f, 1.f } }));
         add("Shapes", "Saw up", make({ { 0.000f, 0.f }, { 0.998f, 1.f }, { 1.000f, 0.f } }));
         add("Shapes", "Flat (no ducking)", make({ { 0.f, 1.f }, { 1.f, 1.f } }));
+        return list;
+    }
+
+    inline std::vector<BandPreset> factoryMultiband()
+    {
+        const Envelope flat = make({ { 0.f, 1.f }, { 1.f, 1.f } });
+        // a duck that starts at 'floor' on the beat and is back at full level at 'back' (a share of the cycle)
+        auto duck = [](float floor, float back) {
+            const float h = back * 0.45f;
+            return make({ { 0.f, floor, 0.f, 0.f, h, 0.f }, { back, 1.f, -h, 0.f, 0.f, 0.f }, { 0.97f, 1.f }, { 1.f, floor } });
+        };
+        // held fully down until 'hold', then up by 'back'
+        auto holdDuck = [](float hold, float back) {
+            const float h = (back - hold) * 0.5f;
+            return make({ { 0.f, 0.f }, { hold, 0.f, 0.f, 0.f, h, 0.f }, { back, 1.f, -h, 0.f, 0.f, 0.f }, { 0.97f, 1.f }, { 1.f, 0.f } });
+        };
+        // full level, with one smooth dip down to 'floor' in the middle of the cycle (the off-beat)
+        auto offbeat = [](float floor) {
+            return make({ { 0.f, 1.f }, { 0.28f, 1.f, 0.f, 0.f, 0.10f, 0.f }, { 0.50f, floor, -0.08f, 0.f, 0.08f, 0.f },
+                          { 0.74f, 1.f, -0.10f, 0.f, 0.f, 0.f }, { 1.f, 1.f } });
+        };
+
+        std::vector<BandPreset> list;
+        // ---- three bands: low, mid, high
+        list.push_back({ "Low-end focus", true, holdDuck(0.14f, 0.48f), duck(0.55f, 0.28f), flat });
+        list.push_back({ "Waterfall", true, duck(0.f, 0.72f), duck(0.f, 0.46f), duck(0.f, 0.24f) });
+        list.push_back({ "Gentle glue", true, duck(0.35f, 0.50f), duck(0.65f, 0.36f), duck(0.82f, 0.24f) });
+        list.push_back({ "Off-beat tops", true, duck(0.f, 0.50f), duck(0.60f, 0.30f), offbeat(0.25f) });
+        // ---- two bands: low and high (the mid curve is left alone)
+        list.push_back({ "Lows only", false, holdDuck(0.10f, 0.42f), flat, flat });
+        list.push_back({ "Soft top", false, duck(0.f, 0.55f), flat, duck(0.65f, 0.35f) });
+        list.push_back({ "Long lows, quick highs", false, duck(0.f, 0.85f), flat, duck(0.f, 0.20f) });
+        list.push_back({ "Seesaw", false, duck(0.f, 0.45f), flat, offbeat(0.f) });
         return list;
     }
 

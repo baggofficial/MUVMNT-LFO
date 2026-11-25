@@ -8,16 +8,13 @@
 // and a single red square at the very top (lit at about 0 dBFS). Loud material lives in the top third, so the squares there are
 // only 1.5 dB apart. Every square, the red one too, follows the signal: lit while the level is above it, dark as soon as it falls
 // below (the fall, 80 dB/s, is done on the audio thread). This just reads the value and redraws when a square changes.
-class LevelMeter : public juce::Component, private juce::Timer
+class LevelMeter : public juce::Component
 {
 public:
     LevelMeter(FreeLfoProcessor& p, bool isOutput, juce::String name) : proc(p), output(isOutput), label(std::move(name))
     {
         setInterceptsMouseClicks(false, false);
-        startTimerHz(60);
     }
-    ~LevelMeter() override { stopTimer(); }
-
     static constexpr int segments = 26;       // 20 green, 5 yellow, 1 red
     static constexpr float stepDb = 1.5f;
     static constexpr float redDb = -0.5f;     // the top (red) square lights from here; every square below is stepDb lower
@@ -55,8 +52,7 @@ public:
         }
     }
 
-private:
-    void timerCallback() override
+    void animate() // one step of the editor's animation clock
     {
         const float lin = (output ? proc.meterOut : proc.meterIn).load(std::memory_order_relaxed);
         const float db = lin > 1e-5f ? 20.f * std::log10(lin) : -120.f;
@@ -65,6 +61,7 @@ private:
         if (lit != litSegments) { litSegments = lit; repaint(); }
     }
 
+private:
     FreeLfoProcessor& proc;
     const bool output;
     const juce::String label;
