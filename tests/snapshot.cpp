@@ -678,6 +678,41 @@ static bool pointLimitRegression()
     return ok;
 }
 
+// The coloured output on the graph is input x gain, also for input over 0 dB: the gain is applied first, then the
+// picture is cut off at the edge (not the other way round).
+static bool loudScopeRegression()
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    p.editorOpen.store(true);
+    Envelope half; half.points = { { 0.f, 0.5f }, { 1.f, 0.5f } };
+    p.setEnvelope(half, 0);
+    juce::AudioBuffer<float> buf(2, 512); juce::MidiBuffer midi;
+    long t = 0;
+    for (int b = 0; b < 400; ++b)
+    {
+        for (int i = 0; i < 512; ++i, ++t) { const float v = 1.5f * (float) std::sin(2.0 * juce::MathConstants<double>::pi * 200.0 * (double) t / 48000.0); buf.setSample(0, i, v); buf.setSample(1, i, v); }
+        p.processBlock(buf, midi);
+    }
+    EnvelopeEditor ed(p, 0);
+    ed.setBounds(0, 0, 800, 400);
+    const auto img = ed.createComponentSnapshot(ed.getLocalBounds(), true, 1.0f);
+    save(img, juce::File(g_outDir).getChildFile("loud_scope.png"));
+    // above the middle only the waveforms have colour (the input is grey): find how high the coloured output reaches
+    int top = 400;
+    for (int x = 60; x < 740; ++x)
+        for (int y = 12; y < top; ++y)
+        {
+            const auto c = img.getPixelAt(x, y);
+            if (c.getSaturation() > 0.45f && c.getBrightness() > 0.35f) { top = y; break; }
+        }
+    const float height = (386.f - (float) top) / 376.f * 2.f - 1.f; // in the scope's -1 .. +1
+    const bool ok = std::fabs(height - 0.75f) < 0.05f;
+    std::printf("loud input on the graph:\n  %-52s %s  (reaches %.2f, input 1.5 x gain 0.5 = 0.75)\n", "output drawn as input x gain above 0 dB", ok ? "ok" : "FAILED", height);
+    return ok;
+}
+
 // The window can be resized: every control must stay inside it, without overlapping, at the smallest and a large size.
 static bool resizeRegression()
 {
@@ -1192,7 +1227,7 @@ int main(int argc, char** argv)
             save(fe.createComponentSnapshot(fe.getLocalBounds(), true, 1.0f), dir.getChildFile("preset_popup_open.png"));
         }
     }
-    const bool rz = resizeRegression() && labelRegression() && resetClickRegression() && pointLimitRegression();
+    const bool rz = resizeRegression() && labelRegression() && resetClickRegression() && pointLimitRegression() && loudScopeRegression();
     const bool un = undoRegression() && presetRegression() && handleSnapRegression() && deletePointRegression();
     return un && a && b && c && d && f && g && h && k && m && n && o && q && rz ? 0 : 1;
 }

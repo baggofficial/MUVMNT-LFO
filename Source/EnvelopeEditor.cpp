@@ -172,14 +172,14 @@ void EnvelopeEditor::fillWavePath(juce::Graphics& g, const std::array<std::atomi
     for (int i = 0; i < bins; ++i)
     {
         const float k = gain != nullptr ? gain[i] : 1.f;
-        const float mx = juce::jlimit(-1.f, 1.f, mxArr[(size_t) i].load(std::memory_order_relaxed)) * k;
+        const float mx = juce::jlimit(-1.f, 1.f, mxArr[(size_t) i].load(std::memory_order_relaxed) * k); // gain first, then cut off at the edge
         const auto p = toScreen((float) i / (bins - 1), 0.5f + 0.5f * mx);
         if (i == 0) w.startNewSubPath(p); else w.lineTo(p);
     }
     for (int i = bins - 1; i >= 0; --i)
     {
         const float k = gain != nullptr ? gain[i] : 1.f;
-        const float mn = juce::jlimit(-1.f, 1.f, mnArr[(size_t) i].load(std::memory_order_relaxed)) * k;
+        const float mn = juce::jlimit(-1.f, 1.f, mnArr[(size_t) i].load(std::memory_order_relaxed) * k); // gain first, then cut off at the edge
         w.lineTo(toScreen((float) i / (bins - 1), 0.5f + 0.5f * mn));
     }
     w.closeSubPath();
