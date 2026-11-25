@@ -272,8 +272,26 @@ private:
     int state = 0;
 };
 
-// The very small IN / OUT gain knobs under the meters. 0 dB points straight up; double-click or Alt-click goes back there.
-class TrimKnob : public juce::Slider
+// A slider that also goes back to its default on Ctrl-click (Windows / Linux) or Cmd-click (macOS). Alt / Option-click
+// and the rest work as in any JUCE slider. On macOS, Ctrl-click is the right-click, so it is left to the subclass.
+class ResetClickSlider : public juce::Slider
+{
+public:
+    void mouseDown(const juce::MouseEvent& e) override
+    {
+        resetClick = isEnabled() && !e.mods.isPopupMenu() && e.mods.isCommandDown(); // "command" is Ctrl outside macOS
+        if (resetClick) juce::Slider::mouseDoubleClick(e);   // JUCE's own reset, so the host sees a proper edit
+        else juce::Slider::mouseDown(e);
+    }
+    void mouseDrag(const juce::MouseEvent& e) override { if (!resetClick) juce::Slider::mouseDrag(e); }
+    void mouseUp(const juce::MouseEvent& e) override { if (!resetClick) juce::Slider::mouseUp(e); }
+
+protected:
+    bool resetClick = false; // the current click was a reset: no drag, and no double-click action
+};
+
+// The very small IN / OUT gain knobs under the meters. 0 dB points straight up; double-click, Ctrl-click or Alt-click goes back there.
+class TrimKnob : public ResetClickSlider
 {
 public:
     TrimKnob()
@@ -283,6 +301,13 @@ public:
         setDoubleClickReturnValue(true, 0.0, juce::ModifierKeys::altModifier);
         setMouseDragSensitivity(220);
         setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    }
+
+    // no right-click menu here, so a Mac's Ctrl-click can reset too
+    void mouseDown(const juce::MouseEvent& e) override
+    {
+        if (e.mods.isCtrlDown() && !e.mods.isRightButtonDown()) { resetClick = true; juce::Slider::mouseDoubleClick(e); return; }
+        ResetClickSlider::mouseDown(e);
     }
 
     void paint(juce::Graphics& g) override
@@ -320,17 +345,18 @@ public:
 };
 
 // A rotary knob you can also type into: double-click the knob (or choose it from the right-click menu) to enter an
-// exact value; right-click also resets to the default. (Cmd / Ctrl-click still resets, like any JUCE slider.)
-class Knob : public juce::Slider
+// exact value; right-click also offers a reset, and Ctrl-click (Cmd on macOS) or Alt-click resets at once.
+class Knob : public ResetClickSlider
 {
 public:
     Knob() { setMouseCursor(juce::MouseCursor::PointingHandCursor); }
 
-    void mouseDoubleClick(const juce::MouseEvent&) override { showTextBox(); }
+    void mouseDoubleClick(const juce::MouseEvent&) override { if (!resetClick) showTextBox(); }
 
     void mouseDown(const juce::MouseEvent& e) override
     {
-        if (!e.mods.isPopupMenu()) { juce::Slider::mouseDown(e); return; }
+        if (!e.mods.isPopupMenu()) { ResetClickSlider::mouseDown(e); return; }
+        resetClick = false;
         juce::PopupMenu m;
         m.setLookAndFeel(&getLookAndFeel());   // the menu is its own native window, so give it our font and colours explicitly
         m.addItem(1, "Enter value...");

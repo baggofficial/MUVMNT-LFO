@@ -573,6 +573,42 @@ static bool labelRegression()
     return ok;
 }
 
+// Ctrl-click (Cmd on macOS) and Alt-click put a knob back to its default.
+static bool resetClickRegression()
+{
+    bool ok = true;
+    std::printf("knob reset clicks:\n");
+    auto click = [](juce::Slider& s, int mods) {
+        const juce::ModifierKeys m(mods | juce::ModifierKeys::leftButtonModifier);
+        const auto at = s.getLocalBounds().getCentre().toFloat();
+        const auto now = juce::Time::getCurrentTime();
+        auto event = [&](juce::Point<float> p, bool dragged) {
+            return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), p, m, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                                    &s, &s, now, at, now, 1, dragged);
+        };
+        juce::Component& c = s;
+        c.mouseDown(event(at, false));
+        c.mouseDrag(event(at.translated(0.f, -40.f), true));   // a shaky hand must not move it off the default again
+        c.mouseUp(event(at.translated(0.f, -40.f), true));
+    };
+    auto expect = [&](juce::Slider& s, int mods, const char* what) {
+        s.setBounds(0, 0, 60, 60);
+        s.setRange(-24.0, 24.0, 0.1);
+        s.setDoubleClickReturnValue(true, 0.0);   // as the parameter attachment does it
+        s.setValue(9.0, juce::dontSendNotification);
+        click(s, mods);
+        const bool good = std::abs(s.getValue()) < 1e-9;
+        std::printf("  %-52s %s\n", what, good ? "ok" : "FAILED");
+        ok = ok && good;
+    };
+    { TrimKnob k; expect(k, juce::ModifierKeys::commandModifier, "gain knob, Ctrl-click (Cmd on macOS)"); }
+    { TrimKnob k; expect(k, juce::ModifierKeys::ctrlModifier, "gain knob, the Ctrl key itself"); }
+    { TrimKnob k; expect(k, juce::ModifierKeys::altModifier, "gain knob, Alt-click"); }
+    { Knob k; k.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag); expect(k, juce::ModifierKeys::commandModifier, "main knob, Ctrl-click (Cmd on macOS)"); }
+    { Knob k; k.setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag); expect(k, juce::ModifierKeys::altModifier, "main knob, Alt-click"); }
+    return ok;
+}
+
 // The window can be resized: every control must stay inside it, without overlapping, at the smallest and a large size.
 static bool resizeRegression()
 {
@@ -1084,7 +1120,7 @@ int main(int argc, char** argv)
             save(fe.createComponentSnapshot(fe.getLocalBounds(), true, 1.0f), dir.getChildFile("preset_popup_open.png"));
         }
     }
-    const bool rz = resizeRegression() && labelRegression();
+    const bool rz = resizeRegression() && labelRegression() && resetClickRegression();
     const bool un = undoRegression() && presetRegression() && handleSnapRegression() && deletePointRegression();
     return un && a && b && c && d && f && g && h && k && m && n && o && q && rz ? 0 : 1;
 }
