@@ -61,7 +61,7 @@ static bool handleNudgeRegression()
     p.prepareToPlay(48000.0, 512);
     EnvelopeEditor ed(p, 0);
     ed.setBounds(0, 0, 800, 400);
-    auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 390.f - y * 380.f); };
+    auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 386.f - y * 376.f); };
 
     Envelope e; e.points = { { 0.f, 0.f }, { 0.5f, 1.f }, { 1.f, 1.f } };
     e.bendSegmentThrough(0, 0.37f, 0.17f);              // "final edit in simple mode"
@@ -101,7 +101,7 @@ static bool hideShowRegression()
     p.prepareToPlay(48000.0, 512);
     EnvelopeEditor ed(p, 0);
     ed.setBounds(0, 0, 800, 400);
-    auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 390.f - y * 380.f); };
+    auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 386.f - y * 376.f); };
     MouseDriver m { ed };
     bool ok = true;
     auto check = [&](bool cond, const char* what) { std::printf("  %-52s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
@@ -141,7 +141,7 @@ static bool newPointRegression()
     p.apvts.getParameter("bezier")->setValueNotifyingHost(1.f);
     EnvelopeEditor ed(p, 0);
     ed.setBounds(0, 0, 800, 400);
-    auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 390.f - y * 380.f); };
+    auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 386.f - y * 376.f); };
     MouseDriver m { ed };
     bool ok = true;
     auto check = [&](bool cond, const char* what) { std::printf("  %-60s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
@@ -189,7 +189,7 @@ static bool endHandleRegression()
     p.setEnvelope(straight, 0);
     EnvelopeEditor ed(p, 0);
     ed.setBounds(0, 0, 800, 400);
-    auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 390.f - y * 380.f); };
+    auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 386.f - y * 376.f); };
     MouseDriver m { ed };
     bool ok = true;
     auto check = [&](bool cond, const char* what) { std::printf("  %-60s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
@@ -222,7 +222,7 @@ static bool seamRegression()
     p.prepareToPlay(48000.0, 512);
     EnvelopeEditor ed(p, 0);
     ed.setBounds(0, 0, 800, 400);
-    auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 390.f - y * 380.f); };
+    auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 386.f - y * 376.f); };
     MouseDriver m { ed };
     bool ok = true;
     auto check = [&](bool cond, const char* what) { std::printf("  %-60s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
@@ -301,7 +301,7 @@ static bool snapRegression()
     p.apvts.getParameter("bezier")->setValueNotifyingHost(1.f);
     EnvelopeEditor ed(p, 0);
     ed.setBounds(0, 0, 800, 400);
-    auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 390.f - y * 380.f); };
+    auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 386.f - y * 376.f); };
     MouseDriver m { ed };
     bool ok = true;
     auto check = [&](bool cond, const char* what) { std::printf("  %-64s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
@@ -536,6 +536,43 @@ static bool gridContrastRegression()
     return ok;
 }
 
+// The note values under the graph must follow the rate that really drives each curve.
+static bool labelRegression()
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    bool ok = true;
+    std::printf("graph position labels:\n");
+    auto expect = [&](int slot, const char* want, const char* what) {
+        const EnvelopeEditor e(p, slot);
+        const auto l = e.positionLabels();
+        const auto got = l[0] + "," + l[1] + "," + l[2] + "," + l[3];
+        const bool good = got == want;
+        std::printf("  %-52s %s  (%s)\n", what, good ? "ok" : "FAILED", got.toRawUTF8());
+        ok = ok && good;
+    };
+    expect(0, "1/16,1/8,3/16,1/4", "single, 1/4");
+    setParam(p, "division", 2.f);
+    expect(0, "1/2,1 bar,1.5 bars,2 bars", "single, 2 bars");
+    setParam(p, "division", 6.f); setParam(p, "triplet", 1.f);
+    expect(0, "1/32T,1/16T,3/32T,1/8T", "single, 1/8 triplet");
+    setParam(p, "mode", 1.f);
+    expect(0, ",,,", "single, Hz: no labels");
+    for (int s = 1; s <= 3; ++s) expect(s, "1/16,1/8,3/16,1/4", "multiband, linked, default");
+    setParam(p, "divM", 6.f); setParam(p, "dotM", 1.f);
+    for (int s = 1; s <= 3; ++s) expect(s, "1/32D,1/16D,3/32D,1/8D", "multiband, linked: every band shows the mid rate");
+    setParam(p, "mbLink", 0.f); setParam(p, "divL", 4.f); setParam(p, "divH", 7.f); setParam(p, "tripH", 1.f);
+    expect(1, "1/8,1/4,3/8,1/2", "multiband, unlinked, low");
+    expect(2, "1/32D,1/16D,3/32D,1/8D", "multiband, unlinked, mid");
+    expect(3, "1/64T,1/32T,3/64T,1/16T", "multiband, unlinked, high");
+    setParam(p, "modeH", 1.f);
+    expect(3, ",,,", "multiband, high band in Hz: no labels");
+    setParam(p, "mbLink", 1.f); setParam(p, "mbBands", 0.f);
+    expect(3, "1/8,1/4,3/8,1/2", "2 bands, linked: follows the low rate");
+    return ok;
+}
+
 // The window can be resized: every control must stay inside it, without overlapping, at the smallest and a large size.
 static bool resizeRegression()
 {
@@ -586,7 +623,7 @@ static bool undoRegression()
     p.prepareToPlay(48000.0, 512);
     EnvelopeEditor ed(p, 0);
     ed.setBounds(0, 0, 800, 400);
-    auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 390.f - y * 380.f); };
+    auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 386.f - y * 376.f); };
     bool ok = true;
     auto check = [&](bool cond, const char* what) { std::printf("  %-64s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
     auto ser = [&](int slot = 0) { return p.getEnvelope(slot).serialize(); };
@@ -713,7 +750,7 @@ static bool deletePointRegression()
     p.prepareToPlay(48000.0, 512);
     EnvelopeEditor ed(p, 0);
     ed.setBounds(0, 0, 800, 400);
-    auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 390.f - y * 380.f); };
+    auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 386.f - y * 376.f); };
     bool ok = true;
     auto check = [&](bool cond, const char* what) { std::printf("  %-64s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
     std::printf("deleting points:\n");
@@ -750,7 +787,7 @@ static bool handleSnapRegression()
     p.prepareToPlay(48000.0, 512);
     EnvelopeEditor ed(p, 0);
     ed.setBounds(0, 0, 800, 400);
-    auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 390.f - y * 380.f); };
+    auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 386.f - y * 376.f); };
     bool ok = true;
     auto check = [&](bool cond, const char* what) { std::printf("  %-64s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
     std::printf("handle snapping:\n");
@@ -879,7 +916,7 @@ int main(int argc, char** argv)
             {
                 setParam(p, "mb", mbOn ? 1.f : 0.f);
                 juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
-                juce::Component* hit = ed->getComponentAt(ed->getWidth() - 18 - 20, ed->getHeight() - 18 - 92 + 6 + 32 + 14);
+                juce::Component* hit = ed->getComponentAt(ed->getWidth() - 18 - 17, 18 + 18);
                 std::printf("bypass click target (%s tab): %s (%s)\n", mbOn ? "multiband" : "single", hit != nullptr && dynamic_cast<juce::ToggleButton*>(hit) != nullptr ? "the bypass button" : "SOMETHING ELSE", hit != nullptr ? typeid(*hit).name() : "none");
             }
             setParam(p, "mb", 0.f);
@@ -893,6 +930,10 @@ int main(int argc, char** argv)
         juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
         save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("clipper_hard.png"));
         setParam(p, "clip", 0.f);
+        setParam(p, "mbEngine", 1.f);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+        save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("multiband_dyneq.png"));
+        setParam(p, "mbEngine", 0.f);
         setParam(p, "mb", 0.f);
         setParam(p, "bypass", 1.f);
         juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
@@ -1043,7 +1084,7 @@ int main(int argc, char** argv)
             save(fe.createComponentSnapshot(fe.getLocalBounds(), true, 1.0f), dir.getChildFile("preset_popup_open.png"));
         }
     }
-    const bool rz = resizeRegression();
+    const bool rz = resizeRegression() && labelRegression();
     const bool un = undoRegression() && presetRegression() && handleSnapRegression() && deletePointRegression();
     return un && a && b && c && d && f && g && h && k && m && n && o && q && rz ? 0 : 1;
 }

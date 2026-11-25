@@ -445,6 +445,111 @@ static void testClipper()
     }
 }
 
+static void testDynamicEqMode()
+{
+    section("3f. Multiband, Dynamic EQ type (zero latency, moving shelves)");
+    const auto in = noise(48000, 31);
+    for (float bands : { 0.f, 1.f })
+    {
+        const char* n = bands > 0.5f ? "3 bands" : "2 bands";
+        Rig r; r.param("mb", 1.f); r.param("mbEngine", 1.f); r.param("mbBands", bands);
+        for (const char* id : { "depthL", "depthM", "depth" "H" }) r.param(id, 0.f);
+        r.param("linkDepth", 0.f);
+        const auto out = r.render(in);
+        check(maxDiff(out[0], in[0]) == 0.f && maxDiff(out[1], in[1]) == 0.f, fmt("%s, curves open: output equals the input bit for bit (no phase shift)", n),
+              fmt("max diff %.1e", maxDiff(out[0], in[0])));
+    }
+    {   // the filter on its own: equal gains are a plain volume change, and no setting of the gains ever boosts a tone
+        bool equalExact = true; double worstBoost = 0.0;
+        const float levels[] = { 0.f, 0.25f, 0.5f, 1.f };
+        for (bool three : { false, true })
+            for (float gl : levels) for (float gm : levels) for (float gh : levels)
+            {
+                const float top = std::max({ gl, three ? gm : 0.f, gh });
+                if (top == 0.f) continue;
+                for (double hz : { 40.0, 120.0, 200.0, 350.0, 700.0, 1500.0, 2500.0, 4000.0, 10000.0 })
+                {
+                    DynamicEq e; e.setFrequencies(200.0, 2500.0, 48000.0);
+                    const auto m = DynamicEq::mix(three, gl, gm, gh);
+                    double peak = 0.0;
+                    for (int i = 0; i < 12000; ++i)
+                    {
+                        const double x = std::sin(2.0 * 3.14159265358979323846 * hz * i / 48000.0), y = e.process(0, x, three, m);
+                        if (i > 6000) peak = std::max(peak, std::fabs(y));
+                        if (gl == gh && (!three || gl == gm) && y != (double) gh * x) equalExact = false;
+                    }
+                    worstBoost = std::max(worstBoost, db(peak / top));
+                }
+            }
+        check(equalExact, "all bands at the same gain: exactly that gain times the input");
+        check(worstBoost < 0.1, "no combination of band gains boosts a tone", fmt("worst %+.3f dB above the loudest band's gain", worstBoost));
+    }
+    {
+        auto level = [](double hz, const char* solo) {
+            Rig r; r.param("mb", 1.f); r.param("mbEngine", 1.f); r.param("linkDepth", 0.f); r.param("depthL", 0.f); r.param("depthM", 0.f); r.param("depth" "H", 0.f);
+            r.param(solo, 1.f);
+            const auto t = sine(48000, hz, 48000.0);
+            return db(rms(r.render(t)[0], 24000) / rms(t[0], 24000));
+        };
+        const double lowAt50 = level(50.0, "soloL"), lowAt8k = level(8000.0, "soloL"), highAt50 = level(50.0, "soloH"), highAt8k = level(8000.0, "soloH"), midAt700 = level(700.0, "soloM");
+        check(lowAt50 > -1.0 && lowAt8k < -50.0, "solo low keeps the lows and removes the highs", fmt("50 Hz %+.2f dB, 8 kHz %+.1f dB", lowAt50, lowAt8k));
+        check(highAt8k > -1.0 && highAt50 < -50.0, "solo high keeps the highs and removes the lows", fmt("8 kHz %+.2f dB, 50 Hz %+.1f dB", highAt8k, highAt50));
+        check(midAt700 > -3.0, "solo mid keeps the middle (200 Hz / 2.5 kHz splits)", fmt("700 Hz %+.2f dB", midAt700));
+    }
+    {
+        Rig r; r.param("mb", 1.f); r.param("mbEngine", 1.f);
+        const auto out = r.render(in);
+        check(allFinite(out[0]) && maxDiff(out[0], in[0]) > 0.05f, "the default curves duck the audio");
+        Rig s; s.param("mb", 1.f);
+        const auto split = s.render(in);
+        check(maxDiff(out[0], split[0]) > 0.01f, "the two multiband types really are different signal paths");
+    }
+}
+
+static void testTrims()
+{
+    section("3g. IN / OUT gain knobs");
+    const auto in = noise(48000, 41, 0.1f);
+    auto gainOf = [](const Stereo& out, const Stereo& src) { return db(rms(out[0], 24000) / rms(src[0], 24000)); };
+    {
+        Rig r; r.param("depth", 0.f);
+        const auto a = r.render(in);
+        check(maxDiff(a[0], in[0]) == 0.f && maxDiff(a[1], in[1]) == 0.f, "both at 0 dB: the audio is not touched");
+    }
+    for (const char* id : { "inGain", "outGain" })
+        for (float mb : { 0.f, 1.f })
+        {
+            Rig r; r.param("mb", mb); r.param("mbEngine", 1.f); r.param("depth", 0.f);
+            for (const char* d : { "depthL", "depthM", "depth" "H" }) r.param(d, 0.f);
+            r.param(id, -6.f);
+            r.render(in);
+            const double g = gainOf(r.render(in), in);
+            check(std::fabs(g + 6.0) < 0.01, fmt("%s at -6 dB, %s: level drops 6 dB", id, mb > 0.5f ? "multiband" : "single band"), fmt("%+.3f dB", g));
+            r.param(id, 0.f);
+            r.render(in);
+            const auto back = r.render(in);
+            check(maxDiff(back[0], in[0]) == 0.f, fmt("%s back at 0 dB: bit-exact again", id));
+        }
+    {
+        const auto steady = dc(9600, 0.25f);
+        Rig r; r.param("depth", 0.f);
+        r.render(steady);
+        r.param("outGain", 12.f);
+        const auto o = r.render(steady);
+        check(maxStep(o[0], 1, o[0].size()) < 0.005f, "a 12 dB jump of a knob glides without a click", fmt("largest step %.5f", maxStep(o[0], 1, o[0].size())));
+    }
+    {
+        Rig r; r.param("mb", 1.f); r.param("clip", 2.f); r.param("outGain", 24.f);
+        const auto o = r.render(noise(48000, 42, 0.8f));
+        check(maxAbs(o[0], 4800) <= 1.0001f, "OUT sits before the clipper: the 0 dB ceiling holds with OUT at +24 dB", fmt("peak %.4f", maxAbs(o[0], 4800)));
+    }
+    {
+        Rig r; r.param("inGain", -12.f); r.param("outGain", 12.f); r.param("bypass", 1.f);
+        const auto o = r.render(in);
+        check(maxDiff(o[0], in[0], 1000) == 0.f, "bypass skips both knobs");
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // 4. Block-size independence
 // ---------------------------------------------------------------------------------------------
@@ -458,6 +563,7 @@ static void testBlockSizes()
         { "single band, Hz 3.3, offset 0.2, smooth 5 ms", [](Rig& r) { r.param("mode", 1.f); r.param("hz", 3.3f); r.param("offset", 0.2f); r.param("smooth", 5.f); } },
         { "single band, Sync 1/8 triplet", [](Rig& r) { r.param("division", 6.f); r.param("triplet", 1.f); } },
         { "multiband, linked rates", [](Rig& r) { r.param("mb", 1.f); r.param("smoothM", 3.f); } },
+        { "multiband, Dynamic EQ", [](Rig& r) { r.param("mb", 1.f); r.param("mbEngine", 1.f); r.param("smoothM", 3.f); } },
         { "multiband, separate Hz rates, 48 dB slopes", [](Rig& r) {
               r.param("mb", 1.f); r.param("mbLink", 0.f); r.param("slopeLow", 3.f); r.param("slopeHigh", 3.f);
               r.param("modeL", 1.f); r.param("hzL", 1.5f); r.param("modeM", 1.f); r.param("hzM", 4.f); r.param("divH", 7.f); } },
@@ -540,6 +646,11 @@ static void testClicks()
         { "multiband: split 200 Hz -> 700 Hz", [](Rig& r) { r.param("mb", 1.f); }, [](Rig& r) { r.param("xLow", 700.f); } },
         { "multiband: split 2.5 kHz -> 700 Hz", [](Rig& r) { r.param("mb", 1.f); }, [](Rig& r) { r.param("xHigh", 700.f); } },
         { "multiband: slope 24 -> 96 dB/oct", [](Rig& r) { r.param("mb", 1.f); }, [](Rig& r) { r.param("slopeLow", 5.f); r.param("slopeHigh", 5.f); } },
+        { "multiband: Crossover -> Dynamic EQ", [](Rig& r) { r.param("mb", 1.f); }, [](Rig& r) { r.param("mbEngine", 1.f); } },
+        { "multiband: Dynamic EQ -> Crossover", [](Rig& r) { r.param("mb", 1.f); r.param("mbEngine", 1.f); }, [](Rig& r) { r.param("mbEngine", 0.f); } },
+        { "multiband: Dynamic EQ mid depth 100% -> 10%", [](Rig& r) { r.param("mb", 1.f); r.param("mbEngine", 1.f); }, [](Rig& r) { r.param("depthM", 0.1f); } },
+        { "multiband: Dynamic EQ split 200 Hz -> 700 Hz", [](Rig& r) { r.param("mb", 1.f); r.param("mbEngine", 1.f); }, [](Rig& r) { r.param("xLow", 700.f); } },
+        { "multiband: Dynamic EQ solo low on", [](Rig& r) { r.param("mb", 1.f); r.param("mbEngine", 1.f); }, [](Rig& r) { r.param("soloL", 1.f); } },
         { "multiband: 3 -> 2 bands",  [](Rig& r) { r.param("mb", 1.f); }, [](Rig& r) { r.param("mbBands", 0.f); } },
         { "switch Single -> Multiband", [](Rig&) {}, [](Rig& r) { r.param("mb", 1.f); } },
         { "switch Multiband -> Single", [](Rig& r) { r.param("mb", 1.f); }, [](Rig& r) { r.param("mb", 0.f); } },
@@ -665,12 +776,18 @@ static void testFuzz()
         long settledSamples = 0; // samples since the signal path last changed (a switch makes a short dip)
         auto structure = [&] {
             auto v = [&](const char* id) { return (int) r.p.apvts.getRawParameterValue(id)->load(); };
-            return v("bypass") * 10000 + v("mb") * 1000 + v("mbBands") * 100 + v("slopeLow") * 10 + v("slopeHigh");   // bypass counts: while bypassed the path switch is paused, so un-bypassing fades through the old path
+            return v("bypass") * 10000 + v("mbEngine") * 100000 + v("mb") * 1000 + v("mbBands") * 100 + v("slopeLow") * 10 + v("slopeHigh");   // bypass counts: while bypassed the path switch is paused, so un-bypassing fades through the old path
         };
         int lastStructure = structure();
         for (int b = 0; b < 3000; ++b)
         {
-            for (auto* prm : params) if (u(rng) < 0.15f) prm->setValueNotifyingHost(u(rng));
+            for (auto* prm : params) if (u(rng) < 0.15f)
+            {
+                const float nv = u(rng);
+                auto* pp = dynamic_cast<juce::RangedAudioParameter*>(prm);
+                if (pp != nullptr && (pp->paramID == "inGain" || pp->paramID == "outGain")) continue;   // they may boost, which this test forbids; tested in 3g
+                prm->setValueNotifyingHost(nv);
+            }
             if (structure() != lastStructure) { lastStructure = structure(); settledSamples = 0; }
             // sometimes yank the transport around too
             if (u(rng) < 0.05f) r.host.ppq = u(rng) * 400.0;
@@ -771,13 +888,15 @@ static void testTiming()
 static void testSidechainBus()
 {
     section("10. The sidechain input is for display only: it never leaks into the output");
-    for (bool multiband : { false, true })
+    for (int type : { 0, 1, 2 })
     {
+        const bool multiband = type > 0;
+        const float engine = type == 2 ? 1.f : 0.f;
         const auto a = noise(48000, 14), b = noise(48000, 15, 1.0f);
-        Rig plain; plain.param("mb", multiband ? 1.f : 0.f);
+        Rig plain; plain.param("mb", multiband ? 1.f : 0.f); plain.param("mbEngine", engine);
         const auto expect = plain.render(a);
 
-        Rig r; r.param("mb", multiband ? 1.f : 0.f);
+        Rig r; r.param("mb", multiband ? 1.f : 0.f); r.param("mbEngine", engine);
         r.p.editorOpen.store(true);   // the display analysis (incl. the kick split in Multiband) must not touch the audio either
         juce::AudioProcessor::BusesLayout layout;
         layout.inputBuses = { juce::AudioChannelSet::stereo(), juce::AudioChannelSet::stereo() };
@@ -800,7 +919,7 @@ static void testSidechainBus()
                 r.host.ppq += (double) size * kTestBpm / 60.0 / 48000.0;
             }
         check(accepted && maxDiff(out[0], expect[0]) == 0.f && maxDiff(out[1], expect[1]) == 0.f,
-              multiband ? "multiband: output identical with and without a loud sidechain" : "single band: output identical with and without a loud sidechain");
+              type == 2 ? "multiband Dynamic EQ: output identical with and without a loud sidechain" : multiband ? "multiband: output identical with and without a loud sidechain" : "single band: output identical with and without a loud sidechain");
     }
 }
 
@@ -830,18 +949,19 @@ static void testState()
 static void testRealTimeSafety()
 {
     section("12. Real-time safety: no memory allocation on the audio thread");
-    for (bool multiband : { false, true })
+    for (int type : { 0, 1, 2 })
         for (bool editorOpen : { false, true })
         for (bool bypassed : { false, true })
         {
-            Rig r; r.param("mb", multiband ? 1.f : 0.f); r.param("bypass", bypassed ? 1.f : 0.f); r.p.editorOpen.store(editorOpen);
+            const bool multiband = type > 0;
+            Rig r; r.param("mb", multiband ? 1.f : 0.f); r.param("mbEngine", type == 2 ? 1.f : 0.f); r.param("bypass", bypassed ? 1.f : 0.f); r.p.editorOpen.store(editorOpen);
             juce::AudioBuffer<float> buf(2, 512); juce::MidiBuffer midi;
             midi.addEvent(juce::MidiMessage::noteOn(1, 60, (juce::uint8) 100), 10);
             for (int i = 0; i < 200; ++i) { for (int k = 0; k < 512; ++k) { buf.setSample(0, k, 0.1f); buf.setSample(1, k, 0.1f); } r.p.processBlock(buf, midi); }
             t_isAudioThread = true; g_allocs = 0; g_otherThreadAllocs = 0; g_countAllocs = true;
             for (int i = 0; i < 2000; ++i) r.p.processBlock(buf, midi);
             g_countAllocs = false; t_isAudioThread = false;
-            check(g_allocs.load() == 0, fmt("%s, editor %s%s", multiband ? "multiband" : "single band", editorOpen ? "open" : "closed", bypassed ? ", bypassed" : ""),
+            check(g_allocs.load() == 0, fmt("%s, editor %s%s", type == 2 ? "multiband Dynamic EQ" : multiband ? "multiband" : "single band", editorOpen ? "open" : "closed", bypassed ? ", bypassed" : ""),
                   fmt("%ld allocations in 2000 blocks (%ld by other threads, not counted)", g_allocs.load(), g_otherThreadAllocs.load()));
         }
 
@@ -881,7 +1001,12 @@ static void testThreads()
             for (int i = 0; i < n; ++i) e.points.push_back({ (float) i / (float) (n - 1), u(rng), -u(rng) * 0.1f, (u(rng) - 0.5f), u(rng) * 0.1f, (u(rng) - 0.5f) });
             e.normalize();
             for (int s = 0; s < FreeLfoProcessor::numSlots; ++s) r.p.setEnvelope(e, s);
-            for (auto* prm : params) if (u(rng) < 0.1f) prm->setValueNotifyingHost(u(rng));
+            for (auto* prm : params) if (u(rng) < 0.1f)
+            {
+                auto* pp = dynamic_cast<juce::RangedAudioParameter*>(prm);
+                if (pp != nullptr && (pp->paramID == "inGain" || pp->paramID == "outGain")) continue;   // up to +48 dB would trip the runaway limit
+                prm->setValueNotifyingHost(u(rng));
+            }
         }
     });
     bool finite = true;
@@ -936,6 +1061,8 @@ static void testCpu()
         { "single band, editor open", [](Rig&) {}, true },
         { "multiband 24 dB/oct, editor closed", [](Rig& r) { r.param("mb", 1.f); }, false },
         { "multiband 96 dB/oct, editor closed", [](Rig& r) { r.param("mb", 1.f); r.param("slopeLow", 5.f); r.param("slopeHigh", 5.f); }, false },
+        { "multiband Dynamic EQ, editor closed", [](Rig& r) { r.param("mb", 1.f); r.param("mbEngine", 1.f); }, false },
+        { "multiband Dynamic EQ, editor open", [](Rig& r) { r.param("mb", 1.f); r.param("mbEngine", 1.f); }, true },
         { "multiband 96 dB/oct, editor open", [](Rig& r) { r.param("mb", 1.f); r.param("slopeLow", 5.f); r.param("slopeHigh", 5.f); }, true },
     };
     double worst = 0.0;
@@ -986,6 +1113,8 @@ int main()
     testSpectrum();
     testBypass();
     testClipper();
+    testDynamicEqMode();
+    testTrims();
     testBlockSizes();
     testSmoothingSlew();
     testClicks();

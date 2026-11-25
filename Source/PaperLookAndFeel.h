@@ -272,6 +272,53 @@ private:
     int state = 0;
 };
 
+// The very small IN / OUT gain knobs under the meters. 0 dB points straight up; double-click or Alt-click goes back there.
+class TrimKnob : public juce::Slider
+{
+public:
+    TrimKnob()
+    {
+        setSliderStyle(juce::Slider::RotaryHorizontalVerticalDrag);
+        setTextBoxStyle(juce::Slider::NoTextBox, true, 0, 0);
+        setDoubleClickReturnValue(true, 0.0, juce::ModifierKeys::altModifier);
+        setMouseDragSensitivity(220);
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    }
+
+    void paint(juce::Graphics& g) override
+    {
+        auto b = getLocalBounds().toFloat();
+        const auto readout = b.removeFromBottom(11.f);   // the value in dB, under the knob
+        const auto c = b.getCentre();
+        const float r = juce::jmin(b.getWidth(), b.getHeight()) * 0.5f - 1.5f;
+        const float sweep = juce::MathConstants<float>::pi * 0.75f;   // 135 degrees to each side of straight up
+        const float angle = (float) (valueToProportionOfLength(getValue()) * 2.0 - 1.0) * sweep;
+        const bool hot = isMouseOverOrDragging();
+
+        juce::Path track, value;
+        track.addCentredArc(c.x, c.y, r, r, 0.f, -sweep, sweep, true);
+        g.setColour(paper::line);
+        g.strokePath(track, juce::PathStrokeType(2.f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        if (std::abs(angle) > 0.01f)   // lit from straight up (0 dB) to where the knob is
+        {
+            value.addCentredArc(c.x, c.y, r, r, 0.f, juce::jmin(0.f, angle), juce::jmax(0.f, angle), true);
+            g.setColour(paper::accent);
+            g.strokePath(value, juce::PathStrokeType(2.f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
+        g.setColour(paper::panel);
+        g.fillEllipse(juce::Rectangle<float>(2.f * (r - 2.5f), 2.f * (r - 2.5f)).withCentre(c));
+        g.setColour(hot ? paper::accent : paper::text.withAlpha(0.85f));
+        const juce::Point<float> dir(std::sin(angle), -std::cos(angle));
+        g.drawLine({ c + dir * 1.f, c + dir * (r - 1.5f) }, 1.8f);
+
+        const double v = getValue();
+        const juce::String text = std::abs(v) < 0.05 ? juce::String("0.0") : (v > 0.0 ? "+" : "") + juce::String(v, 1);
+        g.setColour(hot ? paper::text : paper::sub);
+        g.setFont(fonts::regular(9.f));
+        g.drawFittedText(text, readout.toNearestInt(), juce::Justification::centred, 1, 0.8f);
+    }
+};
+
 // A rotary knob you can also type into: double-click the knob (or choose it from the right-click menu) to enter an
 // exact value; right-click also resets to the default. (Cmd / Ctrl-click still resets, like any JUCE slider.)
 class Knob : public juce::Slider

@@ -27,6 +27,8 @@ double BandStrip::splitHz(int split) const
     return threeBands() ? juce::jmin(1000.0, lo) : lo;   // matches the audio: with 3 bands the low split tops out at 1 kHz
 }
 
+bool BandStrip::dynamicEq() const { return proc.apvts.getRawParameterValue("mbEngine")->load() > 0.5f; }
+
 bool BandStrip::threeBands() const { return proc.apvts.getRawParameterValue("mbBands")->load() > 0.5f; }
 
 int BandStrip::signature() const
@@ -34,7 +36,7 @@ int BandStrip::signature() const
     const auto v = [this](const char* id) { return proc.apvts.getRawParameterValue(id)->load(); };
     return (int) (v("xLow") * 3.f + v("xHigh") * 7.f + v("mbBands") * 100003.f
                   + (v("soloL") + v("soloM") * 2.f + v("soloH") * 4.f) * 7919.f
-                  + v("slopeLow") * 1009.f + v("slopeHigh") * 2003.f + (float) paper::version * 31337.f);
+                  + v("mbEngine") * 500009.f + v("slopeLow") * 1009.f + v("slopeHigh") * 2003.f + (float) paper::version * 31337.f);
 }
 
 void BandStrip::timerCallback()
@@ -232,12 +234,16 @@ void BandStrip::paint(juce::Graphics& g)
         g.setColour(paper::ink(0.05f));
         g.drawVerticalLine((int) freqToX(f), 0.f, h);
     }
-    const float y6 = plotTop + (plotBottom - plotTop) * (6.f / 36.f);
-    g.setColour(paper::ink(0.10f));
-    g.drawHorizontalLine((int) y6, freqToX(minHz), freqToX(maxHz));
-    g.setColour(paper::sub.withAlpha(0.8f));
-    g.setFont(fonts::regular(10.f));
-    g.drawText("-6 dB", juce::Rectangle<float>(freqToX(minHz) + 4.f, y6 - 12.f, 40.f, 11.f), juce::Justification::centredLeft);
+    const bool dyn = dynamicEq();
+    if (! dyn)
+    {
+        const float y6 = plotTop + (plotBottom - plotTop) * (6.f / 36.f);
+        g.setColour(paper::ink(0.10f));
+        g.drawHorizontalLine((int) y6, freqToX(minHz), freqToX(maxHz));
+        g.setColour(paper::sub.withAlpha(0.8f));
+        g.setFont(fonts::regular(10.f));
+        g.drawText("-6 dB", juce::Rectangle<float>(freqToX(minHz) + 4.f, y6 - 12.f, 40.f, 11.f), juce::Justification::centredLeft);
+    }
 
     drawSpectrum(g, plotTop, plotBottom);
 
@@ -250,7 +256,12 @@ void BandStrip::paint(juce::Graphics& g)
         sp1.set(splitHz(0), sr, (Slope) juce::jlimit(0, numSlopes - 1, juce::roundToInt(v("slopeLow"))));
         sp2.set(juce::jmax((double) v("xHigh"), splitHz(0) * 1.2), sr, (Slope) juce::jlimit(0, numSlopes - 1, juce::roundToInt(v("slopeHigh"))));
 
+        const double f2 = juce::jmax((double) v("xHigh"), splitHz(0) * 1.2);
         auto magnitude = [&](int band, double hz) {
+            if (dyn)   // what you hear with only this band open: the response of the Dynamic EQ's shelves
+            {
+                return DynamicEq::soloMagnitude(band, hz, splitHz(0), f2, three, sr);
+            }
             if (band == 0) return sp1.lowMagnitude(hz, sr);
             if (!three) return sp1.highMagnitude(hz, sr);
             return band == 1 ? sp1.highMagnitude(hz, sr) * sp2.lowMagnitude(hz, sr)
@@ -311,13 +322,16 @@ void BandStrip::paint(juce::Graphics& g)
         g.drawVerticalLine((int) x, 0.f, h);
 
         const auto chip = slopeChip(x);
-        g.setColour(paper::panel);
-        g.fillRoundedRectangle(chip, 9.f);
-        g.setColour(paper::text.withAlpha(0.7f));
-        g.drawRoundedRectangle(chip, 9.f, 1.f);
-        g.setColour(paper::text);
-        g.setFont(fonts::semibold(11.f));
-        g.drawText(slopeText[juce::jlimit(0, numSlopes - 1, juce::roundToInt(v(i == 0 ? "slopeLow" : "slopeHigh")))], chip, juce::Justification::centred);
+        if (! dynamicEq())   // the Dynamic EQ has one fixed slope, so there is nothing to choose
+        {
+            g.setColour(paper::panel);
+            g.fillRoundedRectangle(chip, 9.f);
+            g.setColour(paper::text.withAlpha(0.7f));
+            g.drawRoundedRectangle(chip, 9.f, 1.f);
+            g.setColour(paper::text);
+            g.setFont(fonts::semibold(11.f));
+            g.drawText(slopeText[juce::jlimit(0, numSlopes - 1, juce::roundToInt(v(i == 0 ? "slopeLow" : "slopeHigh")))], chip, juce::Justification::centred);
+        }
 
         // No drag knob: the split line itself is the handle. The frequency chip sits at its foot.
         const auto label = juce::Rectangle<float>(x - 28.f, h - 22.f, 56.f, 15.f);
@@ -346,7 +360,7 @@ void BandStrip::mouseDown(const juce::MouseEvent& e)
         }
 
     for (int i = 0; i < count - 1; ++i) // the pill on a split line opens that split's slope menu
-        if (slopeChip(freqToX(splitHz(i))).contains(e.position))
+        if (! dynamicEq() && slopeChip(freqToX(splitHz(i))).contains(e.position))
         {
             openSlopeMenu(i);
             return;
@@ -402,7 +416,7 @@ void BandStrip::mouseMove(const juce::MouseEvent& e)
     for (int i = 0; i < count - 1 && !overLine; ++i)
     {
         const double hz = splitHz(i);
-        overLine = std::abs(freqToX(hz) - e.position.x) < 8.f && !slopeChip(freqToX(hz)).contains(e.position);
+        overLine = std::abs(freqToX(hz) - e.position.x) < 8.f && (dynamicEq() || !slopeChip(freqToX(hz)).contains(e.position));
     }
     setMouseCursor(overLine ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::NormalCursor);
 }
@@ -427,6 +441,9 @@ MultibandPanel::MultibandPanel(FreeLfoProcessor& p) : proc(p), strip(p), curve(p
 
     modeBox.addItemList({ "Sync", "Hz" }, 1);
     bandsBox.addItemList({ "2 bands", "3 bands" }, 1);
+    engineBox.addItemList({ "Crossover", "Dynamic EQ" }, 1);
+    engineBox.setTooltip("Crossover: splits the audio into bands. Steep, selectable slopes.\n"
+                         "Dynamic EQ: moving shelves, zero latency. No phase shift while the curves are open; gentle 12 dB slopes.");
     for (auto* b : { &dotBtn, &tripBtn }) { b->setClickingTogglesState(true); b->onStateChange = [this] { rate.updateText(); }; addAndMakeVisible(*b); }
     dotBtn.onClick = [this] { if (dotBtn.getToggleState()) tripBtn.setToggleState(false, juce::sendNotificationSync); rate.updateText(); };
     tripBtn.onClick = [this] { if (tripBtn.getToggleState()) dotBtn.setToggleState(false, juce::sendNotificationSync); rate.updateText(); };
@@ -460,6 +477,7 @@ MultibandPanel::MultibandPanel(FreeLfoProcessor& p) : proc(p), strip(p), curve(p
         l.b->onClick = [this, b = l.b, base = l.base, id = l.id] { if (b->getToggleState()) copyToLinkSource(base, id); };
     }
     bandsA = std::make_unique<CA>(proc.apvts, "mbBands", bandsBox);
+    engineA = std::make_unique<CA>(proc.apvts, "mbEngine", engineBox);
     linkBtn.setTooltip("Link rates: every band shares one rate");
     addAndMakeVisible(linkBtn);
     linkA = std::make_unique<BA>(proc.apvts, "mbLink", linkBtn);

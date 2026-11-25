@@ -209,10 +209,11 @@ int main()
     }
     std::printf("multiband checks: %s\n", mbOk ? "OK" : "FAILED");
 
+    for (bool dyn : { false, true })
     for (bool editor : { false, true })
     {
         FreeLfoProcessor p; FakeHost host;
-        p.setPlayHead(&host); mbSetup(p); p.editorOpen.store(editor);
+        p.setPlayHead(&host); mbSetup(p); setParam(p, "mbEngine", dyn ? 1.f : 0.f); p.editorOpen.store(editor);
         juce::AudioBuffer<float> buf(2, blockSize); juce::MidiBuffer midi; juce::Random rng(3);
         for (int i = 0; i < 200; ++i) { for (int ch = 0; ch < 2; ++ch) for (int k = 0; k < blockSize; ++k) buf.setSample(ch, k, rng.nextFloat() * 2.f - 1.f); p.processBlock(buf, midi); }
         double total = 0.0;
@@ -225,8 +226,8 @@ int main()
             total += std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
         }
         const double perBlockUs = total / blocks * 1e6;
-        std::printf("Multiband (3 bands), editor %s  %7.2f us/block  %6.2f ns/sample  %.3f%% of one core\n",
-                    editor ? "open  " : "closed", perBlockUs, perBlockUs * 1000.0 / blockSize, 100.0 * perBlockUs / (blockSize / sr * 1e6));
+        std::printf("Multiband (3 bands)%s, editor %s  %7.2f us/block  %6.2f ns/sample  %.3f%% of one core\n",
+                    dyn ? " Dynamic EQ" : "           ", editor ? "open  " : "closed", perBlockUs, perBlockUs * 1000.0 / blockSize, 100.0 * perBlockUs / (blockSize / sr * 1e6));
     }
 
     // Sanity: a constant signal through a 1 Hz LFO at full depth must sweep the whole 0..1 range

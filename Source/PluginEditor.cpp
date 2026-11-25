@@ -74,10 +74,13 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     addAndMakeVisible(inMeter);
     addAndMakeVisible(outMeter);
     addAndMakeVisible(mbPanel);
+    addAndMakeVisible(inTrim);
+    addAndMakeVisible(outTrim);
     addAndMakeVisible(clipBtn);
     addAndMakeVisible(bypassBtn);   // after the panel, so it sits on top of it
     addChildComponent(mbPanel.modeBox);    // the multiband tab's Sync/Hz and band-count dropdowns sit in this header, like the single tab's
     addChildComponent(mbPanel.bandsBox);
+    addChildComponent(mbPanel.engineBox);
 
     mode.addItemList({ "Sync", "Hz" }, 1);
     addAndMakeVisible(mode);
@@ -140,6 +143,12 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
 
     // Tabs: Single = the original one-curve LFO (bit-exact pass-through), Multiband = per-band curves
     bypassA = std::make_unique<BA>(proc.apvts, "bypass", bypassBtn);
+    for (auto* k : { &inTrim, &outTrim })
+    {
+        const bool in = k == &inTrim;
+        auto& a = in ? inTrimA : outTrimA;
+        a = std::make_unique<SA>(proc.apvts, in ? "inGain" : "outGain", *k);
+    }
     {
         auto* clipParam = proc.apvts.getParameter("clip");
         clipA = std::make_unique<juce::ParameterAttachment>(*clipParam, [this](float v) { clipBtn.setMode(juce::roundToInt(v)); });
@@ -204,6 +213,7 @@ void FreeLfoEditor::updateTab()
     mbPanel.setVisible(mb);
     mbPanel.modeBox.setVisible(mb);
     mbPanel.bandsBox.setVisible(mb);
+    mbPanel.engineBox.setVisible(mb);
 
     if (mb) { retrigger.setVisible(false); dotBtn.setVisible(false); tripBtn.setVisible(false); }
     else bindRate(); // restores the retrigger switch for Hz mode, and relayouts
@@ -272,10 +282,14 @@ void FreeLfoEditor::resized()
         mbPanel.modeBox.setBounds(top.removeFromLeft(80).reduced(0, 4));
         top.removeFromLeft(8);
         mbPanel.bandsBox.setBounds(top.removeFromLeft(92).reduced(0, 4));
+        top.removeFromLeft(8);
+        mbPanel.engineBox.setBounds(top.removeFromLeft(112).reduced(0, 4));
     }
-    // Right-hand group, right to left: Reset | light-dark button | Snap switch + grid number | Bezier switch | retrigger.
+    // Right-hand group, right to left: bypass | Reset | light-dark button | Snap switch + grid number | Bezier switch | retrigger.
     // Items of a pair sit close together; groups are an even 16 px apart.
     constexpr int gap = 16;
+    bypassBtn.setBounds(top.removeFromRight(34).withSizeKeepingCentre(34, 28));   // the top right corner, in both tabs
+    top.removeFromRight(8);
     reset.setBounds(top.removeFromRight(70).reduced(0, 4));
     top.removeFromRight(12);
     themeBtn.setBounds(top.removeFromRight(24).withSizeKeepingCentre(22, 22));
@@ -295,10 +309,12 @@ void FreeLfoEditor::resized()
 
     r.removeFromTop(8);
     clipBtn.setVisible(mb);
-    clipBtn.setBounds(r.getRight() - 40, r.getBottom() - 92 + 6, 40, 28);   // multiband only, above the bypass button
-    clipBtn.toFront(false);
-    bypassBtn.setBounds(r.getRight() - 40, r.getBottom() - 92 + 6 + 32, 40, 28);   // under the IN / OUT meters, in both tabs
-    bypassBtn.toFront(false);   // above the knob row of the single tab, which otherwise catches the clicks
+    // under the meters: the two trims with their values (each below its own meter), then the clipper (multiband)
+    inTrim.setBounds(r.getRight() - 44, r.getBottom() - 92 - 2, 24, 33);
+    outTrim.setBounds(r.getRight() - 20, r.getBottom() - 92 - 2, 24, 33);
+    inTrim.toFront(false);
+    outTrim.toFront(false);
+    clipBtn.setBounds(r.getRight() - 40, r.getBottom() - 92 + 40, 40, 28);
     if (mb) { mbPanel.setBounds(r); return; }
 
     auto knobs = r.removeFromBottom(92);   // compact knobs: more room for the curve
@@ -328,6 +344,7 @@ void FreeLfoEditor::resized()
     place(smoothL, smooth);
     place(offsetL, offset);
     place(waveL, wave);
+    wave.setBounds(wave.getBounds().reduced(44, 0));   // same centre, but its click area stays clear of the gain knobs under the meters
 }
 
 bool FreeLfoEditor::keyPressed(const juce::KeyPress& k)

@@ -29,6 +29,7 @@ It is an independent, from-scratch implementation inspired by the workflow of Xf
 - **Simple mode**: one draggable diamond per segment instead of handles. It reaches much sharper bends than the handles can, and switching between the two styles converts your curve so it stays editable.
 - Delete a point with a double-click (the first and last points stay), straighten a Simple-mode segment by double-clicking its diamond, toggle easy-ease by double-clicking the first or last point.
 - **Grid and snapping**: snapping is off by default; hold **Option (macOS) / Alt (Windows)** to snap, or turn the **Snap** switch on to reverse that. A draggable number sets how many grid lines there are (2, 3, 4, 6, 8, 12, 16, 24, 32, 36, 48, 64) and snapping lands exactly on the drawn lines.
+- In Sync mode, **very small note values under the graph** mark the quarters of the cycle (at a 1/4 rate: 1/16, 1/8, 3/16, 1/4; dotted and triplet rates add D or T), so you can find the middle at a glance. They are hidden in Hz mode.
 - **Undo / redo** for every edit (Ctrl/Cmd+Z, Shift+Ctrl/Cmd+Z or Ctrl+Y, or the arrows in the header): one step per drag, includes reset and the Bezier switch, and keeps the last 50 steps (about 40 KB).
 - **Presets and copy/paste** from the header's curve button: 20 factory shapes (house pump, soft and hard duck, long release, pump x2, nine kick-style rise/hold/drop shapes, sine, triangle, saws, flat) shown as small curve thumbnails, **Save curve as preset...** for your own, **Copy curve** and **Paste curve** (works between plugin instances and projects). A preset or pasted curve replaces only the curve you are editing (the selected band in Multiband) and is undoable.
 - Click empty space to hide every point and handle and see the bare curve; click the curve to bring them back.
@@ -41,7 +42,8 @@ It is an independent, from-scratch implementation inspired by the workflow of Xf
 
 **Multiband**
 - Split into **low / mid / high** (or just low / high) with draggable split lines on a frequency strip. A **live spectrum** runs behind the band curves, so you can see where to split: the input as a grey fill, and the output (after the ducking) as a bright blue line, so you can see what the LFO does to your balance. With two bands the split goes up to 12 kHz; with three, the low split tops out at 1 kHz.
-- Each split has its own crossover slope: **6, 12, 24, 48, 72 or 96 dB/octave** (Linkwitz-Riley, so the bands add back to a flat response).
+- Two **multiband types**, chosen in the header: **Crossover** (the default) splits the audio into bands and adds them back together, with steep, selectable slopes. **Dynamic EQ** leaves the audio unsplit and turns ranges down with moving shelves: zero latency, and while the curves are open the output is the input bit for bit, so there is no phase shift to soften transients. Phase only shifts while the bands are at different levels. The trade-off is a fixed, gentle slope (about 12 dB/octave), so ducking one band reaches further into its neighbours, and with three bands and splits close together the mid band gets less deep and less distinct.
+- In Crossover, each split has its own slope: **6, 12, 24, 48, 72 or 96 dB/octave** (Linkwitz-Riley, so the bands add back to a flat response).
 - Every band has its **own curve**, its own **rate** (or link them all), its own depth, smoothing and phase offset, and a **solo** button; solo several bands at once. A small chain beside the Depth, Smooth and Offset knobs links that control, so every band follows one value.
 - The strip draws each band's real filter response, so you can see how the bands overlap at each slope.
 - Defaults are a house-style sidechain pump where the lows stay ducked longest and the highs recover fastest.
@@ -51,13 +53,16 @@ It is an independent, from-scratch implementation inspired by the workflow of Xf
 - An optional sidechain input is drawn in amber: route a kick from another mixer channel into the plugin's sidechain and you see it against your curve (display only, it never changes the sound). Where the kick and the plugin's output are both loud at the same position in the cycle, that stretch is **hatched**: a conflict between the two. The output is measured after the ducking, so a spot where your curve really ducks under the kick is not marked. In Multiband the kick is split into the same bands, so each band is compared with the matching part of the kick (the lows against the kick's lows).
 - A thin **end-of-cycle meter** beside the curve shows where the output signal (the input after the plugin's ducking, -1 to +1, same scale as the scope) was at the last point of the cycle, right when the curve drops: the big arrow pointing at the curve is the newest cycle, the small ones the cycles before. An arrow near the centre line is safe (green); one far from it turns amber, then red, and means a bass note is still swinging when the gain falls, which is where clicks come from. Duck harder at the end of the curve, ease the fall, or add a little Smooth, and watch the arrow settle at the middle. Click the meter to show an **end-zone bar** next to the arrow (hidden by default, and remembered with the project): a thin bar that spans the lowest to the highest output level over the last 4% of the cycle (it grows at once and falls back slowly, and the arrow glides to each new value), to catch heavy ducking that happens just before the end: a long red bar means the signal is still loud while the gain drops, even if the arrow itself sits at the middle. In Multiband the meter follows the selected band.
 - **IN / OUT meters** on the right are analog-style stacks of squares (mostly green, then yellow, with one red square at the top that lights at about 0 dBFS), with a soft glow on the lit squares. They show the peak level going in and coming out. They are built for loud material: 26 squares, 1.5 dB apart in the top third, a fast fall (80 dB/s) and a red square that follows the signal like the rest, so they keep moving on a loud, pumping mix.
-- In the multiband view, a **CLIP** button above the bypass button (off by default) cycles an output clipper: Off, Soft (linear up to -2 dB, then a smooth shoulder) or Hard (flat at 0 dB). Re-summing the bands can push the output past the input's peaks, and this keeps it from going over 0 dB.
-- A **bypass** button (power icon) under the meters passes the audio through untouched, with a 10 ms crossfade so it never clicks, and no CPU use while it is bypassed. It is also the host's bypass: the host's own bypass button drives the same switch.
+- Two small **input and output gain** knobs sit right under the meters (-24 to +24 dB, 0 dB pointing up, with the value written under each; double-click or Alt/Option-click returns them there). Input gain comes before everything else, so the meters and displays show the adjusted signal. Output gain comes before the clipper.
+- In the multiband view, a **CLIP** button under the gain knobs (off by default) cycles an output clipper: Off, Soft (linear up to -2 dB, then a smooth shoulder) or Hard (flat at 0 dB). Re-summing the bands can push the output past the input's peaks, and this keeps it from going over 0 dB.
+- A **bypass** button (power icon) in the top right corner, beside Reset, passes the audio through untouched, with a 10 ms crossfade so it never clicks, and no CPU use while it is bypassed. It is also the host's bypass: the host's own bypass button drives the same switch.
 - A grey line shows the **actual gain** after Depth, Smooth and Offset; the output waveform is the input multiplied by exactly that gain.
 - Light and dark themes (dark is the default, the choice is remembered).
 - **Resizable window** (880x500 up to 2000x1300): drag the bottom-right corner; the size is remembered.
 
 ![Multiband, dark theme: live input / output spectrum behind the band curves](docs/images/multiband-dark.png)
+
+![Multiband, Dynamic EQ type: one fixed gentle slope, so there are no slope pills](docs/images/multiband-dyneq-dark.png)
 
 ![A kick routed through the sidechain, with the overlap with the bass hatched](docs/images/kick-overlap-dark.png)
 
@@ -94,26 +99,27 @@ Only the VST3 format is built (plus a standalone app for development). AU, AAX a
 | Drag a diamond (Simple mode) | Bend that segment through the point; double-click to straighten |
 | Drag the number next to **Snap** | Change the number of grid lines |
 | Wave icon (top left) | Switch between **Single** (one wave) and **Multiband** (three stacked waves); the icon shows the current mode |
-| CLIP button (multiband, above the power button) | Cycle the output clipper: Off / Soft / Hard |
-| Power button (under the meters) | Bypass |
+| Small knobs under the meters | Input / output gain; double-click or Alt/Option-click resets to 0 dB |
+| CLIP button (multiband, under the gain knobs) | Cycle the output clipper: Off / Soft / Hard |
+| Power button (top right) | Bypass |
 | Click the end-of-cycle meter | Show or hide the end-zone bar |
 | Half-moon button | Light / dark theme |
 | **Reset** | Restore the current curve to its default |
 
 **Rate knob.** In Sync mode it steps through the straight note values from slow to fast; the **•** (dotted) and **3** (triplet) buttons next to it modify the value. In Hz mode it is a continuous frequency.
 
-**Multiband tab.** Click a coloured region on the strip to edit that band, drag a split line to move it, click the pill on a split line to pick its slope, and use the **S** chips to solo bands. The knobs below belong to the selected band. The chain beside each of Rate, Depth, Smooth and Offset links that control: every band then follows one value (the mid band's, or the low band's in 2-band mode), and turning a link on copies the value you were looking at.
+**Multiband tab.** Click a coloured region on the strip to edit that band, drag a split line to move it, click the pill on a split line to pick its slope (Crossover only), and use the **S** chips to solo bands. The knobs below belong to the selected band. The chain beside each of Rate, Depth, Smooth and Offset links that control: every band then follows one value (the mid band's, or the low band's in 2-band mode), and turning a link on copies the value you were looking at.
 
 ## How it sounds: the design rules
 
 These are the promises the plugin is built to keep, and the test suite checks each of them.
 
-- **It can only turn things down.** The gain is `1 - depth x (1 - curve)`, always between 0 and 1.
+- **The LFO can only turn things down.** Its gain is `1 - depth x (1 - curve)`, always between 0 and 1. Only the input and output gain knobs can add level, and at 0 dB they don't touch the audio.
 - **100% is a perfect null.** With a curve at 100% or with Depth at 0, the output is bit-for-bit identical to the input, including after you change settings and they settle.
 - **0% is silence.** A curve at 0 gives exactly zero output, not a faint residue.
-- **No clicks.** Anything that makes the LFO value jump (new rate, mode, offset, depth, a transport jump or a MIDI restart) glides over a few milliseconds, even with Smooth at 0. Solo and band changes fade. Moving a split frequency glides. Switching the tab, the band count or a slope dips the output for about 8 ms instead of clicking.
+- **No clicks.** Anything that makes the LFO value jump (new rate, mode, offset, depth, a transport jump or a MIDI restart) glides over a few milliseconds, even with Smooth at 0. Solo and band changes fade. Moving a split frequency glides. Switching the tab, the multiband type, the band count or a slope dips the output for about 8 ms instead of clicking.
 - **The result does not depend on the host's block size.** One block of 8192 samples and 1-sample blocks give the same audio.
-- **Multiband is transparent.** With flat curves the bands add back to the input's level to within 0.001 dB; only the phase is shifted, as with any crossover.
+- **Multiband is transparent.** With flat curves, Crossover adds the bands back to the input's level to within 0.001 dB; only the phase is shifted, as with any crossover (the 6 dB slope shifts none). Dynamic EQ with flat curves is bit-for-bit identical to the input.
 - **It cannot blow up.** The crossover is stable at every slope, split and sample rate (22 to 192 kHz), NaN and infinity in the input are removed before they reach the filters, and an unstable filter is detected and restarted.
 - **Real-time safe.** No memory is allocated on the audio thread, the curve editor hands curves to the audio thread without locks, and flush-to-zero keeps denormals from costing CPU.
 
@@ -122,6 +128,7 @@ These are the promises the plugin is built to keep, and the test suite checks ea
 - **Curve model**: cubic Bezier segments between points (plus an optional exponential bend per segment for Simple mode). The curve is baked into a 2048-entry table whenever you edit it; the audio thread picks up a finished table with a try-lock and never waits.
 - **Timing**: in Sync mode the LFO phase is computed from the host's song position, so it is sample-accurate and survives any relocation. In Hz mode (or when the transport is stopped) a phase accumulator runs freely.
 - **Crossover**: Linkwitz-Riley filters built from cascaded Butterworth biquads in double precision (a first-order pair for 6 dB). In three-band mode the low band also passes through an allpass copy of the upper split, which keeps the sum flat. The two splits can have different slopes.
+- **Dynamic EQ**: one 2nd-order state-variable filter per split. The filters depend only on the split frequencies; the band gains only change how their outputs are mixed with the input (the geometric mean of two neighbouring gains weights the middle term). So the gains can move every sample, all the way to 0, with nothing to destabilise, equal gains are a plain volume change, and in the tests no combination of gains boosts a tone by more than 0.01 dB.
 - **Smoothing**: a one-pole smoother that is guaranteed to land exactly on its target (a plain one-pole stalls a few units short, which would break the null).
 - **UI**: the grid, curve and handles are drawn once into cached images; each frame only blits those and draws the playhead and waveform. Redraws are tied to the display refresh, capped at about 60 fps, and skipped when nothing is moving.
 
@@ -135,7 +142,9 @@ Share of **one CPU core**, measured by the offline test suite on an Apple Silico
 | Single band, editor open | 0.07% | 0.08% | 0.16% | 0.32% |
 | Multiband 24 dB/oct, editor closed | 0.17% | 0.18% | 0.37% | 0.73% |
 | Multiband 96 dB/oct (heaviest), editor closed | 0.49% | 0.51% | 1.02% | 2.02% |
-| Multiband 96 dB/oct, editor open | 0.52% | 0.56% | 1.11% | 2.19% |
+| Multiband 96 dB/oct, editor open | 0.51% | 0.55% | 1.10% | 2.15% |
+| Multiband Dynamic EQ, editor closed | 0.08% | 0.09% | 0.17% | 0.35% |
+| Multiband Dynamic EQ, editor open | 0.14% | 0.14% | 0.28% | 0.53% |
 | Bypassed | ~0% | ~0% | ~0% | ~0% |
 
 (512-sample blocks; 32-sample blocks cost up to about 30% more.) The editor only costs anything while it is open (the waveform, spectrum and meters are only analysed then), and a bypassed plugin does nothing at all. These figures are from one machine and will differ on yours, but the ratios hold: single band is almost free, and the heaviest multiband setting at 192 kHz is still around 2% of a core.
@@ -146,7 +155,7 @@ Everything below runs offline, without a DAW or a sound card. A small **fake DAW
 
 | Program | What it checks | How to run |
 |---|---|---|
-| `LfoAudioTest` | **139 audio checks**: bit-exact null at 100%, exact silence at 0%, transparency of every crossover slope, block-size independence, clicks on 24 kinds of parameter change, filter stability across 4 sample rates, NaN/Inf and zero-length blocks, a fuzz test that randomises every parameter and the transport, tempo accuracy at 130 bpm, Hz accuracy, MIDI restart, the sidechain bus, bypass (bit-exact, click-free, allocation-free), the output clipper, the peak meters and the spectrum analyser, state save/load, zero allocations on the audio thread, thread safety while the curve is edited, CPU worst cases and denormals | `build/LfoAudioTest_artefacts/Release/LfoAudioTest` |
+| `LfoAudioTest` | **171 audio checks**: bit-exact null at 100%, exact silence at 0%, transparency of every crossover slope, the Dynamic EQ (bit-exact when open, never boosting, band isolation), block-size independence, clicks on 30 kinds of parameter change, filter stability across 4 sample rates, NaN/Inf and zero-length blocks, a fuzz test that randomises every parameter and the transport, tempo accuracy at 130 bpm, Hz accuracy, MIDI restart, the sidechain bus, bypass (bit-exact, click-free, allocation-free), the output clipper, the input and output gain knobs, the peak meters and the spectrum analyser, state save/load, zero allocations on the audio thread, thread safety while the curve is edited, CPU worst cases and denormals | `build/LfoAudioTest_artefacts/Release/LfoAudioTest` |
 | `tests/envelope_test.cpp` | The curve model: Bezier evaluation, Simple-mode bends, conversions between the two, the default curves, saving and loading | `clang++ -std=c++17 tests/envelope_test.cpp -o envtest && ./envtest` |
 | `tests/crossover_test.cpp` | The crossover maths for all six slopes, mixed slopes, and the drawn response curves | `clang++ -std=c++17 tests/crossover_test.cpp -o xotest && ./xotest` |
 | `LfoBench` | CPU per block (including the bypassed and editor-open cases), plus quick null and multiband sanity checks | `build/LfoBench_artefacts/Release/LfoBench` |
@@ -178,6 +187,7 @@ Source/
   PluginProcessor.*     audio engine: single band, multiband, smoothing, declick, state
   Envelope.h            the curve model (no JUCE; unit-testable)
   Crossover.h           the Linkwitz-Riley band splitter (no JUCE; unit-testable)
+  DynamicEq.h           the zero-latency Dynamic EQ multiband type (no JUCE)
   Spectrum.h            FFT analyser for the live spectrum (no JUCE; allocation-free)
   PluginEditor.*        the window: header, tabs, knobs
   EnvelopeEditor.*      the curve editor (points, handles, snapping, drawing)
@@ -195,7 +205,7 @@ docs/images/            screenshots used in this README
 
 - **Tested mostly in FL Studio on Windows.** It is developed on macOS and checked offline against a simulated host; Windows builds come from CI and have been used in FL Studio. Other DAWs (Ableton, Logic, Reaper, Bitwig) and other operating systems have not been tried by hand yet.
 - **The sidechain input is display-only.** It lets you see a kick against your curve and where it conflicts with your sound, but it does not trigger the LFO. Use the host tempo, or MIDI in Hz mode.
-- **Structural switches dip the audio** for about 8 ms (the tab, the band count and the crossover slopes). It is click-free but not seamless; change them when the plugin is not playing a critical passage.
+- **Structural switches dip the audio** for about 8 ms (the tab, the multiband type, the band count and the crossover slopes). It is click-free but not seamless; change them when the plugin is not playing a critical passage.
 - **Bypass stops the LFO.** While bypassed nothing is processed, so the free-running phase (Hz mode) pauses; in Sync mode the LFO follows the host position and stays on the beat.
 - **Not built yet:** a full preset browser (folders, rename), copy/paste of whole multiband setups, audio or envelope triggering, other formats (AU, AAX, CLAP).
 

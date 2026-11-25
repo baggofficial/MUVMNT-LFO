@@ -59,13 +59,13 @@ void EnvelopeEditor::resetCurve()
 
 juce::Point<float> EnvelopeEditor::toScreen(float x, float y) const
 {
-    auto b = getLocalBounds().toFloat().reduced(10.f);
+    const auto b = plotBounds();
     return { b.getX() + x * b.getWidth(), b.getBottom() - y * b.getHeight() };
 }
 
 juce::Point<float> EnvelopeEditor::toNorm(juce::Point<float> p) const
 {
-    auto b = getLocalBounds().toFloat().reduced(10.f);
+    const auto b = plotBounds();
     return { juce::jlimit(0.f, 1.f, (p.x - b.getX()) / b.getWidth()),
              juce::jlimit(0.f, 1.f, (b.getBottom() - p.y) / b.getHeight()) };
 }
@@ -248,6 +248,37 @@ bool EnvelopeEditor::rainbowFill(float alpha, juce::FillType& out) const
 
 // Everything that only changes when the user edits (grid, curve, handles, gain preview) is drawn
 // once into cached images; each frame then only blits those and redraws what really moves.
+std::array<juce::String, 4> EnvelopeEditor::positionLabels() const
+{
+    std::array<juce::String, 4> out;
+    auto value = [this](const juce::String& id) { return proc.apvts.getRawParameterValue(id)->load(); };
+    juce::String suffix; // which rate drives this curve: its own, or in a linked Multiband the mid (2 bands: low) band's
+    if (slot > 0)
+    {
+        const int source = value("mbLink") > 0.5f ? (bandsP->load() > 0.5f ? 1 : 0) : slot - 1;
+        suffix = FreeLfoProcessor::bandSuffix(source);
+    }
+    const bool single = slot == 0; // the bands' rate parameters have shorter names than the single curve's
+    if (value("mode" + suffix) > 0.5f) return out; // Hz: the cycle is not a note value
+
+    const double beats = FreeLfoProcessor::divisionBeats[(size_t) juce::jlimit(0, FreeLfoProcessor::numDivisions - 1, (int) value(juce::String(single ? "division" : "div") + suffix))];
+    const juce::String mark = value(juce::String(single ? "dotted" : "dot") + suffix) > 0.5f ? "D" : value(juce::String(single ? "triplet" : "trip") + suffix) > 0.5f ? "T" : ""; // like the Rate knob
+    for (int k = 1; k <= 4; ++k)
+    {
+        const double whole = beats * k / 16.0; // beats are quarter notes: a quarter of the cycle, in whole notes (bars)
+        juce::String text;
+        if (whole >= 1.0) text = juce::String(whole) + (whole > 1.0 ? " bars" : " bar");
+        else
+        {
+            int num = juce::roundToInt(whole * 256.0), den = 256;
+            while (num % 2 == 0 && den > 1) { num /= 2; den /= 2; }
+            text = juce::String(num) + "/" + juce::String(den);
+        }
+        out[(size_t) (k - 1)] = text + mark;
+    }
+    return out;
+}
+
 void EnvelopeEditor::renderGrid(juce::Graphics& g)
 {
     auto area = getLocalBounds().toFloat();
@@ -273,6 +304,16 @@ void EnvelopeEditor::renderGrid(juce::Graphics& g)
         g.drawLine(a.x, crisp(a.y), b.x, crisp(b.y), 1.f);
     }
 
+    // very small note values under the graph, to find your way in the cycle (drawn at the quarters, whatever the grid is)
+    const auto labels = positionLabels();
+    g.setFont(fonts::regular(8.5f));
+    g.setColour(paper::sub.withAlpha(0.85f));
+    for (int k = 1; k <= 4; ++k)
+    {
+        const auto at = toScreen((float) k / 4.f, 0.f);
+        const auto box = juce::Rectangle<float>(48.f, 10.f).withPosition(k == 4 ? at.x - 48.f : at.x - 24.f, area.getBottom() - 10.5f);
+        g.drawText(labels[(size_t) (k - 1)], box, k == 4 ? juce::Justification::centredRight : juce::Justification::centred, false);
+    }
 }
 
 // The input signal is drawn faint and the output (input x the gain the plugin really applies) on top of it, so the
@@ -587,7 +628,7 @@ void EnvelopeEditor::frame()
     const unsigned blk = proc.blockCounter.load(std::memory_order_relaxed);
     const bool audioMoving = blk != lastBlock || (now - proc.uiPhaseTimeMs.load(std::memory_order_relaxed)) < 60.0;
     lastBlock = blk;
-    if (audioMoving || computeKey() != curveKey || cachedGrid != gridX() || cachedTheme != paper::version) repaint();
+    if (audioMoving || positionLabels()[3] != cachedLabels || computeKey() != curveKey || cachedGrid != gridX() || cachedTheme != paper::version) repaint();
 }
 
 void EnvelopeEditor::paint(juce::Graphics& g)
@@ -603,10 +644,12 @@ void EnvelopeEditor::paint(juce::Graphics& g)
     };
 
     const bool sizeChanged = !gridImg.isValid() || gridImg.getWidth() != pw || gridImg.getHeight() != ph;
-    if (sizeChanged || cachedGrid != gridX() || cachedTheme != paper::version) // the grid is cached too: redraw when its lines or the theme change
+    const auto labelNow = positionLabels()[3]; // the end label changes with every rate, dotted, triplet or Hz change
+    if (sizeChanged || labelNow != cachedLabels || cachedGrid != gridX() || cachedTheme != paper::version) // the grid is cached too: redraw when its lines or the theme change
     {
         rebuild(gridImg, [this](juce::Graphics& ig) { renderGrid(ig); });
         cachedGrid = gridX();
+        cachedLabels = labelNow;
         cachedTheme = paper::version;
         curveKey = 0;
     }

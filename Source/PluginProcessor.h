@@ -5,6 +5,7 @@
 #include <atomic>
 #include "Envelope.h"
 #include "Crossover.h"
+#include "DynamicEq.h"
 
 class FreeLfoProcessor : public juce::AudioProcessor
 {
@@ -129,15 +130,16 @@ private:
     struct HostInfo { double bpm = 120.0, ppq = 0.0; bool havePpq = false, playing = false; };
     void processSingle(juce::AudioBuffer<float>& main, const HostInfo& host, const juce::MidiBuffer& midi, int midiOffset,
                        const float* const* scData, int scChannels);
+    template <bool useDynamicEq> // two compiled copies, so the crossover path carries nothing of the other one
     void processMultiband(juce::AudioBuffer<float>& buf, const HostInfo& host, const float* const* scData, int scChannels);
 
     // Structure = things that rebuild the signal path. Changing them while playing would click, so the output dips
     // to silence for a few ms around the switch (old path fades out, new path fades in).
     struct Structure
     {
-        bool multiband = false, three = true;
+        bool dynEq = false; bool multiband = false, three = true;
         int slopeLow = 2, slopeHigh = 2;
-        bool operator==(const Structure& o) const { return multiband == o.multiband && three == o.three && slopeLow == o.slopeLow && slopeHigh == o.slopeHigh; }
+        bool operator==(const Structure& o) const { return multiband == o.multiband && three == o.three && slopeLow == o.slopeLow && slopeHigh == o.slopeHigh && dynEq == o.dynEq; }
     };
     static constexpr double fadeMs = 4.0; // length of each half of the dip around a structural switch
     Structure applied;
@@ -182,6 +184,10 @@ private:
     juce::RangedAudioParameter* bypassParam = nullptr;
     std::atomic<float>* pBypass = nullptr;
     std::atomic<float>* pClip = nullptr;
+    std::atomic<float>* pInGain = nullptr;
+    std::atomic<float>* pOutGain = nullptr;
+    juce::SmoothedValue<float> inGain { 1.f }, outGain { 1.f };   // the IN / OUT trims, glided so turning them never clicks
+    std::atomic<float>* pEngine = nullptr;
     float bypassMix = 0.f;                // 0 = processed, 1 = dry; ramps over 10 ms so bypass never clicks
     juce::AudioBuffer<float> dryScratch;  // the dry copy during a bypass crossfade (sized in prepareToPlay)
     std::atomic<float> *pMb = nullptr, *pBands = nullptr, *pXLow = nullptr, *pXHigh = nullptr,
@@ -193,6 +199,7 @@ private:
 
     std::atomic<float>* pSoloBand[3] = { nullptr, nullptr, nullptr };
     Crossover crossover;
+    DynamicEq dynEq, scDynEq;   // the zero-latency alternative to the crossover (and its copy for the sidechain display)
     Crossover scCrossover;   // the same split for the sidechain signal (display only, runs while the editor is open)
     double bandFreePhase[3] = { 0, 0, 0 };
     float bandSmoothed[3] = { 1.f, 1.f, 1.f };

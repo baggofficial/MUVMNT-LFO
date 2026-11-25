@@ -27,6 +27,7 @@ private:
     void timerCallback() override;
     int signature() const;
     bool threeBands() const;
+    bool dynamicEq() const;
     double splitHz(int split) const;
     float freqToX(double hz) const;
     double xToFreq(float x) const;
@@ -88,7 +89,7 @@ public:
 
 public:
     // These two live in the editor's header row (the editor adopts them), so they are public.
-    juce::ComboBox modeBox, bandsBox;
+    juce::ComboBox modeBox, bandsBox, engineBox;
 
 private:
     LinkButton linkBtn;   // beside the Rate knob: all bands share one rate
@@ -110,7 +111,7 @@ private:
     using CA = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
     using SA = juce::AudioProcessorValueTreeState::SliderAttachment;
     using BA = juce::AudioProcessorValueTreeState::ButtonAttachment;
-    std::unique_ptr<CA> modeA, bandsA;
+    std::unique_ptr<CA> modeA, bandsA, engineA;
     std::unique_ptr<SA> rateA, depthA, smoothA, offsetA, waveA;
     std::unique_ptr<BA> linkA, dotA, tripA, linkDepthA, linkSmoothA, linkOffsetA;
     LinkButton linkDepthBtn, linkSmoothBtn, linkOffsetBtn;   // sit beside the knobs: all bands follow one value

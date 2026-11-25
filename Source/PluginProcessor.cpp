@@ -42,7 +42,12 @@ juce::AudioProcessorValueTreeState::ParameterLayout FreeLfoProcessor::createLayo
     // ---- Multiband tab ----
     l.add(std::make_unique<AudioParameterBool>(ParameterID { "mb", 1 }, "Multiband", false));
     l.add(std::make_unique<AudioParameterBool>(ParameterID { "bypass", 1 }, "Bypass", false));
+    for (const char* id : { "inGain", "outGain" })
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID { id, 1 }, String(id) == "inGain" ? "Input Gain" : "Output Gain",
+                                                    NormalisableRange<float>(-24.f, 24.f, 0.1f), 0.f,
+                                                    AudioParameterFloatAttributes().withLabel("dB")));
     l.add(std::make_unique<AudioParameterChoice>(ParameterID { "clip", 1 }, "Output Clipper", StringArray { "Off", "Soft", "Hard" }, 0));
+    l.add(std::make_unique<AudioParameterChoice>(ParameterID { "mbEngine", 1 }, "Multiband Type", StringArray { "Crossover", "Dynamic EQ" }, 0));
     l.add(std::make_unique<AudioParameterChoice>(ParameterID { "mbBands", 1 }, "Bands", StringArray { "2 bands", "3 bands" }, 1));
     l.add(std::make_unique<AudioParameterFloat>(ParameterID { "xLow", 1 }, "Low Split",
                                                 NormalisableRange<float>(40.f, 12000.f, 1.f, 0.3f), 200.f));
@@ -114,6 +119,9 @@ FreeLfoProcessor::FreeLfoProcessor()
     pMb = apvts.getRawParameterValue("mb");
     pBypass = apvts.getRawParameterValue("bypass");
     pClip = apvts.getRawParameterValue("clip");
+    pInGain = apvts.getRawParameterValue("inGain");
+    pOutGain = apvts.getRawParameterValue("outGain");
+    pEngine = apvts.getRawParameterValue("mbEngine");
     bypassParam = dynamic_cast<juce::RangedAudioParameter*>(apvts.getParameter("bypass"));
     pBands = apvts.getRawParameterValue("mbBands");
     pXLow = apvts.getRawParameterValue("xLow");
@@ -158,6 +166,9 @@ bool FreeLfoProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 
 void FreeLfoProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
+    for (auto* g : { &inGain, &outGain }) g->reset(sampleRate, 0.020);
+    inGain.setCurrentAndTargetValue(juce::Decibels::decibelsToGain(pInGain->load()));
+    outGain.setCurrentAndTargetValue(juce::Decibels::decibelsToGain(pOutGain->load()));
     dryScratch.setSize(2, juce::jmax(samplesPerBlock, 8192));
     bypassMix = pBypass != nullptr && pBypass->load() > 0.5f ? 1.f : 0.f;
     zcrCoef = 1.f - std::exp(-1.f / (0.025f * (float) sampleRate));
@@ -172,6 +183,7 @@ void FreeLfoProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     smoothedGain = 1.f;
     for (auto& sl : slots) sl.audioVersion = -1;
     crossover.prepare(sampleRate);
+    dynEq.reset(); scDynEq.reset();
     scCrossover.prepare(sampleRate);
     for (int b = 0; b < 3; ++b) { bandFreePhase[b] = 0.0; bandSmoothed[b] = 1.f; bandLastBin[b] = -1; laneSigValid[b] = false; laneDeclick[b] = 0; gate[b] = 1.f; }
     structureInit = false; fadeOutLeft = fadeInLeft = 0;
@@ -344,6 +356,12 @@ void FreeLfoProcessor::processActive(juce::AudioBuffer<float>& buffer, juce::Mid
     const double sr = getSampleRate();
     const int clipMode = pClip != nullptr ? juce::roundToInt(pClip->load()) : 0;
 
+    // IN trim first, so the meters, the displays and the processing all see the trimmed signal.
+    // At 0 dB (and settled) the audio is not touched at all, which keeps the null bit-exact.
+    inGain.setTargetValue(juce::Decibels::decibelsToGain(pInGain->load(std::memory_order_relaxed)));
+    outGain.setTargetValue(juce::Decibels::decibelsToGain(pOutGain->load(std::memory_order_relaxed)));
+    if (inGain.isSmoothing() || inGain.getTargetValue() != 1.f) inGain.applyGain(mainBuf, numSamples);
+
     const float* scData[2] = { nullptr, nullptr };
     int scChannels = 0;
     if (getBusCount(true) > 1 && getBus(true, 1)->isEnabled())
@@ -394,6 +412,7 @@ void FreeLfoProcessor::processActive(juce::AudioBuffer<float>& buffer, juce::Mid
 
     Structure live;
     live.multiband = pMb->load() > 0.5f;
+    live.dynEq = pEngine->load() > 0.5f;
     live.three = pBands->load() > 0.5f;
     live.slopeLow = juce::jlimit(0, numSlopes - 1, (int) pSlopeLow->load());
     live.slopeHigh = juce::jlimit(0, numSlopes - 1, (int) pSlopeHigh->load());
@@ -430,11 +449,15 @@ void FreeLfoProcessor::processActive(juce::AudioBuffer<float>& buffer, juce::Mid
         h.ppq = host.ppq + (double) pos * ppqPerSample;
         for (int c = 0; c < scChannels; ++c) scAt[c] = scData[c] + pos;
 
-        if (applied.multiband) processMultiband(view, h, scAt, scChannels);
+        if (applied.multiband && applied.dynEq) processMultiband<true>(view, h, scAt, scChannels);
+        else if (applied.multiband) processMultiband<false>(view, h, scAt, scChannels);
         else processSingle(view, h, midi, pos, scAt, scChannels);
 
         if (g0 != 1.f || g1 != 1.f)
             for (int ch = 0; ch < numChannels; ++ch) view.applyGainRamp(ch, 0, seg, g0, g1);
+
+        // OUT trim, ahead of the clipper so the clipper's 0 dB ceiling still holds
+        if (outGain.isSmoothing() || outGain.getTargetValue() != 1.f) outGain.applyGain(view, seg);
 
         // Optional output clipper (multiband only: re-summing the bands can push the peaks past the input's)
         if (clipMode != 0 && applied.multiband)
@@ -456,9 +479,10 @@ void FreeLfoProcessor::processActive(juce::AudioBuffer<float>& buffer, juce::Mid
             fadeOutLeft -= seg;
             if (fadeOutLeft == 0) // silent now: switch paths
             {
-                if (live.multiband && (!applied.multiband || applied.slopeLow != live.slopeLow || applied.slopeHigh != live.slopeHigh))
+                if (live.multiband && (!applied.multiband || applied.dynEq != live.dynEq || applied.slopeLow != live.slopeLow || applied.slopeHigh != live.slopeHigh))
                 {
                     crossover.reset();   // a different filter structure can't inherit the old state; nobody can hear it
+                    dynEq.reset(); scDynEq.reset();
                     fcLowS = fcHighS = -1.0;
                 }
                 applied = live;
@@ -665,6 +689,7 @@ void FreeLfoProcessor::processSingle(juce::AudioBuffer<float>& mainBuf, const Ho
 // Multiband: split the signal into low / mid / high (or low / high), give every band its own
 // curve and its own LFO rate, then add the bands back together.
 // ---------------------------------------------------------------------------------------------
+template <bool useDynamicEq>
 void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const HostInfo& h, const float* const* scData, int scChannels)
 {
     const int n = buf.getNumSamples();
@@ -683,13 +708,27 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const Hos
     // Crossover: the structure is fixed (see processBlock); the split frequencies glide toward the knobs
     // (about 20 ms, in the log domain) so a jump of a knob never turns into a burst
     const bool scOn = analyse && scChannels > 0;   // the kick (sidechain) is split like the audio, for the overlap display
-    crossover.setSlopes((Slope) applied.slopeLow, (Slope) applied.slopeHigh);
-    if (scOn) scCrossover.setSlopes((Slope) applied.slopeLow, (Slope) applied.slopeHigh);
+    if constexpr (! useDynamicEq)
+    {
+        crossover.setSlopes((Slope) applied.slopeLow, (Slope) applied.slopeHigh);
+        if (scOn) scCrossover.setSlopes((Slope) applied.slopeLow, (Slope) applied.slopeHigh);
+    }
     const double targetLow = three ? juce::jmin(1000.0, (double) pXLow->load()) : (double) pXLow->load(), // 3 bands: low split tops out at 1 kHz
                  targetHigh = pXHigh->load();
     if (fcLowS < 0.0) { fcLowS = targetLow; fcHighS = targetHigh; }
-    crossover.setFrequencies(fcLowS, fcHighS);
-    if (scOn) scCrossover.setFrequencies(fcLowS, fcHighS);
+    auto tune = [&]() {
+        if constexpr (useDynamicEq)
+        {
+            dynEq.setFrequencies(fcLowS, fcHighS, sr);
+            if (scOn) scDynEq.setFrequencies(fcLowS, fcHighS, sr);
+        }
+        else
+        {
+            crossover.setFrequencies(fcLowS, fcHighS);
+            if (scOn) scCrossover.setFrequencies(fcLowS, fcHighS);
+        }
+    };
+    tune();
     constexpr int glideStep = 32; // while a knob is moving, the filters are retuned every 32 samples
     const double glideA = 1.0 - std::exp(-(double) glideStep / (0.030 * sr));
     auto glide = [&]() {
@@ -698,8 +737,7 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const Hos
         fcHighS = std::exp(std::log(fcHighS) + (std::log(targetHigh) - std::log(fcHighS)) * glideA);
         if (std::fabs(fcLowS / targetLow - 1.0) < 1e-4) fcLowS = targetLow;
         if (std::fabs(fcHighS / targetHigh - 1.0) < 1e-4) fcHighS = targetHigh;
-        crossover.setFrequencies(fcLowS, fcHighS);
-        if (scOn) scCrossover.setFrequencies(fcLowS, fcHighS);
+        tune();
     };
 
     auto fract = [](double v) { return v - std::floor(v); };
@@ -779,15 +817,22 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const Hos
         }
 
         double avg[3] = { 0.0, 0.0, 0.0 };
+        [[maybe_unused]] DynamicEq::Mix eqMix {};
+        if constexpr (useDynamicEq) eqMix = DynamicEq::mix(three, g[0], g[1], g[2]);
         for (int ch = 0; ch < numCh; ++ch)
         {
             double x = data[ch][s];
             if (!(std::fabs(x) < 1e9)) x = 0.0; // NaN / Inf / absurd input must never get into the filters
             double bands[3];
-            if (three) crossover.process3(ch, x, bands);
-            else crossover.process2(ch, x, bands);
-
-            float o = (float) (bands[0] * g[0] + bands[1] * g[1] + bands[2] * g[2]);
+            float o;
+            if constexpr (useDynamicEq)
+                o = (float) dynEq.process(ch, x, three, eqMix, analyse ? bands : nullptr);
+            else
+            {
+                if (three) crossover.process3(ch, x, bands);
+                else crossover.process2(ch, x, bands);
+                o = (float) (bands[0] * g[0] + bands[1] * g[1] + bands[2] * g[2]);
+            }
             if (!(std::fabs(o) < 1e6f)) { o = 0.f; bad = true; } // the filters have gone unstable: start them afresh
             data[ch][s] = o;
             if (analyse) { avg[0] += bands[0]; avg[1] += bands[1]; avg[2] += bands[2]; }
@@ -800,7 +845,8 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const Hos
             for (int c = 0; c < scChannels; ++c) x += scData[c][s];
             x /= (double) scChannels;
             if (!(std::fabs(x) < 1e9)) x = 0.0;
-            if (three) scCrossover.process3(0, x, sb); else scCrossover.process2(0, x, sb);
+            if constexpr (useDynamicEq) scDynEq.process(0, x, three, DynamicEq::Mix {}, sb);
+            else { if (three) scCrossover.process3(0, x, sb); else scCrossover.process2(0, x, sb); }
         }
 
         if (analyse)
@@ -841,7 +887,7 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const Hos
                 bandLastBin[b] = bin[b];
             }
     }
-    if (bad) crossover.reset();
+    if (bad) { crossover.reset(); dynEq.reset(); }
 
     for (int b = 0; b < 3; ++b)
     {

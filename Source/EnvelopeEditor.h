@@ -22,6 +22,8 @@ public:
     bool keyPressed(const juce::KeyPress&) override; // Cmd/Ctrl+Z undo, Shift+Cmd/Ctrl+Z or Ctrl+Y redo
 
     bool areControlsHidden() const { return controlsHidden; }
+    // Note values at 1/4, 1/2, 3/4 and the end of the cycle ("1/16", "1/8", ...); empty strings in Hz mode
+    std::array<juce::String, 4> positionLabels() const;
     // Snapping is off by default; holding Option (macOS) / Alt (Windows) snaps while you drag. If the Snap switch
     // is on, it snaps all the time and holding Option / Alt turns it off instead.
     bool snapToGrid = false;
@@ -40,6 +42,8 @@ public:
 private:
     void frame(); // once per display refresh (VBlank), capped to ~60 fps
     void renderGrid(juce::Graphics&);
+    juce::Rectangle<float> plotBounds() const { return getLocalBounds().toFloat().reduced(10.f).withTrimmedBottom(4.f); } // room below for the labels
+    juce::String cachedLabels; // the labels the cached grid image was drawn with
     void drawWaveforms(juce::Graphics&);
     void drawOverlap(juce::Graphics&, const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& mn,
                      const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& mx,
@@ -135,7 +139,7 @@ public:
     void paint(juce::Graphics& g) override
     {
         const auto b = getLocalBounds().toFloat();
-        const float top = b.getY() + 10.f, h = b.getHeight() - 20.f;
+        const float top = b.getY() + 10.f, h = b.getHeight() - 24.f;   // the same vertical scale as the graph
         g.setColour(paper::bg);
         g.fillRoundedRectangle(b, 5.f);
         auto yOf = [&](float v) { return top + (1.f - (0.5f + 0.5f * juce::jlimit(-1.f, 1.f, v))) * h; };
