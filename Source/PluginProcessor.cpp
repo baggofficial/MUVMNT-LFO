@@ -9,6 +9,43 @@ const std::array<double, FreeLfoProcessor::numDivisions> FreeLfoProcessor::divis
     32.0, 16.0, 8.0, 4.0, 2.0, 1.0, 0.5, 0.25, 0.125, 0.0625
 };
 
+namespace
+{
+    // A band parameter that, while its control is linked, is the one every band follows. The DAW should then call it
+    // "All Bands ..." (in automation clips and lists), not after the band it happens to live in.
+    struct LinkedName
+    {
+        juce::String shared;                                          // empty: never linked
+        const std::atomic<float>* link = nullptr;                     // the link switch that applies to this control
+        const std::atomic<float>* threeBands = nullptr;
+        bool middle = false;                                          // linked bands follow Mid (3 bands) or Low (2 bands)
+        bool isShared() const
+        {
+            return link != nullptr && link->load() > 0.5f && (threeBands->load() > 0.5f) == middle;
+        }
+    };
+
+    template <class Parameter>
+    struct BandParameter : Parameter, LinkedName
+    {
+        using Parameter::Parameter;
+        juce::String getName(int maximumLength) const override
+        {
+            return isShared() ? shared.substring(0, maximumLength) : Parameter::getName(maximumLength);
+        }
+    };
+}
+
+void FreeLfoProcessor::refreshParameterNames()
+{
+    auto on = [this](const char* id) { return apvts.getRawParameterValue(id)->load() > 0.5f ? 1 : 0; };
+    const int links = on("mbLink") | on("linkDepth") << 1 | on("linkSmooth") << 2 | on("linkOffset") << 3;
+    const int state = links == 0 ? 0 : links | on("mbBands") << 4; // with nothing linked, the band count changes no names
+    if (state == namedState) return;
+    namedState = state;
+    updateHostDisplay(juce::AudioProcessorListener::ChangeDetails().withParameterInfoChanged(true));
+}
+
 juce::AudioProcessorValueTreeState::ParameterLayout FreeLfoProcessor::createLayout()
 {
     using namespace juce;
@@ -67,17 +104,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout FreeLfoProcessor::createLayo
     for (int b = 0; b < 3; ++b)
     {
         const String sfx = bandSuffix(b), nm = names[b];
-        l.add(std::make_unique<AudioParameterChoice>(ParameterID { "mode" + sfx, 1 }, nm + " Mode", StringArray { "Sync", "Hz" }, 0));
-        l.add(std::make_unique<AudioParameterChoice>(ParameterID { "div" + sfx, 1 }, nm + " Rate", divs, 5));
-        l.add(std::make_unique<AudioParameterBool>(ParameterID { "dot" + sfx, 1 }, nm + " Dotted", false));
-        l.add(std::make_unique<AudioParameterBool>(ParameterID { "trip" + sfx, 1 }, nm + " Triplet", false));
-        l.add(std::make_unique<AudioParameterFloat>(ParameterID { "hz" + sfx, 1 }, nm + " Frequency",
+        l.add(std::make_unique<BandParameter<AudioParameterChoice>>(ParameterID { "mode" + sfx, 1 }, nm + " Mode", StringArray { "Sync", "Hz" }, 0));
+        l.add(std::make_unique<BandParameter<AudioParameterChoice>>(ParameterID { "div" + sfx, 1 }, nm + " Rate", divs, 5));
+        l.add(std::make_unique<BandParameter<AudioParameterBool>>(ParameterID { "dot" + sfx, 1 }, nm + " Dotted", false));
+        l.add(std::make_unique<BandParameter<AudioParameterBool>>(ParameterID { "trip" + sfx, 1 }, nm + " Triplet", false));
+        l.add(std::make_unique<BandParameter<AudioParameterFloat>>(ParameterID { "hz" + sfx, 1 }, nm + " Frequency",
                                                     NormalisableRange<float>(0.01f, 40.f, 0.001f, 0.35f), 2.f));
-        l.add(std::make_unique<AudioParameterFloat>(ParameterID { "depth" + sfx, 1 }, nm + " Depth",
+        l.add(std::make_unique<BandParameter<AudioParameterFloat>>(ParameterID { "depth" + sfx, 1 }, nm + " Depth",
                                                     NormalisableRange<float>(0.f, 1.f, 0.001f), 1.f));
-        l.add(std::make_unique<AudioParameterFloat>(ParameterID { "smooth" + sfx, 1 }, nm + " Smooth (ms)",
+        l.add(std::make_unique<BandParameter<AudioParameterFloat>>(ParameterID { "smooth" + sfx, 1 }, nm + " Smooth (ms)",
                                                     NormalisableRange<float>(0.f, 200.f, 0.01f, 0.4f), 0.f));
-        l.add(std::make_unique<AudioParameterFloat>(ParameterID { "offset" + sfx, 1 }, nm + " Phase Offset",
+        l.add(std::make_unique<BandParameter<AudioParameterFloat>>(ParameterID { "offset" + sfx, 1 }, nm + " Phase Offset",
                                                     NormalisableRange<float>(0.f, 1.f, 0.001f), 0.f));
     }
     // Per-knob links: when on, every band follows one band's value for that control
@@ -133,6 +170,24 @@ FreeLfoProcessor::FreeLfoProcessor()
     pLinkDepth = apvts.getRawParameterValue("linkDepth");
     pLinkSmooth = apvts.getRawParameterValue("linkSmooth");
     pLinkOffset = apvts.getRawParameterValue("linkOffset");
+    // which parameters turn into "All Bands ..." when their control is linked
+    {
+        struct Control { const char* id; const char* name; const char* linkId; };
+        const Control controls[] = { { "mode", "Mode", "mbLink" }, { "div", "Rate", "mbLink" }, { "dot", "Dotted", "mbLink" },
+                                     { "trip", "Triplet", "mbLink" }, { "hz", "Frequency", "mbLink" }, { "depth", "Depth", "linkDepth" },
+                                     { "smooth", "Smooth (ms)", "linkSmooth" }, { "offset", "Phase Offset", "linkOffset" } };
+        for (const auto& control : controls)
+            for (int b = 0; b < 2; ++b) // only Low and Mid can be the one that is followed
+                if (auto* linked = dynamic_cast<LinkedName*>(apvts.getParameter(juce::String(control.id) + bandSuffix(b))))
+                {
+                    linked->shared = juce::String("All Bands ") + control.name;
+                    linked->link = apvts.getRawParameterValue(control.linkId);
+                    linked->threeBands = pBands;
+                    linked->middle = b == 1;
+                }
+    }
+    startTimerHz(10); // tells the DAW when a link (or the band count) changes what a parameter is called
+
     for (int b = 0; b < 3; ++b)
     {
         const juce::String sfx = bandSuffix(b);

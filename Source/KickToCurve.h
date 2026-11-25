@@ -2,7 +2,7 @@
 // "Curve from kick": turns one LFO cycle of the sidechain signal into an editable starting curve.
 // Two styles:
 //   safe    - 3 to 6 points: fully ducked while the kick is strong, then one smooth rise. Leaves the kick plenty of room.
-//   precise - up to 12 points, and it looks at both signals: at every moment it ducks your sound only as far as needed for
+//   precise - up to 16 points, and it looks at both signals: at every moment it ducks your sound only as far as needed for
 //             the kick and your sound to fit together. Where your sound is quiet, or the kick has faded enough, it is left
 //             alone. Both are measured against their own peaks (so routing levels do not matter), i.e. as if they sit
 //             equally loud in the mix: their peaks added together stay at about that level.
@@ -48,8 +48,8 @@ namespace kickfit
     constexpr float duckFrom = 0.10f;         // outline (share of its peak) where ducking starts ...
     constexpr float duckFully = 0.70f;        // ... and where the curve is all the way down
     constexpr float preciseFloor = 0.05f;     // precise: outline below this share of the peak counts as silence
-    constexpr int preciseKnots = 6;           // precise: the most points it adds inside the fade
-    constexpr float preciseClose = 0.035f;    // ... and it stops adding once the curve is this close everywhere
+    constexpr int preciseKnots = 10;          // precise: the most points it adds inside the fade
+    constexpr float preciseClose = 0.015f;    // ... and it stops adding once the curve is this close everywhere
     constexpr float onBeatEarly = 0.08f;      // a hit this close to the loop point (before it) ...
     constexpr float onBeatLate = 0.06f;       // ... or this close after it counts as "on the beat"
 

@@ -501,6 +501,47 @@ static bool headerRegression()
     return ok;
 }
 
+// The 60 / 30 fps switch, and the header with it in the narrowest window, where it is fullest.
+static bool frameRateRegression(const juce::File& dir)
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    bool ok = true;
+    auto check = [&](bool cond, const char* what) { std::printf("  %-64s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
+    std::printf("frame rate switch:\n");
+    const auto parameters = [&] { juce::String s; for (auto* prm : p.getParameters()) s << prm->getValue() << " "; return s; };
+    for (const bool multiband : { false, true })
+    {
+        setParam(p, "mb", multiband ? 1.f : 0.f);
+        FreeLfoEditor ed(p);
+        ed.setSize(880, 500);
+        FrameRateButton* button = nullptr;
+        std::vector<juce::Component*> row;
+        for (auto* c : ed.getChildren())
+        {
+            if (auto* b = dynamic_cast<FrameRateButton*>(c)) button = b;
+            if (c->isVisible() && c->getY() < 40 && c->getHeight() <= 40) row.push_back(c);
+        }
+        check(button != nullptr && button->isVisible(), multiband ? "multiband: the switch is in the header" : "single: the switch is in the header");
+        if (button == nullptr) return false;
+        bool overlap = false;
+        for (size_t i = 0; i < row.size(); ++i)
+            for (size_t j = i + 1; j < row.size(); ++j)
+                if (row[i]->getBounds().intersects(row[j]->getBounds())) overlap = true;
+        check(!overlap, multiband ? "multiband, 880 wide: nothing in the header overlaps" : "single, 880 wide: nothing in the header overlaps");
+        const auto before = parameters();
+        const bool starts60 = ed.frameRate() == 60 && button->shown() == 60 && ed.animationStepMs() < 16.0;
+        button->onClick();
+        const bool then30 = ed.frameRate() == 30 && button->shown() == 30 && ed.animationStepMs() > 25.0 && ed.animationStepMs() < 33.0;
+        save(ed.createComponentSnapshot(ed.getLocalBounds(), true, 2.0f), dir.getChildFile(multiband ? "fps30_multiband_narrow.png" : "fps30_single_narrow.png"));
+        button->onClick();
+        check(starts60 && then30 && ed.frameRate() == 60, "starts at 60, a click gives 30, another gives 60 again");
+        check(parameters() == before, "switching changes no plugin parameter");
+    }
+    return ok;
+}
+
 // The grid is easy to see: a line is clearly different from the background between lines, in both themes.
 static bool gridContrastRegression()
 {
@@ -1458,5 +1499,5 @@ int main(int argc, char** argv)
     }
     const bool rz = resizeRegression() && labelRegression() && resetClickRegression() && hostMenuRegression() && pointLimitRegression() && loudScopeRegression();
     const bool un = undoRegression() && presetRegression() && handleSnapRegression() && deletePointRegression();
-    return kickButtonOk && un && a && b && c && d && f && g && h && k && m && n && o && q && rz ? 0 : 1;
+    return kickButtonOk && frameRateRegression(dir) && un && a && b && c && d && f && g && h && k && m && n && o && q && rz ? 0 : 1;
 }

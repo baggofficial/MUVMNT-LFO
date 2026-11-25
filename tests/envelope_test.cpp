@@ -418,7 +418,7 @@ int main()
             using kickfit::Style;
             auto usablePrecise = [&](const kickfit::Result& r) {
                 const auto& e = r.curve;
-                if (r.status != Status::ok || e.points.size() < 3 || e.points.size() > 12) return false;
+                if (r.status != Status::ok || e.points.size() < 3 || e.points.size() > 16) return false;
                 if (e.points.front().x != 0.f || e.points.back().x != 1.f || e.points.front().y != e.points.back().y) return false;
                 for (size_t i = 1; i < e.points.size(); ++i) if (!(e.points[i].x > e.points[i - 1].x)) return false;
                 for (int i = 0; i < 4096; ++i) { const float v = e.evaluate((float) i / 4096.f); if (!(v >= 0.f && v <= 1.f)) return false; }
@@ -479,7 +479,7 @@ int main()
             assert(fine.status == r.status);
             if (fine.status == Status::ok)
             {
-                assert(fine.curve.points.size() >= 3 && fine.curve.points.size() <= 12 && fine.curve.points.front().y == fine.curve.points.back().y);
+                assert(fine.curve.points.size() >= 3 && fine.curve.points.size() <= 16 && fine.curve.points.front().y == fine.curve.points.back().y);
                 for (size_t i = 1; i < fine.curve.points.size(); ++i) assert(fine.curve.points[i].x >= fine.curve.points[i - 1].x);
                 for (int i = 0; i < 1024; ++i) { const float v = fine.curve.evaluate(i / 1024.f); assert(v >= 0.f && v <= 1.f); }
             }

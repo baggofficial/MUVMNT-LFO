@@ -50,6 +50,21 @@ static void saveSizePreference(int w, int h)
     f.saveIfNeeded();
 }
 
+static bool loadThirtyFpsPreference()
+{
+    if (!usePrefs()) return false; // 60 is the default
+    juce::PropertiesFile f(uiPrefsOptions());
+    return f.getBoolValue("fps30", false);
+}
+
+static void saveThirtyFpsPreference(bool thirty)
+{
+    if (!usePrefs()) return;
+    juce::PropertiesFile f(uiPrefsOptions());
+    f.setValue("fps30", thirty);
+    f.saveIfNeeded();
+}
+
 static void saveDarkPreference(bool dark)
 {
     if (!usePrefs()) return;
@@ -132,6 +147,9 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     addAndMakeVisible(reset);
 
     addAndMakeVisible(themeBtn);
+    addAndMakeVisible(fpsBtn);
+    fpsBtn.onClick = [this] { setFrameRate(thirtyFps ? 60 : 30); };
+    setFrameRate(loadThirtyFpsPreference() ? 30 : 60, false);
     setWantsKeyboardFocus(true);
     addAndMakeVisible(presetBtn);
     presetBtn.onClick = [this] {
@@ -190,6 +208,13 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     updateTab();
     startTimerHz(10); // follows the "mb" parameter if the host or a project load changes it
     sendLookAndFeelChange(); // make every child (slider text boxes included) pick up the theme colours
+}
+
+void FreeLfoEditor::setFrameRate(int framesPerSecond, bool persist)
+{
+    thirtyFps = framesPerSecond <= 30;
+    fpsBtn.setShown(frameRate());
+    if (persist) saveThirtyFpsPreference(thirtyFps);
 }
 
 void FreeLfoEditor::setDarkMode(bool dark, bool persist)
@@ -327,17 +352,19 @@ void FreeLfoEditor::resized()
         top.removeFromLeft(8);
         mbPanel.bandsBox.setBounds(top.removeFromLeft(92).reduced(0, 4));
         top.removeFromLeft(8);
-        mbPanel.engineBox.setBounds(top.removeFromLeft(112).reduced(0, 4));
+        mbPanel.engineBox.setBounds(top.removeFromLeft(104).reduced(0, 4));
     }
-    // Right-hand group, right to left: bypass | Reset | light-dark button | Snap switch + grid number | Bezier switch | retrigger.
+    // Right-hand group, right to left: bypass | Reset | light-dark button | 60 / 30 fps | Snap switch + grid number | Bezier switch | retrigger.
     // Items of a pair sit close together; groups are an even 16 px apart.
     constexpr int gap = 16;
     bypassBtn.setBounds(top.removeFromRight(34).withSizeKeepingCentre(34, 28));   // the top right corner, in both tabs
     top.removeFromRight(8);
-    reset.setBounds(top.removeFromRight(70).reduced(0, 4));
-    top.removeFromRight(12);
+    reset.setBounds(top.removeFromRight(60).reduced(0, 4));
+    top.removeFromRight(8);
     themeBtn.setBounds(top.removeFromRight(24).withSizeKeepingCentre(22, 22));
-    top.removeFromRight(gap);
+    top.removeFromRight(4);
+    fpsBtn.setBounds(top.removeFromRight(26).withSizeKeepingCentre(26, 26));
+    top.removeFromRight(10);
     redoBtn.setBounds(top.removeFromRight(26).withSizeKeepingCentre(26, 26));
     undoBtn.setBounds(top.removeFromRight(26).withSizeKeepingCentre(26, 26));
     top.removeFromRight(6);

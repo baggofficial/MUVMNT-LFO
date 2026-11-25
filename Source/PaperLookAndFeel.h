@@ -72,6 +72,38 @@ namespace paper
     inline juce::Colour bandText(int band) { return dark ? bandColour(band).brighter(0.1f) : bandColour(band).darker(0.25f); }
 }
 
+// The animation speed, shown as its number: click to switch between 60 and 30 frames a second
+class FrameRateButton : public juce::Button
+{
+public:
+    FrameRateButton() : juce::Button("animation speed")
+    {
+        setTooltip("Animation speed of this window: 60 fps is smoother, 30 fps uses much less CPU. Click to switch. The sound is not affected.");
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    }
+
+    int shown() const { return fps; }
+    void setShown(int framesPerSecond) { if (framesPerSecond != fps) { fps = framesPerSecond; repaint(); } }
+
+    void paintButton(juce::Graphics& g, bool over, bool down) override
+    {
+        auto b = getLocalBounds().toFloat().reduced(0.5f);
+        g.setColour(down ? paper::track : over ? paper::bg : paper::panel);
+        g.fillRoundedRectangle(b, 5.f);
+        g.setColour(paper::line);
+        g.drawRoundedRectangle(b, 5.f, 1.f);
+        g.setColour(paper::text.withAlpha(over ? 1.f : 0.75f));
+        g.setFont(fonts::semibold(11.f));
+        g.drawText(juce::String(fps), b.withTrimmedBottom(8.f).translated(0.f, 1.f), juce::Justification::centred);
+        g.setColour(paper::sub);
+        g.setFont(fonts::regular(8.f));
+        g.drawText("fps", b.withTrimmedTop(13.f), juce::Justification::centred);
+    }
+
+private:
+    int fps = 60;
+};
+
 // A small half-filled circle: click to switch between the light and the dark theme
 class ThemeToggle : public juce::Button
 {

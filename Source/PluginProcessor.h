@@ -8,11 +8,13 @@
 #include "DynamicEq.h"
 #include "KickToCurve.h"
 
-class FreeLfoProcessor : public juce::AudioProcessor
+class FreeLfoProcessor : public juce::AudioProcessor, private juce::Timer
 {
 public:
     FreeLfoProcessor();
-    ~FreeLfoProcessor() override = default;
+    ~FreeLfoProcessor() override { stopTimer(); }
+    // Linked controls rename their parameter to "All Bands ...": this tells the DAW if that has changed (message thread)
+    void refreshParameterNames();
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
@@ -141,6 +143,8 @@ public:
 
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
+    void timerCallback() override { refreshParameterNames(); }
+    int namedState = 0; // the link settings the DAW was last told about; 0 = nothing linked
     void syncTable(int slot);
     double scKeyCycle[4] = {};   // audio thread: the cycle length and offset the sidechain slices were recorded with
     float scKeyOffset[4] = {};

@@ -1156,6 +1156,57 @@ static void testCurveFromKick()
     }
 }
 
+// Linked multiband controls drive one band's parameter: the DAW must hear it called "All Bands ...".
+static void testLinkedNames()
+{
+    section("11e. Linked multiband controls are named \"All Bands\" for the DAW");
+    Rig r;
+    struct Listener : juce::AudioProcessorListener
+    {
+        int renames = 0;
+        void audioProcessorParameterChanged(juce::AudioProcessor*, int, float) override {}
+        void audioProcessorChanged(juce::AudioProcessor*, const ChangeDetails& d) override { if (d.parameterInfoChanged) ++renames; }
+    } listener;
+    r.p.addListener(&listener);
+    auto name = [&r](const char* id) { return r.p.apvts.getParameter(id)->getName(128); };
+    auto expect = [&](const char* what, std::initializer_list<std::pair<const char*, const char*>> wanted) {
+        bool good = true;
+        juce::String got;
+        for (const auto& w : wanted) { good = good && name(w.first) == w.second; got << name(w.first) << "; "; }
+        check(good, what, got.toStdString());
+    };
+
+    r.param("mbLink", 0.f);
+    r.p.refreshParameterNames();
+    listener.renames = 0;
+    expect("nothing linked: every parameter is named after its band",
+           { { "depthL", "Low Depth" }, { "depthM", "Mid Depth" }, { "depthH", "High Depth" }, { "divM", "Mid Rate" } });
+    r.param("linkDepth", 1.f);
+    r.p.refreshParameterNames();
+    expect("Depth linked, 3 bands: the Mid parameter is All Bands Depth, nothing else changes",
+           { { "depthM", "All Bands Depth" }, { "depthL", "Low Depth" }, { "smoothM", "Mid Smooth (ms)" }, { "divM", "Mid Rate" } });
+    const bool told = listener.renames == 1;
+    r.p.refreshParameterNames();
+    check(told && listener.renames == 1, "the DAW is told once per change", fmt("%d notices", listener.renames));
+    r.param("mbBands", 0.f);
+    r.p.refreshParameterNames();
+    expect("Depth linked, 2 bands: the Low parameter is the shared one", { { "depthL", "All Bands Depth" }, { "depthM", "Mid Depth" } });
+    r.param("mbBands", 1.f);
+    r.param("mbLink", 1.f); r.param("linkSmooth", 1.f); r.param("linkOffset", 1.f);
+    r.p.refreshParameterNames();
+    expect("everything linked: rate, mode, dotted, triplet, Hz, smooth and offset too",
+           { { "divM", "All Bands Rate" }, { "modeM", "All Bands Mode" }, { "dotM", "All Bands Dotted" }, { "tripM", "All Bands Triplet" },
+             { "hzM", "All Bands Frequency" }, { "smoothM", "All Bands Smooth (ms)" }, { "offsetM", "All Bands Phase Offset" }, { "divL", "Low Rate" } });
+    r.param("mbLink", 0.f); r.param("linkDepth", 0.f); r.param("linkSmooth", 0.f); r.param("linkOffset", 0.f);
+    listener.renames = 0;
+    r.p.refreshParameterNames();
+    expect("unlinking brings the band names back", { { "depthM", "Mid Depth" }, { "divM", "Mid Rate" } });
+    r.param("mbBands", 0.f);
+    r.p.refreshParameterNames();
+    check(listener.renames == 1, "with nothing linked, changing the band count sends no notice", fmt("%d notices", listener.renames));
+    r.p.removeListener(&listener);
+}
+
 static void testBadValues()
 {
     section("11c. A setting or curve that turns into NaN / Inf never breaks the audio, or leaves it broken");
@@ -1394,6 +1445,7 @@ int main()
     testState();
     testPointLimitState();
     testCurveFromKick();
+    testLinkedNames();
     testBadValues();
     testRealTimeSafety();
     testThreads();

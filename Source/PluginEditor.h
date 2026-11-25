@@ -19,10 +19,14 @@ public:
     void selectBandForSnapshot(int band) { mbPanel.selectBand(band); }
     void curveFromKick(kickfit::Style); // the Safe / Precise buttons: a starting curve for the curve on screen
     juce::String currentNote() const { return shownMb ? mbPanel.currentNote() : curve.currentNote(); }
+    // 60 or 30 animation steps a second. persist = remember it, for every instance opened from now on.
+    void setFrameRate(int framesPerSecond, bool persist = true);
+    int frameRate() const { return thirtyFps ? 30 : 60; }
+    double animationStepMs() const { return thirtyFps ? 30.0 : 13.0; } // the shortest time between two steps (see the clock below)
     // One step of everything that moves in the window. Normally driven by the display; public for the screenless tests.
     void animate()
     {
-        if (shownMb) { mbPanel.animate(); return; }
+        if (shownMb) { mbPanel.animate(thirtyFps ? 1 : 2); return; }
         curve.animate();
         curveMeter.animate();
         inMeter.animate();
@@ -53,6 +57,8 @@ private:
     BypassButton bypassBtn;        // top right, beside Reset
     juce::TextButton dotBtn { juce::String::fromUTF8("\xE2\x80\xA2") }, tripBtn { "3" }; // dotted / triplet, like Xfer's LFO Tool
     ThemeToggle themeBtn;
+    FrameRateButton fpsBtn;        // left of the light / dark button
+    bool thirtyFps = false;
     KickButton kickSafeBtn { false }, kickPreciseBtn { true };   // beside the Waveform knob, in both tabs
     juce::Label kickL;
     HistoryButton undoBtn { false }, redoBtn { true };
@@ -82,12 +88,12 @@ private:
     bool shownMb = false;
 
     // The one animation clock. Everything that moves is redrawn in the same step, because each window update has a
-    // large fixed cost: separate timers meant two or three times as many updates. 30 steps a second.
-    static constexpr double minStepMs = 30.0; // every 2nd refresh at 60 Hz, every 4th at 120 Hz
+    // large fixed cost: separate timers meant more updates than there is anything new to show. About 60 steps a second
+    // (every refresh at 60 Hz, every 2nd at 120 or 144 Hz), or 30 if the user picked that to save CPU.
     double lastStepMs = 0.0;
     juce::VBlankAttachment clock { this, [this] {   // keep last: it can fire as soon as it exists
         const double now = juce::Time::getMillisecondCounterHiRes();
-        if (now - lastStepMs < minStepMs) return;
+        if (now - lastStepMs < animationStepMs()) return;
         lastStepMs = now;
         animate();
     } };

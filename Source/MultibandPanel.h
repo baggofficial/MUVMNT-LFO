@@ -88,9 +88,10 @@ public:
     void showNote(const juce::String& text, double ms) { curve.showNote(text, ms); }
     juce::String currentNote() const { return curve.currentNote(); }
     juce::Rectangle<int> waveKnobBounds() const { return wave.getBounds(); }
-    void animate() // one step of the editor's animation clock, for everything that moves in this tab
+    void animate(int stepsPerSpectrum) // one step of the editor's animation clock, for everything that moves in this tab
     {
-        strip.animate();
+        // the spectrum stays at 30 a second whatever the window's rate: that is plenty, and its ballistics assume it
+        if (++step % (unsigned) stepsPerSpectrum == 0) strip.animate();
         curve.animate();
         curveMeter.animate();
         inMeter.animate();
@@ -130,4 +131,5 @@ private:
 
     int selected = 0;
     int lastSig = -1;
+    unsigned step = 0;
 };
