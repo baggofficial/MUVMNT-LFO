@@ -74,6 +74,7 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     addAndMakeVisible(inMeter);
     addAndMakeVisible(outMeter);
     addAndMakeVisible(mbPanel);
+    addAndMakeVisible(clipBtn);
     addAndMakeVisible(bypassBtn);   // after the panel, so it sits on top of it
     addChildComponent(mbPanel.modeBox);    // the multiband tab's Sync/Hz and band-count dropdowns sit in this header, like the single tab's
     addChildComponent(mbPanel.bandsBox);
@@ -139,6 +140,12 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
 
     // Tabs: Single = the original one-curve LFO (bit-exact pass-through), Multiband = per-band curves
     bypassA = std::make_unique<BA>(proc.apvts, "bypass", bypassBtn);
+    {
+        auto* clipParam = proc.apvts.getParameter("clip");
+        clipA = std::make_unique<juce::ParameterAttachment>(*clipParam, [this](float v) { clipBtn.setMode(juce::roundToInt(v)); });
+        clipA->sendInitialUpdate();
+        clipBtn.onModeChange = [this](int m) { clipA->setValueAsCompleteGesture((float) m); };
+    }
     modeSwitch.onClick = [this] { setMultiband(!multibandOn()); };
     addAndMakeVisible(modeSwitch);
 
@@ -287,7 +294,10 @@ void FreeLfoEditor::resized()
     retrigger.setBounds(top.removeFromRight(toggleWidth("MIDI retrigger")));
 
     r.removeFromTop(8);
-    bypassBtn.setBounds(r.getRight() - 40, r.getBottom() - 92 + 6, 40, 28);   // under the IN / OUT meters, in both tabs
+    clipBtn.setVisible(mb);
+    clipBtn.setBounds(r.getRight() - 40, r.getBottom() - 92 + 6, 40, 28);   // multiband only, above the bypass button
+    clipBtn.toFront(false);
+    bypassBtn.setBounds(r.getRight() - 40, r.getBottom() - 92 + 6 + 32, 40, 28);   // under the IN / OUT meters, in both tabs
     bypassBtn.toFront(false);   // above the knob row of the single tab, which otherwise catches the clicks
     if (mb) { mbPanel.setBounds(r); return; }
 

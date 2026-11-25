@@ -35,6 +35,8 @@ private:
     juce::TooltipWindow tooltipWindow { this, 500 }; // the icon buttons explain themselves on hover
     juce::TextButton reset { "Reset" };
     ModeSwitchButton modeSwitch;   // Single <-> Multiband
+    ClipButton clipBtn;            // multiband only, above the bypass button
+    std::unique_ptr<juce::ParameterAttachment> clipA;
     BypassButton bypassBtn;        // under the IN / OUT meters
     juce::TextButton dotBtn { juce::String::fromUTF8("\xE2\x80\xA2") }, tripBtn { "3" }; // dotted / triplet, like Xfer's LFO Tool
     ThemeToggle themeBtn;

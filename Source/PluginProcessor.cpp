@@ -42,6 +42,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout FreeLfoProcessor::createLayo
     // ---- Multiband tab ----
     l.add(std::make_unique<AudioParameterBool>(ParameterID { "mb", 1 }, "Multiband", false));
     l.add(std::make_unique<AudioParameterBool>(ParameterID { "bypass", 1 }, "Bypass", false));
+    l.add(std::make_unique<AudioParameterChoice>(ParameterID { "clip", 1 }, "Output Clipper", StringArray { "Off", "Soft", "Hard" }, 0));
     l.add(std::make_unique<AudioParameterChoice>(ParameterID { "mbBands", 1 }, "Bands", StringArray { "2 bands", "3 bands" }, 1));
     l.add(std::make_unique<AudioParameterFloat>(ParameterID { "xLow", 1 }, "Low Split",
                                                 NormalisableRange<float>(40.f, 12000.f, 1.f, 0.3f), 200.f));
@@ -112,6 +113,7 @@ FreeLfoProcessor::FreeLfoProcessor()
 
     pMb = apvts.getRawParameterValue("mb");
     pBypass = apvts.getRawParameterValue("bypass");
+    pClip = apvts.getRawParameterValue("clip");
     bypassParam = dynamic_cast<juce::RangedAudioParameter*>(apvts.getParameter("bypass"));
     pBands = apvts.getRawParameterValue("mbBands");
     pXLow = apvts.getRawParameterValue("xLow");
@@ -340,6 +342,7 @@ void FreeLfoProcessor::processActive(juce::AudioBuffer<float>& buffer, juce::Mid
     auto mainBuf = getBusBuffer(buffer, false, 0);
     const int numChannels = mainBuf.getNumChannels();
     const double sr = getSampleRate();
+    const int clipMode = pClip != nullptr ? juce::roundToInt(pClip->load()) : 0;
 
     const float* scData[2] = { nullptr, nullptr };
     int scChannels = 0;
@@ -432,6 +435,21 @@ void FreeLfoProcessor::processActive(juce::AudioBuffer<float>& buffer, juce::Mid
 
         if (g0 != 1.f || g1 != 1.f)
             for (int ch = 0; ch < numChannels; ++ch) view.applyGainRamp(ch, 0, seg, g0, g1);
+
+        // Optional output clipper (multiband only: re-summing the bands can push the peaks past the input's)
+        if (clipMode != 0 && applied.multiband)
+            for (int ch = 0; ch < numChannels; ++ch)
+            {
+                float* d = view.getWritePointer(ch);
+                if (clipMode == 2)
+                    for (int i = 0; i < seg; ++i) d[i] = juce::jlimit(-1.f, 1.f, d[i]);
+                else   // soft: linear up to 0.8, then a tanh shoulder that approaches 1.0 smoothly
+                    for (int i = 0; i < seg; ++i)
+                    {
+                        const float a = std::abs(d[i]);
+                        if (a > 0.8f) d[i] = std::copysign(0.8f + 0.2f * std::tanh((a - 0.8f) * 5.f), d[i]);
+                    }
+            }
 
         if (fadeOutLeft > 0)
         {

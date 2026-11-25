@@ -181,6 +181,7 @@ private:
     void processActive(juce::AudioBuffer<float>&, juce::MidiBuffer&);   // the real processing (processBlock adds the bypass crossfade)
     juce::RangedAudioParameter* bypassParam = nullptr;
     std::atomic<float>* pBypass = nullptr;
+    std::atomic<float>* pClip = nullptr;
     float bypassMix = 0.f;                // 0 = processed, 1 = dry; ramps over 10 ms so bypass never clicks
     juce::AudioBuffer<float> dryScratch;  // the dry copy during a bypass crossfade (sized in prepareToPlay)
     std::atomic<float> *pMb = nullptr, *pBands = nullptr, *pXLow = nullptr, *pXHigh = nullptr,

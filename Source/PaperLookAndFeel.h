@@ -234,6 +234,44 @@ public:
     }
 };
 
+// Output clipper: one button cycling Off / Soft / Hard. Dim while off, accent for soft, amber for hard.
+class ClipButton : public juce::Button
+{
+public:
+    ClipButton() : juce::Button("clip")
+    {
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+        setTooltip("Output clipper (multiband): keeps the output from going past 0 dB.\nClick to cycle Off / Soft / Hard");
+    }
+    int mode() const { return state; }
+    void setMode(int m) { if (m != state) { state = m; repaint(); } }
+    std::function<void(int)> onModeChange;
+
+    void clicked() override
+    {
+        state = (state + 1) % 3;
+        repaint();
+        if (onModeChange) onModeChange(state);
+    }
+
+    void paintButton(juce::Graphics& g, bool hover, bool) override
+    {
+        const auto b = getLocalBounds().toFloat().reduced(0.5f);
+        const auto amber = juce::Colour(0xfff0b429);
+        const auto c = state == 0 ? paper::sub.withAlpha(hover ? 0.9f : 0.6f) : state == 1 ? paper::accent : amber;
+        g.setColour(state == 0 ? (hover ? paper::bg : paper::panel) : c.withAlpha(0.2f));
+        g.fillRoundedRectangle(b, 6.f);
+        g.setColour(state == 0 ? paper::line : c);
+        g.drawRoundedRectangle(b, 6.f, 1.f);
+        g.setColour(c);
+        g.setFont(juce::Font(juce::FontOptions(10.5f, juce::Font::bold)));
+        g.drawText(state == 0 ? "CLIP" : state == 1 ? "SOFT" : "HARD", getLocalBounds(), juce::Justification::centred);
+    }
+
+private:
+    int state = 0;
+};
+
 // A rotary knob you can also type into: double-click the knob (or choose it from the right-click menu) to enter an
 // exact value; right-click also resets to the default. (Cmd / Ctrl-click still resets, like any JUCE slider.)
 class Knob : public juce::Slider

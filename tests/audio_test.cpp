@@ -413,6 +413,38 @@ static void testBypass()
     }
 }
 
+static void testClipper()
+{
+    section("3e. Output clipper (multiband)");
+    Stereo loud { Sig(9600, 0.f), Sig(9600, 0.f) };
+    for (size_t i = 0; i < 9600; ++i) loud[0][i] = loud[1][i] = 1.8f * std::sin((float) i * 0.05f);   // peaks well past 0 dB
+    Stereo quiet { Sig(9600, 0.f), Sig(9600, 0.f) };
+    for (size_t i = 0; i < 9600; ++i) quiet[0][i] = quiet[1][i] = 0.5f * std::sin((float) i * 0.05f);
+    auto peak = [](const Stereo& s) { float m = 0.f; for (auto v : s[0]) m = std::max(m, std::abs(v)); return m; };
+    for (int mode : { 0, 1, 2 })
+    {
+        Rig r; r.param("mb", 1.f); r.param("depth", 0.f); r.param("clip", (float) mode);
+        r.render(loud);
+        const float pk = peak(r.render(loud));
+        if (mode == 0) check(pk > 1.2f, "clipper off: peaks pass through", fmt("peak %.2f", pk));
+        else check(pk <= 1.0001f, mode == 1 ? "soft clipper: output never exceeds 0 dB" : "hard clipper: output never exceeds 0 dB", fmt("peak %.4f", pk));
+    }
+    {
+        Rig r; r.param("mb", 1.f); r.param("clip", 1.f);
+        Rig o; o.param("mb", 1.f);
+        r.render(quiet); o.render(quiet);
+        const auto a = r.render(quiet), b = o.render(quiet);
+        float d = 0.f; for (size_t i = 0; i < a[0].size(); ++i) d = std::max(d, std::abs(a[0][i] - b[0][i]));
+        check(d == 0.f, "soft clipper leaves quiet signals untouched", fmt("max diff %.1e", d));
+    }
+    {
+        Rig r; r.param("mb", 0.f); r.param("depth", 0.f); r.param("clip", 2.f);
+        r.render(loud);
+        const float pk = peak(r.render(loud));
+        check(pk > 1.2f, "clipper only acts in multiband mode", fmt("peak %.2f", pk));
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // 4. Block-size independence
 // ---------------------------------------------------------------------------------------------
@@ -633,7 +665,7 @@ static void testFuzz()
         long settledSamples = 0; // samples since the signal path last changed (a switch makes a short dip)
         auto structure = [&] {
             auto v = [&](const char* id) { return (int) r.p.apvts.getRawParameterValue(id)->load(); };
-            return v("mb") * 1000 + v("mbBands") * 100 + v("slopeLow") * 10 + v("slopeHigh");
+            return v("bypass") * 10000 + v("mb") * 1000 + v("mbBands") * 100 + v("slopeLow") * 10 + v("slopeHigh");   // bypass counts: while bypassed the path switch is paused, so un-bypassing fades through the old path
         };
         int lastStructure = structure();
         for (int b = 0; b < 3000; ++b)
@@ -953,6 +985,7 @@ int main()
     testMeters();
     testSpectrum();
     testBypass();
+    testClipper();
     testBlockSizes();
     testSmoothingSlew();
     testClicks();

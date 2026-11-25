@@ -879,12 +879,21 @@ int main(int argc, char** argv)
             {
                 setParam(p, "mb", mbOn ? 1.f : 0.f);
                 juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
-                juce::Component* hit = ed->getComponentAt(ed->getWidth() - 18 - 20, ed->getHeight() - 18 - 92 + 6 + 14);
+                juce::Component* hit = ed->getComponentAt(ed->getWidth() - 18 - 20, ed->getHeight() - 18 - 92 + 6 + 32 + 14);
                 std::printf("bypass click target (%s tab): %s (%s)\n", mbOn ? "multiband" : "single", hit != nullptr && dynamic_cast<juce::ToggleButton*>(hit) != nullptr ? "the bypass button" : "SOMETHING ELSE", hit != nullptr ? typeid(*hit).name() : "none");
             }
             setParam(p, "mb", 0.f);
             juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
         }
+        setParam(p, "mb", 1.f);
+        setParam(p, "clip", 1.f);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+        save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("clipper_soft.png"));
+        setParam(p, "clip", 2.f);
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
+        save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("clipper_hard.png"));
+        setParam(p, "clip", 0.f);
+        setParam(p, "mb", 0.f);
         setParam(p, "bypass", 1.f);
         juce::MessageManager::getInstance()->runDispatchLoopUntil(300);
         save(ed->createComponentSnapshot(ed->getLocalBounds(), true, 1.0f), dir.getChildFile("bypass_on.png"));
