@@ -282,6 +282,48 @@ void FreeLfoProcessor::applyBandCurves(const std::array<Envelope, 3>& curves, bo
     setSwitch(apvts, "mbBands", threeBands);
 }
 
+kickfit::Result FreeLfoProcessor::fitCurveToKick(int slot, kickfit::Style style)
+{
+    slot = juce::jlimit(0, numSlots - 1, slot);
+    kickfit::Result result;
+    if (! sidechainActive.load()) { result.status = kickfit::Status::noSidechain; return result; }
+    if (scFresh[(size_t) slot].load() < waveBins - 8) { result.status = kickfit::Status::notReady; return result; }
+
+    // the loudest |sample| of each slice, for one slot
+    using Bins = std::array<std::atomic<float>, waveBins>;
+    auto loudestPerSlice = [](const Bins& mn, const Bins& mx) {
+        std::vector<float> peaks((size_t) waveBins);
+        for (size_t i = 0; i < peaks.size(); ++i)
+            peaks[i] = juce::jmax(std::abs(mn[i].load(std::memory_order_relaxed)), std::abs(mx[i].load(std::memory_order_relaxed)));
+        return peaks;
+    };
+    auto peaksOf = [&](int which) {
+        return loudestPerSlice(which > 0 ? bandScMin[(size_t) which - 1] : scMin, which > 0 ? bandScMax[(size_t) which - 1] : scMax);
+    };
+    const auto peaks = peaksOf(slot);
+    // the sound being ducked, as it came in, over the same cycle (the band's own part of it in Multiband)
+    const auto sound = loudestPerSlice(slot > 0 ? bwMin[(size_t) slot - 1] : waveMin, slot > 0 ? bwMax[(size_t) slot - 1] : waveMax);
+
+    if (slot > 0) // the outline is scaled to its own peak, so a band with only a faint trace of the kick must be caught here
+    {
+        auto loudest = [](const std::vector<float>& v) { return *std::max_element(v.begin(), v.end()); };
+        const bool three = apvts.getRawParameterValue("mbBands")->load() > 0.5f;
+        float overall = 0.f;
+        for (int other = 1; other <= 3; ++other)
+            if (three || other != 2) overall = juce::jmax(overall, loudest(peaksOf(other)));
+        if (overall >= kickfit::silence && loudest(peaks) < 0.1f * overall) // more than 20 dB under the strongest band
+        {
+            result.status = kickfit::Status::bandQuiet;
+            return result;
+        }
+    }
+
+    const double cycle = slot > 0 ? bandCycleSeconds[(size_t) slot - 1].load() : cycleSeconds.load();
+    result = kickfit::analyse(peaks, cycle, style, sound);
+    if (result.status == kickfit::Status::ok) applyCurve(result.curve, slot);
+    return result;
+}
+
 bool FreeLfoProcessor::undo()
 {
     if (undoStack.empty()) return false;
@@ -412,6 +454,10 @@ void FreeLfoProcessor::processActive(juce::AudioBuffer<float>& buffer, juce::Mid
         for (int c = 0; c < scChannels; ++c) scData[c] = sc.getReadPointer(c);
     }
     sidechainActive.store(scChannels > 0, std::memory_order_relaxed);
+    // slices that are not being recorded right now go stale
+    for (int sl = 0; sl < numSlots; ++sl)
+        if (scChannels == 0 || ! editorOpen.load(std::memory_order_relaxed) || (sl > 0) != (pMb->load() > 0.5f))
+            scFresh[(size_t) sl].store(0, std::memory_order_relaxed);
 
     // peak meters and the live spectrum only run while the editor is open
     const bool watching = editorOpen.load(std::memory_order_relaxed) && numChannels > 0;
@@ -680,6 +726,7 @@ void FreeLfoProcessor::processSingle(juce::AudioBuffer<float>& mainBuf, const Ho
                 lastOut = outNow;
                 track(waveMin, waveMax, mono);
                 if (scChannels > 0) track(scMin, scMax, scMono);
+                if (scChannels > 0 && isNew) noteSidechainSlice(0, cycleSeconds.load(std::memory_order_relaxed), (float) offset);
 
                 // Rough pitch for the rainbow: zero crossings per sample (with hysteresis against noise), averaged over ~25 ms.
                 // A sine of f Hz crosses zero 2f/sr times per sample.
@@ -910,6 +957,7 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const Hos
                 bandLastOut[b] = outNow;
                 if (scOn)
                 {
+                    if (isNew) noteSidechainSlice(b + 1, bandCycleSeconds[(size_t) b].load(std::memory_order_relaxed), laneSig[b].offset);
                     auto& klo = bandScMin[(size_t) b][(size_t) bin[b]];
                     auto& khi = bandScMax[(size_t) b][(size_t) bin[b]];
                     const float kv = (float) sb[b];

@@ -78,6 +78,14 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     addAndMakeVisible(outTrim);
     addAndMakeVisible(clipBtn);
     addAndMakeVisible(bypassBtn);   // after the panel, so it sits on top of it
+    addAndMakeVisible(kickSafeBtn);
+    addAndMakeVisible(kickPreciseBtn);
+    kickSafeBtn.onClick = [this] { curveFromKick(kickfit::Style::safe); };
+    kickPreciseBtn.onClick = [this] { curveFromKick(kickfit::Style::precise); };
+    kickL.setText("From kick", juce::dontSendNotification);
+    kickL.setJustificationType(juce::Justification::centred);
+    kickL.setInterceptsMouseClicks(false, false);
+    addAndMakeVisible(kickL);
     addChildComponent(mbPanel.modeBox);    // the multiband tab's Sync/Hz and band-count dropdowns sit in this header, like the single tab's
     addChildComponent(mbPanel.bandsBox);
     addChildComponent(mbPanel.engineBox);
@@ -191,6 +199,36 @@ void FreeLfoEditor::setDarkMode(bool dark, bool persist)
     if (persist) saveDarkPreference(dark);
     sendLookAndFeelChange(); // every child re-reads the theme colours
     repaint();
+}
+
+static juce::String kickMessage(const kickfit::Result& r, kickfit::Style style)
+{
+    using S = kickfit::Status;
+    switch (r.status)
+    {
+        case S::ok:
+            if (style == kickfit::Style::safe) return "Safe curve made from your kick. Adjust it, or undo to go back.";
+            return r.soundHeard ? "Precise curve made from your kick and your sound. Adjust it, or undo."
+                                : "Your sound was silent, so Precise assumed it is loud all the way. Undo goes back.";
+        case S::noSidechain: return "No sidechain. Route your kick into the plugin's sidechain first.";
+        case S::notReady:    return "Not enough recorded yet. Play at least one full cycle, then press again.";
+        case S::quiet:       return "No kick heard. Check the sidechain routing and press while playing.";
+        case S::bandQuiet:   return "The kick has very little in this band, so the curve was left alone.";
+        case S::noGaps:      return "The sidechain never fades far enough here to find a kick shape.";
+        case S::severalHits: return juce::String(r.hits) + " hits in one cycle. Set Rate so a cycle holds one kick (often 1/4).";
+        case S::crossesLoop: return "The kick is still ringing at the loop point. Check its timing or Offset.";
+    }
+    return {};
+}
+
+void FreeLfoEditor::curveFromKick(kickfit::Style style)
+{
+    const auto result = proc.fitCurveToKick(shownMb ? mbPanel.currentSlot() : 0, style);
+    const auto text = kickMessage(result, style);
+    if (shownMb) mbPanel.showNote(text, 4500.0);
+    else curve.showNote(text, 4500.0);
+    undoBtn.setEnabled(proc.canUndo());
+    redoBtn.setEnabled(proc.canRedo());
 }
 
 // Switch tabs explicitly. (ParameterAttachment ignores changes it made itself, so relying on its
@@ -321,7 +359,14 @@ void FreeLfoEditor::resized()
     inTrim.toFront(false);
     outTrim.toFront(false);
     clipBtn.setBounds(r.getRight() - 40, r.getBottom() - 92 + 40, 40, 28);
-    if (mb) { mbPanel.setBounds(r); return; }
+    // "From kick": its caption and two chips stacked left of the Waveform knob
+    auto placeKick = [this](juce::Rectangle<int> knob) {
+        const int x = knob.getCentreX() - 98, bottom = knob.getBottom();
+        kickL.setBounds(x - 8, bottom - 62, 72, 14);
+        kickSafeBtn.setBounds(x, bottom - 46, 56, 20);
+        kickPreciseBtn.setBounds(x, bottom - 22, 56, 20);
+    };
+    if (mb) { mbPanel.setBounds(r); placeKick(mbPanel.waveKnobBounds() + r.getPosition()); return; }
 
     auto knobs = r.removeFromBottom(92);   // compact knobs: more room for the curve
     {
@@ -351,6 +396,7 @@ void FreeLfoEditor::resized()
     place(offsetL, offset);
     place(waveL, wave);
     wave.setBounds(wave.getBounds().reduced(44, 0));   // same centre, but its click area stays clear of the gain knobs under the meters
+    placeKick(wave.getBounds());
 }
 
 bool FreeLfoEditor::keyPressed(const juce::KeyPress& k)

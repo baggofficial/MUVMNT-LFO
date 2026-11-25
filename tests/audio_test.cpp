@@ -989,6 +989,173 @@ static void testPointLimitState()
     }
 }
 
+// A kick on the sidechain, locked to the transport: the whole path from the audio to a fitted curve and back to audio.
+static void testCurveFromKick()
+{
+    section("11d. Curve from kick (sidechain)");
+    using kickfit::Status;
+    constexpr int bs = 256;
+    const double sr = 48000.0, beat = 60.0 / kTestBpm;
+    struct KickRig
+    {
+        Rig r;
+        long t = 0;
+        bool sidechainOk = false;
+        KickRig()
+        {
+            juce::AudioProcessor::BusesLayout layout;
+            layout.inputBuses = { juce::AudioChannelSet::stereo(), juce::AudioChannelSet::stereo() };
+            layout.outputBuses = { juce::AudioChannelSet::stereo() };
+            sidechainOk = r.p.setBusesLayout(layout);
+            r.p.prepareToPlay(48000.0, 512);
+        }
+        bool plucks = false;   // false: a constant 0.5 signal; true: a plucked 220 Hz tone on every 16th
+        // plays `seconds` of that signal with a kick on every beat of the sidechain; returns the output
+        Sig play(double seconds, float kickLevel = 0.9f)
+        {
+            Sig out;
+            const double beatSeconds = 60.0 / kTestBpm;
+            for (int done = 0; done < (int) (seconds * 48000.0); done += bs)
+            {
+                juce::AudioBuffer<float> buf(4, bs);
+                juce::MidiBuffer midi;
+                for (int i = 0; i < bs; ++i, ++t)
+                {
+                    const double into = std::fmod((double) t / 48000.0, beatSeconds);
+                    const float k = kickLevel * (float) (std::sin(2.0 * juce::MathConstants<double>::pi * (50.0 * into + 2.4 * (1.0 - std::exp(-into / 0.02)))) * std::exp(-into / 0.09));
+                    const float in = plucks ? (float) (0.5 * std::sin(2.0 * juce::MathConstants<double>::pi * 220.0 * (double) t / 48000.0)
+                                                       * std::exp(-std::fmod(into, beatSeconds / 4.0) / 0.05))
+                                            : 0.5f;
+                    buf.setSample(0, i, in); buf.setSample(1, i, in); buf.setSample(2, i, k); buf.setSample(3, i, k);
+                }
+                r.p.processBlock(buf, midi);
+                for (int i = 0; i < bs; ++i) out.push_back(buf.getSample(0, i));
+                r.host.ppq += (double) bs * kTestBpm / 60.0 / 48000.0;
+            }
+            return out;
+        }
+    };
+    auto curves = [](FreeLfoProcessor& p) { std::string s; for (int k = 0; k < FreeLfoProcessor::numSlots; ++k) s += p.getEnvelope(k).serialize() + "|"; return s; };
+    auto status = [](FreeLfoProcessor& p, int slot) { return p.fitCurveToKick(slot).status; };
+
+    {
+        Rig plain;
+        plain.p.editorOpen.store(true);
+        plain.render(noise(48000, 3));
+        check(status(plain.p, 0) == Status::noSidechain, "without a sidechain it says so and changes nothing");
+    }
+
+    for (float offset : { 0.f, 0.25f })
+    {
+        KickRig k;
+        k.r.param("offset", offset);
+        k.r.p.editorOpen.store(true);
+        const auto before = curves(k.r.p);
+        k.play(beat * 0.5);
+        const bool early = status(k.r.p, 0) == Status::notReady && curves(k.r.p) == before;
+        k.play(beat * 2.0);
+        const auto res = k.r.p.fitCurveToKick(0);
+        const bool made = k.sidechainOk && res.status == Status::ok && curves(k.r.p) != before;
+        check(early && made, fmt("offset %.2f: refused before one full cycle, fits after", offset), fmt("%d points", (int) res.curve.points.size()));
+
+        // the point of it all: a steady signal is now ducked while the kick hits and back at full level before the next one
+        k.play(beat * 3.0);
+        const long startT = k.t;
+        const auto out = k.play(beat * 4.0);
+        float onHit = 0.f, between = 1.f;
+        for (size_t i = 0; i < out.size(); ++i)
+        {
+            const double into = std::fmod((double) (startT + (long) i) / sr, beat);
+            if (into > 0.005 && into < 0.025) onHit = std::max(onHit, std::fabs(out[i]));
+            if (into > 0.75 * beat && into < 0.90 * beat) between = std::min(between, std::fabs(out[i]));
+        }
+        check(onHit < 0.05f && between > 0.47f, fmt("offset %.2f: the output ducks on the kick and recovers", offset),
+              fmt("0.5 in: at most %.3f on the hit, at least %.3f between hits", onHit, between));
+        k.r.p.undo();
+        check(curves(k.r.p) == before, fmt("offset %.2f: one undo brings the old curve back", offset));
+    }
+
+    // Safe and Precise at full depth (the usual setting) and at low depth, heard through the plugin
+    for (float depth : { 1.f, 0.25f })
+        for (bool plucks : { false, true })
+        {
+            double kept[2] = {};
+            for (int style = 0; style < 2; ++style)
+            {
+                KickRig k;
+                k.plucks = plucks;
+                k.r.param("depth", depth);
+                k.r.p.editorOpen.store(true);
+                k.play(beat * 3.0);
+                const auto res = k.r.p.fitCurveToKick(0, style == 0 ? kickfit::Style::safe : kickfit::Style::precise);
+                k.play(beat * 3.0);
+                const long startT = k.t;
+                const auto out = k.play(beat * 8.0);
+                double energy = 0.0, full = 0.0;
+                float onHit = 0.f;
+                for (size_t i = 0; i < out.size(); ++i)
+                {
+                    const double sec = (double) (startT + (long) i) / sr, into = std::fmod(sec, beat);
+                    const double in = plucks ? 0.5 * std::sin(2.0 * juce::MathConstants<double>::pi * 220.0 * sec) * std::exp(-std::fmod(into, beat / 4.0) / 0.05) : 0.5;
+                    energy += (double) out[i] * out[i];
+                    full += in * in;
+                    if (into > 0.004 && into < 0.012) onHit = std::max(onHit, std::fabs(out[i]));
+                }
+                kept[style] = 100.0 * energy / full;
+                // on the kick's loudest moment the gain is 1 - depth
+                const float expected = 0.5f * (1.f - depth);
+                const char* name = style == 0 ? "Safe" : "Precise";
+                check(res.status == Status::ok && onHit < expected + 0.04f && (plucks || onHit > expected - 0.01f),
+                      fmt("%s, depth %.2f, %s: ducked by the depth on the hit", name, depth, plucks ? "plucked bass" : "steady signal"),
+                      fmt("%d points, peak on the hit %.3f (expected about %.3f), %.0f%% of the energy kept", (int) res.curve.points.size(), onHit, expected, kept[style]));
+            }
+            check(plucks ? kept[1] > kept[0] + (depth > 0.5f ? 5.0 : 1.0) : kept[1] > kept[0] - 3.0,
+                  fmt("depth %.2f, %s: Precise keeps %s", depth, plucks ? "plucked bass" : "steady signal", plucks ? "more of the sound than Safe" : "about as much as Safe or more"),
+                  fmt("Safe %.0f%%, Precise %.0f%%", kept[0], kept[1]));
+        }
+
+    {
+        KickRig k;
+        k.r.p.editorOpen.store(true);
+        k.play(beat * 3.0);
+        k.r.param("division", 4.f); // half-length cycles: what was recorded no longer matches
+        k.play(0.05);
+        const bool stale = status(k.r.p, 0) == Status::notReady;
+        k.r.param("division", 5.f);
+        k.play(beat * 3.0);
+        check(stale && status(k.r.p, 0) == Status::ok, "after a rate change it waits for a new full cycle");
+        k.r.p.editorOpen.store(false);
+        k.play(0.1);
+        k.r.p.editorOpen.store(true);
+        check(status(k.r.p, 0) == Status::notReady, "nothing recorded while the window was closed is trusted");
+        k.play(beat * 3.0, 0.f);
+        const auto before = curves(k.r.p);
+        check(status(k.r.p, 0) == Status::quiet && curves(k.r.p) == before, "a silent sidechain is reported and changes nothing");
+        k.r.param("division", 3.f); // one bar: four kicks
+        k.play(beat * 9.0);
+        const auto res = k.r.p.fitCurveToKick(0);
+        check(res.status == Status::severalHits && res.hits == 4 && curves(k.r.p) == before, "four kicks in one cycle are counted and refused", fmt("%d hits", res.hits));
+    }
+
+    for (float engine : { 0.f, 1.f })
+    {
+        KickRig k;
+        k.r.param("mb", 1.f); k.r.param("mbEngine", engine);
+        k.r.p.editorOpen.store(true);
+        k.play(beat * 4.0);
+        const auto before = curves(k.r.p);
+        const auto low = k.r.p.fitCurveToKick(1);
+        const bool onlyLow = low.status == Status::ok && k.r.p.getEnvelope(0).serialize() + "|" == before.substr(0, k.r.p.getEnvelope(0).serialize().size() + 1)
+                             && k.r.p.getEnvelope(1).evaluate(0.01f) < 0.05f;
+        const auto afterLow = curves(k.r.p);
+        const auto high = k.r.p.fitCurveToKick(3);
+        const char* type = engine > 0.5f ? "Dynamic EQ" : "Crossover";
+        check(onlyLow, fmt("multiband %s: the low band gets a curve from the kick's lows", type));
+        check(high.status == Status::bandQuiet && curves(k.r.p) == afterLow, fmt("multiband %s: a band with hardly any kick is left alone", type));
+        check(status(k.r.p, 0) == Status::notReady, fmt("multiband %s: the single curve has no recording", type));
+    }
+}
+
 static void testBadValues()
 {
     section("11c. A setting or curve that turns into NaN / Inf never breaks the audio, or leaves it broken");
@@ -1226,6 +1393,7 @@ int main()
     testSidechainBus();
     testState();
     testPointLimitState();
+    testCurveFromKick();
     testBadValues();
     testRealTimeSafety();
     testThreads();

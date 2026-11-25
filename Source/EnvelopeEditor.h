@@ -23,7 +23,17 @@ public:
 
     bool areControlsHidden() const { return controlsHidden; }
     void animate(); // one step of the editor's animation clock: redraws if anything is moving or changed
-    bool isShowingLimitNote() const { return limitNoteUntil > juce::Time::getMillisecondCounterHiRes(); }
+    // A short message over the top of the graph, gone again after `ms`
+    void showNote(const juce::String& text, double ms = 2800.0)
+    {
+        noteText = text;
+        noteUntil = juce::Time::getMillisecondCounterHiRes() + ms;
+        repaint();
+    }
+    bool isShowingNote() const { return noteUntil > juce::Time::getMillisecondCounterHiRes(); }
+    juce::String currentNote() const { return isShowingNote() ? noteText : juce::String(); }
+    static juce::String limitNoteText() { return juce::String((int) Envelope::maxPoints) + " points is the limit. Double-click a point to remove it."; }
+    bool isShowingLimitNote() const { return currentNote() == limitNoteText(); }
     // Note values at 1/4, 1/2, 3/4 and the end of the cycle ("1/16", "1/8", ...); empty strings in Hz mode
     std::array<juce::String, 4> positionLabels() const;
     // Snapping is off by default; holding Option (macOS) / Alt (Windows) snaps while you drag. If the Snap switch
@@ -108,8 +118,9 @@ private:
 
     juce::Image gridImg, curveImg; // cached layers, see paint()
     size_t curveKey = 0;
-    double limitNoteUntil = 0.0;   // the "point limit" note is on screen until this time
-    bool limitNoteDrawn = false;
+    juce::String noteText;
+    double noteUntil = 0.0;   // the note is on screen until this time
+    bool noteDrawn = false;
     unsigned lastBlock = 0;
 };
 

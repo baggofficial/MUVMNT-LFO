@@ -4,6 +4,7 @@
 #include "../Source/PluginProcessor.h"
 #include "../Source/PluginEditor.h"
 #include "../Source/Presets.h"
+#include "fake_host.h"
 #include <cstdio>
 
 static void setParam(FreeLfoProcessor& p, const char* id, float plain)
@@ -1108,6 +1109,7 @@ static bool handleSnapRegression()
 
 int main(int argc, char** argv)
 {
+    bool kickButtonOk = true;
     setenv("FREELFO_NO_PREFS", "1", 1); // never touch the user's saved light / dark preference
     juce::ScopedJuceInitialiser_GUI init;
     const juce::File dir(argc > 1 ? argv[1] : ".");
@@ -1194,6 +1196,74 @@ int main(int argc, char** argv)
             }
             settle(*qe, 300);
             save(qe->createComponentSnapshot(qe->getLocalBounds(), true, 1.0f), dir.getChildFile(mbOn ? "overlap_multiband.png" : "overlap_single.png"));
+
+            // the Safe and Precise buttons: press each with a kick on the sidechain, at full depth, and look at the result
+            {
+                auto* window = dynamic_cast<FreeLfoEditor*>(qe.get());
+                std::vector<KickButton*> chips;
+                for (auto* child : window->getChildren()) if (auto* b = dynamic_cast<KickButton*>(child)) chips.push_back(b);
+                bool clear = chips.size() == 2;
+                for (const auto size : { juce::Point<int> { 880, 500 }, juce::Point<int> { 2000, 1300 }, juce::Point<int> { 960, 610 } })
+                {
+                    window->setSize(size.x, size.y);
+                    for (auto* chip : chips)
+                    {
+                        // inside the window and clear of every other control that can be clicked
+                        std::function<void(juce::Component&)> walk = [&](juce::Component& c) {
+                            for (auto* child : c.getChildren())
+                            {
+                                if (!child->isVisible() || child == chip) continue;
+                                const auto area = window->getLocalArea(child->getParentComponent(), child->getBounds());
+                                const bool knob = dynamic_cast<juce::Slider*>(child) != nullptr;
+                                // a big knob's bounds are its whole column: what matters is the round knob in the middle
+                                const auto hit = knob && area.getWidth() > 70 ? area.withSizeKeepingCentre(76, area.getHeight()) : area;
+                                if ((knob || dynamic_cast<juce::Button*>(child) != nullptr) && hit.intersects(chip->getBounds())) clear = false;
+                                walk(*child);
+                            }
+                        };
+                        walk(*window);
+                        clear = clear && chip->isVisible() && window->getLocalBounds().contains(chip->getBounds());
+                    }
+                }
+                const int slot = mbOn ? 1 : 0;
+                setParam(q, "depth", 1.f);
+                setParam(q, "depthL", 1.f);
+                FakeHost host2;
+                host2.bpm = 130.0;
+                // a bass that is plucked on every 16th, so there is room for Precise to use
+                auto feed = [&](int blocks) {
+                    for (int blk = 0; blk < blocks; ++blk)
+                    {
+                        for (int i = 0; i < bs; ++i, ++tq)
+                        {
+                            const double sec = (double) tq / sr, inBeat = std::fmod(sec, 60.0 / 130.0);
+                            const float bass = (float) (0.75 * std::sin(2.0 * juce::MathConstants<double>::pi * 55.0 * sec) * std::exp(-std::fmod(inBeat, 15.0 / 130.0) / 0.07));
+                            const float kickSig = (float) (std::sin(2.0 * juce::MathConstants<double>::pi * 60.0 * inBeat) * std::exp(-inBeat * 9.0) * 0.9);
+                            b4.setSample(0, i, bass); b4.setSample(1, i, bass); b4.setSample(2, i, kickSig); b4.setSample(3, i, kickSig);
+                        }
+                        q.processBlock(b4, midi);
+                        host2.ppq += bs * 130.0 / 60.0 / sr;
+                    }
+                };
+                q.setPlayHead(&host2);
+                host2.ppq = (double) tq / sr * 130.0 / 60.0;
+                feed(300);
+                for (auto* chip : chips)
+                {
+                    const auto beforeFit = q.getEnvelope(slot).serialize();
+                    chip->onClick();
+                    const bool made = q.getEnvelope(slot).serialize() != beforeFit && window->currentNote().startsWith(chip->precise ? "Precise" : "Safe");
+                    const auto note = window->currentNote();
+                    feed(300); // so the scope shows what the new curve does to the sound
+                    settle(*qe, 300);
+                    const juce::String name = juce::String("kickfit_") + (mbOn ? "multiband_" : "single_") + (chip->precise ? "precise" : "safe") + ".png";
+                    save(qe->createComponentSnapshot(qe->getLocalBounds(), true, 1.0f), dir.getChildFile(name));
+                    std::printf("%s button, %s: clear of other controls %s, makes a curve and says so %s  (%d points: %s)\n", chip->precise ? "Precise" : "Safe",
+                                mbOn ? "multiband" : "single", clear ? "ok" : "FAILED", made ? "ok" : "FAILED", (int) q.getEnvelope(slot).points.size(), note.toRawUTF8());
+                    kickButtonOk = kickButtonOk && clear && made;
+                }
+                q.setPlayHead(nullptr);
+            }
         }
     }
 
@@ -1388,5 +1458,5 @@ int main(int argc, char** argv)
     }
     const bool rz = resizeRegression() && labelRegression() && resetClickRegression() && hostMenuRegression() && pointLimitRegression() && loudScopeRegression();
     const bool un = undoRegression() && presetRegression() && handleSnapRegression() && deletePointRegression();
-    return un && a && b && c && d && f && g && h && k && m && n && o && q && rz ? 0 : 1;
+    return kickButtonOk && un && a && b && c && d && f && g && h && k && m && n && o && q && rz ? 0 : 1;
 }

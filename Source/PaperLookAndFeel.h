@@ -89,6 +89,32 @@ public:
     }
 };
 
+// "Curve from kick": two small chips in the sidechain's colour, beside the Waveform knob.
+class KickButton : public juce::Button
+{
+public:
+    const bool precise;
+
+    explicit KickButton(bool isPrecise) : juce::Button(isPrecise ? "precise curve from kick" : "safe curve from kick"), precise(isPrecise)
+    {
+        setTooltip(isPrecise ? "Precise: ducks only as much as your kick and your sound need to fit together (looks at both; press while playing)"
+                             : "Safe: a simple curve that gives your kick plenty of room (looks at the kick only; press while playing)");
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+    }
+
+    void paintButton(juce::Graphics& g, bool over, bool down) override
+    {
+        const auto b = getLocalBounds().toFloat().reduced(0.75f);
+        g.setColour(paper::amber.withAlpha(down ? 0.35f : over ? 0.2f : 0.08f));
+        g.fillRoundedRectangle(b, 6.f);
+        g.setColour(paper::amber.withAlpha(over ? 1.f : 0.7f));
+        g.drawRoundedRectangle(b, 6.f, 1.2f);
+        g.setColour(paper::dark ? paper::amber.brighter(0.3f) : paper::amber.darker(0.5f));
+        g.setFont(fonts::semibold(10.f));
+        g.drawText(precise ? "PRECISE" : "SAFE", b, juce::Justification::centred);
+    }
+};
+
 // Curved arrow: undo (points left) or redo (points right). Greyed out when there is nothing to undo / redo.
 class HistoryButton : public juce::Button
 {

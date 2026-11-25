@@ -17,6 +17,8 @@ public:
     bool keyPressed(const juce::KeyPress&) override;
     void setDarkMode(bool dark, bool persist = true); // light / dark theme; persist = remember it for next time
     void selectBandForSnapshot(int band) { mbPanel.selectBand(band); }
+    void curveFromKick(kickfit::Style); // the Safe / Precise buttons: a starting curve for the curve on screen
+    juce::String currentNote() const { return shownMb ? mbPanel.currentNote() : curve.currentNote(); }
     // One step of everything that moves in the window. Normally driven by the display; public for the screenless tests.
     void animate()
     {
@@ -51,6 +53,8 @@ private:
     BypassButton bypassBtn;        // top right, beside Reset
     juce::TextButton dotBtn { juce::String::fromUTF8("\xE2\x80\xA2") }, tripBtn { "3" }; // dotted / triplet, like Xfer's LFO Tool
     ThemeToggle themeBtn;
+    KickButton kickSafeBtn { false }, kickPreciseBtn { true };   // beside the Waveform knob, in both tabs
+    juce::Label kickL;
     HistoryButton undoBtn { false }, redoBtn { true };
     juce::Slider gridBox;                                                                   // draggable number: grid lines + snap
     juce::Label rateL, depthL, smoothL, offsetL, waveL;

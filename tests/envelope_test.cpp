@@ -1,6 +1,9 @@
 // Build & run:  clang++ -std=c++17 tests/envelope_test.cpp -o /tmp/envtest && /tmp/envtest
 #include "../Source/Envelope.h"
 #include "../Source/Presets.h"
+#include "../Source/KickToCurve.h"
+#include <functional>
+#include <limits>
 #include <array>
 #include <cassert>
 #include <cstdio>
@@ -336,6 +339,150 @@ int main()
         {
             assert(pr.env.points.size() <= Envelope::maxPoints);
             assert(pr.env.simplifiedCopy().points.size() <= Envelope::maxPoints);
+        }
+    }
+
+    // ---- curve from kick: many shapes of sidechain signal, sliced the way the plugin records them
+    {
+        using kickfit::Status;
+        const double beat = 60.0 / 130.0, twoPi = 6.283185307179586;
+        auto slices = [](const std::function<double(double)>& f, double cycle) {
+            std::vector<float> peaks(512, 0.f);
+            const int total = (int) (cycle * 48000.0);
+            for (int i = 0; i < total; ++i)
+            {
+                float& slice = peaks[(size_t) ((double) i / total * 512.0)];
+                slice = std::max(slice, (float) std::fabs(f(i / 48000.0)));
+            }
+            return peaks;
+        };
+        auto kick = [twoPi](double t, double hz, double decay, double level) {
+            return t < 0.0 ? 0.0 : level * std::sin(twoPi * (hz * t + 2.4 * (1.0 - std::exp(-t / 0.02)))) * std::exp(-t / decay);
+        };
+        auto run = [&](const std::function<double(double)>& f, double cycle) { return kickfit::analyse(slices(f, cycle), cycle); };
+        auto usable = [](const kickfit::Result& r) {
+            const auto& e = r.curve;
+            if (r.status != Status::ok || e.points.size() < 3 || e.points.size() > 6) return false;
+            if (e.points.front().x != 0.f || e.points.back().x != 1.f || e.points.front().y != e.points.back().y) return false;
+            for (size_t i = 1; i < e.points.size(); ++i) if (!(e.points[i].x > e.points[i - 1].x)) return false;
+            for (int i = 0; i < 4096; ++i) { const float v = e.evaluate((float) i / 4096.f); if (!(v >= 0.f && v <= 1.f)) return false; }
+            return true;
+        };
+        // where the curve first gets back to half volume (as a share of the cycle)
+        auto halfWay = [](const Envelope& e) { for (int i = 0; i < 1000; ++i) if (e.evaluate(i / 1000.f) >= 0.5f) return i / 1000.f; return 1.f; };
+
+        // plain kicks, short to long: ducked on the hit, full again later, and a longer kick ducks for longer
+        float last = 0.f;
+        for (double decay : { 0.04, 0.07, 0.10, 0.18 })
+        {
+            const auto r = run([&](double t) { return kick(t, 50.0, decay, 0.9); }, beat);
+            assert(usable(r));
+            assert(r.curve.evaluate(0.01f) < 0.05f && r.curve.evaluate(0.90f) > 0.95f);
+            assert(halfWay(r.curve) > last);
+            last = halfWay(r.curve);
+        }
+        // the level of the sidechain does not matter, only its shape; a very low kick has no false gaps
+        const auto loud = run([&](double t) { return kick(t, 50.0, 0.10, 0.9); }, beat);
+        const auto faint = run([&](double t) { return kick(t, 50.0, 0.10, 0.03); }, beat);
+        assert(usable(faint) && faint.curve.serialize() == loud.curve.serialize());
+        assert(usable(run([&](double t) { return kick(t, 32.0, 0.12, 0.9); }, beat)));
+        assert(usable(run([&](double t) { return std::max(-0.6, std::min(0.6, 4.0 * kick(t, 50.0, 0.09, 0.9))); }, beat))); // clipped
+        // other rates, from 1/16 to half a bar, with one hit each
+        for (double cycle : { beat / 4.0, beat / 2.0, beat, beat * 2.0 })
+            assert(usable(run([&](double t) { return kick(t, 55.0, cycle * 0.15, 0.9); }, cycle)));
+        // a hit a little late, and one a little early (its drop comes early too)
+        assert(usable(run([&](double t) { return kick(t - 0.03 * beat, 50.0, 0.09, 0.9); }, beat)));
+        {
+            const auto r = run([&](double t) { return kick(t, 50.0, 0.08, 0.9) + kick(t - 0.95 * beat, 50.0, 0.08, 0.9); }, beat);
+            assert(usable(r) && r.curve.evaluate(0.97f) < 0.05f && r.curve.evaluate(0.80f) > 0.95f);
+        }
+        // a kick in the middle of the cycle: full level around it, ducked on it
+        {
+            const auto r = run([&](double t) { return kick(t - 0.5 * beat, 50.0, 0.05, 0.9); }, beat);
+            assert(usable(r) && r.curve.evaluate(0.2f) > 0.99f && r.curve.evaluate(0.52f) < 0.05f && r.curve.evaluate(0.95f) > 0.95f);
+        }
+        // things that are not one clean hit are refused
+        assert(run([](double) { return 0.0; }, beat).status == Status::quiet);
+        assert(run([&](double t) { return kick(t, 50.0, 0.10, 0.004); }, beat).status == Status::quiet);
+        assert(run([&](double t) { return 0.7 * std::sin(twoPi * 55.0 * t); }, beat).status == Status::noGaps);
+        assert(run([&](double t) { return kick(t, 40.0, 1.5, 0.9); }, beat).status == Status::noGaps);          // a long 808
+        const auto four = run([&](double t) { double s = 0; for (int k = 0; k < 4; ++k) s += kick(t - k * beat, 50.0, 0.06, 0.9); return s; }, beat * 4.0);
+        assert(four.status == Status::severalHits && four.hits == 4);
+        assert(run([&](double t) { return kick(t - 0.8 * beat, 50.0, 0.12, 0.9) + kick(t + 0.2 * beat, 50.0, 0.12, 0.9); }, beat).status == Status::crossesLoop);
+        // nonsense in, no crash out
+        assert(kickfit::analyse({}, beat).status == Status::quiet);
+        assert(kickfit::analyse(std::vector<float>(512, std::numeric_limits<float>::quiet_NaN()), beat).status == Status::quiet);
+        assert(kickfit::analyse(std::vector<float>(512, 0.5f), 0.0).status == Status::quiet);
+        // ---- precise: looks at the kick and at the sound being ducked
+        {
+            using kickfit::Style;
+            auto usablePrecise = [&](const kickfit::Result& r) {
+                const auto& e = r.curve;
+                if (r.status != Status::ok || e.points.size() < 3 || e.points.size() > 12) return false;
+                if (e.points.front().x != 0.f || e.points.back().x != 1.f || e.points.front().y != e.points.back().y) return false;
+                for (size_t i = 1; i < e.points.size(); ++i) if (!(e.points[i].x > e.points[i - 1].x)) return false;
+                for (int i = 0; i < 4096; ++i) { const float v = e.evaluate((float) i / 4096.f); if (!(v >= 0.f && v <= 1.f)) return false; }
+                return true;
+            };
+            auto bass = [twoPi](double t) { return 0.7 * std::sin(twoPi * 55.0 * t); };
+            const std::function<double(double)> sounds[] = {
+                bass,
+                [&](double t) { return bass(t) * std::min(1.0, 0.25 + t / (beat * 0.6)); },       // fading in
+                [&](double t) { return bass(t) * std::exp(-std::fmod(t, beat / 4.0) / 0.05); },    // plucks
+                [&](double t) { return t > beat * 0.5 ? bass(t) : 0.0; },                          // off the beat only
+                [](double) { return 0.0; } };
+            for (double decay : { 0.05, 0.09, 0.18 })
+            {
+                const auto kickPeaks = slices([&](double t) { return kick(t, 50.0, decay, 0.9); }, beat);
+                const auto alone = kickfit::analyse(kickPeaks, beat, Style::precise);
+                assert(usablePrecise(alone) && !alone.soundHeard);
+                for (const auto& sound : sounds)
+                {
+                    const auto soundPeaks = slices(sound, beat);
+                    const auto r = kickfit::analyse(kickPeaks, beat, Style::precise, soundPeaks);
+                    assert(usablePrecise(r));
+                    assert(r.curve.evaluate(0.004f) < 0.35f && r.curve.evaluate(0.93f) > 0.9f);   // down on the hit, back before the next
+                    // kick and ducked sound, each measured against its own peak, fit together (a little over at worst)
+                    const auto k = kickfit::detail::outline(kickPeaks, 14), x = kickfit::detail::outline(soundPeaks, 14);
+                    const float kTop = *std::max_element(k.begin(), k.end()), xTop = std::max(1e-9f, *std::max_element(x.begin(), x.end()));
+                    for (int i = 0; i < 512; ++i)
+                        assert(k[(size_t) i] / kTop + r.curve.evaluate((i + 0.5f) / 512.f) * x[(size_t) i] / xTop < 1.3f);
+                    // never ducks more than it would for a sound that is loud all the way (apart from fitting slack)
+                    double mine = 0.0, worstCase = 0.0;
+                    for (int i = 0; i < 512; ++i) { mine += r.curve.evaluate((i + 0.5f) / 512.f); worstCase += alone.curve.evaluate((i + 0.5f) / 512.f); }
+                    assert(mine > worstCase - 512 * 0.04);
+                }
+            }
+            // precise refuses exactly what safe refuses
+            for (const auto& f : { std::function<double(double)>([](double) { return 0.0; }), std::function<double(double)>(bass),
+                                   std::function<double(double)>([&](double t) { return kick(t, 40.0, 1.5, 0.9); }) })
+                assert(kickfit::analyse(slices(f, beat), beat, Style::precise).status == run(f, beat).status);
+        }
+        // random junk must give either a refusal or a usable curve
+        unsigned seed = 12345;
+        auto rnd = [&seed] { seed = seed * 1664525u + 1013904223u; return (float) (seed >> 8) / 16777216.f; };
+        for (int trial = 0; trial < 600; ++trial)
+        {
+            std::vector<float> peaks(512, 0.f);
+            for (int hit = 0, count = 1 + trial % 3; hit < count; ++hit)
+            {
+                const int at = (int) (rnd() * 512.f), length = 2 + (int) (rnd() * rnd() * 500.f);
+                const float level = 0.05f + rnd();
+                for (int i = 0; i < length; ++i) { float& s = peaks[(size_t) ((at + i) % 512)]; s = std::max(s, level * (1.f - (float) i / length) * (0.5f + 0.5f * rnd())); }
+            }
+            const double cycle = 0.05 + 4.0 * rnd();
+            const auto r = kickfit::analyse(peaks, cycle);
+            assert(r.status != Status::ok || usable(r));
+            std::vector<float> sound(512);
+            for (auto& v : sound) v = trial % 5 == 0 ? 0.f : rnd() * rnd();
+            const auto fine = kickfit::analyse(peaks, cycle, kickfit::Style::precise, sound);
+            assert(fine.status == r.status);
+            if (fine.status == Status::ok)
+            {
+                assert(fine.curve.points.size() >= 3 && fine.curve.points.size() <= 12 && fine.curve.points.front().y == fine.curve.points.back().y);
+                for (size_t i = 1; i < fine.curve.points.size(); ++i) assert(fine.curve.points[i].x >= fine.curve.points[i - 1].x);
+                for (int i = 0; i < 1024; ++i) { const float v = fine.curve.evaluate(i / 1024.f); assert(v >= 0.f && v <= 1.f); }
+            }
         }
     }
 

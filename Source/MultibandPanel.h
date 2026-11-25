@@ -85,6 +85,9 @@ public:
     void resetCurve() { curve.resetCurve(); }
     void selectBand(int band); // which band's curve is edited (also used by the headless snapshot tool)
     void setSnap(bool on) { curve.snapToGrid = on; }
+    void showNote(const juce::String& text, double ms) { curve.showNote(text, ms); }
+    juce::String currentNote() const { return curve.currentNote(); }
+    juce::Rectangle<int> waveKnobBounds() const { return wave.getBounds(); }
     void animate() // one step of the editor's animation clock, for everything that moves in this tab
     {
         strip.animate();

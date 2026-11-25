@@ -34,6 +34,7 @@ It is an independent, from-scratch implementation inspired by the workflow of Xf
 - In Sync mode, **very small note values under the graph** mark the quarters of the cycle (at a 1/4 rate: 1/16, 1/8, 3/16, 1/4; dotted and triplet rates add D or T), so you can find the middle at a glance. They are hidden in Hz mode.
 - **Undo / redo** for every edit (Ctrl/Cmd+Z, Shift+Ctrl/Cmd+Z or Ctrl+Y, or the arrows in the header): one step per drag, includes reset and the Bezier switch, and keeps the last 50 steps (about 40 KB).
 - **Presets and copy/paste** from the header's curve button: 20 factory shapes (house pump, soft and hard duck, long release, pump x2, nine kick-style rise/hold/drop shapes, sine, triangle, saws, flat) shown as small curve thumbnails, **Save curve as preset...** for your own, **Copy curve** and **Paste curve** (works between plugin instances and projects). A preset or pasted curve replaces only the curve you are editing (the selected band in Multiband) and is undoable.
+- **Curve from kick** (the amber **Safe** and **Precise** buttons beside the Waveform knob): one press turns the last cycle of your sidechain kick into an editable curve. **Safe** (3 to 6 points) gives the kick plenty of room; **Precise** (up to 12 points) also looks at your sound and ducks only as much as needed for the two to fit. See [Using it](#using-it).
 - **All-band presets** (Multiband only, in their own column, drawn in the band colours): four for 3 bands (Low-end focus, Waterfall, Gentle glue, Off-beat tops) and four for 2 bands (Lows only, Soft top, Long lows with quick highs, Seesaw). One click sets every band's curve and switches to that band count (with 2 bands, the mid curve is left as it was). Rates, depths and split frequencies stay as you set them, and one undo brings back both the curves and the band count.
 - Click empty space to hide every point and handle and see the bare curve; click the curve to bring them back.
 - The first and last points always share one height, so the loop has no click where it wraps around.
@@ -109,6 +110,19 @@ Only the VST3 format is built (plus a standalone app for development). AU, AAX a
 | Click the end-of-cycle meter | Show or hide the end-zone bar |
 | Half-moon button | Light / dark theme |
 | **Reset** | Restore the current curve to its default |
+
+**Curve from kick.** Route your kick into the plugin's sidechain, set **Rate** so that one cycle holds one hit (usually 1/4 for a kick on every beat), play the project, and press **Safe** or **Precise** while it plays. It reads the loudness of the last full cycle once, when pressed; it does not keep following the audio. In Multiband it shapes only the selected band, from the matching part of the kick. One undo brings your old curve back. It changes only the curve: Depth, Smooth, Offset and Rate stay as they are, so lower **Depth** for gentler ducking, and remember that **Smooth** delays the shape. Treat the result as a starting point and adjust it by ear.
+
+| | Safe | Precise |
+|---|---|---|
+| Looks at | the kick only | the kick **and** your sound |
+| Curve | 3 to 6 points: down while the kick is strong, one smooth rise | up to 12 points: follows how much room is left, including dips where both are loud again |
+| Gives you | a predictable duck that leaves the kick plenty of room | more of your sound, mostly when it is plucked, rhythmic or fading in. With a steady, loud sound the two keep about the same amount |
+| Watch out for | ducking more than strictly needed | it is fitted to **one cycle** of your sound. If the next bars play different notes or a different rhythm, it can leave too little or too much room. It is also a more detailed shape to edit by hand |
+
+Both always duck fully at the kick's loudest moment (at Depth 1.000). Precise measures the kick and your sound each against its own peak, so sidechain send levels don't matter; in effect it assumes the two are about equally loud in your mix. It compares peak levels, not frequencies or perceived loudness, so it is not a guarantee against clipping or masking. If your sound is silent when you press it, it assumes full level and says so. To switch between the two, just press the other button: both read your incoming audio from before the ducking.
+
+If it can't make a sensible curve it says why and changes nothing: no sidechain, silence, less than a full cycle recorded since the window opened or the rate or offset changed, more than one hit in a cycle, a sound that never fades far enough (a long 808 or a bass line), a hit still ringing at the loop point, or (Multiband) a band with very little of the kick in it.
 
 **Rate knob.** In Sync mode it steps through the straight note values from slow to fast; the **•** (dotted) and **3** (triplet) buttons next to it modify the value. In Hz mode it is a continuous frequency.
 
@@ -210,7 +224,7 @@ Everything below runs offline, without a DAW or a sound card. A small **fake DAW
 
 | Program | What it checks | How to run |
 |---|---|---|
-| `LfoAudioTest` | **186 audio checks**: bit-exact null at 100%, exact silence at 0%, transparency of every crossover slope, the Dynamic EQ (bit-exact when open, never boosting, band isolation), block-size independence, clicks on 30 kinds of parameter change, filter stability across 4 sample rates, NaN/Inf and zero-length blocks, a fuzz test that randomises every parameter and the transport, tempo accuracy at 130 bpm, Hz accuracy, MIDI restart, the sidechain bus, bypass (bit-exact, click-free, allocation-free), the output clipper, the input and output gain knobs, the peak meters and the spectrum analyser, state save/load (including projects over the point limit), settings, curves and projects containing NaN or infinity, zero allocations on the audio thread, thread safety while the curve is edited, CPU worst cases and denormals | `build/LfoAudioTest_artefacts/Release/LfoAudioTest` |
+| `LfoAudioTest` | **215 audio checks**: bit-exact null at 100%, exact silence at 0%, transparency of every crossover slope, the Dynamic EQ (bit-exact when open, never boosting, band isolation), block-size independence, clicks on 30 kinds of parameter change, filter stability across 4 sample rates, NaN/Inf and zero-length blocks, a fuzz test that randomises every parameter and the transport, tempo accuracy at 130 bpm, Hz accuracy, MIDI restart, the sidechain bus, bypass (bit-exact, click-free, allocation-free), the output clipper, the input and output gain knobs, the peak meters and the spectrum analyser, curve from kick (Safe and Precise with a sidechain kick through the whole plugin, at Depth 1.00 and 0.25, in Single and both Multiband types, with its refusals), state save/load (including projects over the point limit), settings, curves and projects containing NaN or infinity, zero allocations on the audio thread, thread safety while the curve is edited, CPU worst cases and denormals | `build/LfoAudioTest_artefacts/Release/LfoAudioTest` |
 | `tests/envelope_test.cpp` | The curve model: Bezier evaluation, Simple-mode bends, conversions between the two, the default curves, saving and loading, the 64-point limit | `clang++ -std=c++17 tests/envelope_test.cpp -o envtest && ./envtest` |
 | `tests/crossover_test.cpp` | The crossover maths for all six slopes, mixed slopes, and the drawn response curves | `clang++ -std=c++17 tests/crossover_test.cpp -o xotest && ./xotest` |
 | `LfoMonkey` | Random clicks, drags, resizing, closing and reopening the window, automation, undo, and normal and damaged project loads, while audio runs on a second thread. Checks that the audio and curves stay valid. Most useful built with sanitizers (`-fsanitize=address,undefined` or `-fsanitize=thread`) | `build/LfoMonkey_artefacts/Release/LfoMonkey [seed] [actions]` |
@@ -244,6 +258,7 @@ Source/
   Envelope.h            the curve model (no JUCE; unit-testable)
   Crossover.h           the Linkwitz-Riley band splitter (no JUCE; unit-testable)
   DynamicEq.h           the zero-latency Dynamic EQ multiband type (no JUCE)
+  KickToCurve.h         "curve from kick": the sidechain analysis (no JUCE; unit-testable)
   Spectrum.h            FFT analyser for the live spectrum (no JUCE; allocation-free)
   PluginEditor.*        the window: header, tabs, knobs
   EnvelopeEditor.*      the curve editor (points, handles, snapping, drawing)

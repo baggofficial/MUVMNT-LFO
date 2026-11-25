@@ -6,6 +6,7 @@
 #include "Envelope.h"
 #include "Crossover.h"
 #include "DynamicEq.h"
+#include "KickToCurve.h"
 
 class FreeLfoProcessor : public juce::AudioProcessor
 {
@@ -64,6 +65,9 @@ public:
     // Replace every band's curve at once (a multiband preset) and switch to its band count: one undo step for both.
     // With two bands only low and high are replaced.
     void applyBandCurves(const std::array<Envelope, 3>& curves, bool threeBands);
+    // "Curve from kick" (message thread): builds a starting curve for `slot` from the last cycle of the sidechain signal
+    // (precise: and of the sound being ducked) and applies it as one undo step. Anything but ok leaves every curve untouched.
+    kickfit::Result fitCurveToKick(int slot, kickfit::Style style = kickfit::Style::safe);
     bool undo();
     bool redo();
     static const char* bandSuffix(int band) { return band == 0 ? "L" : band == 1 ? "M" : "H"; }
@@ -80,6 +84,9 @@ public:
     // Same, for the optional sidechain input (e.g. the kick that triggers the pump).
     std::array<std::atomic<float>, waveBins> scMin {}, scMax {};
     std::atomic<bool> sidechainActive { false };
+    // How many sidechain slices have been recorded in a row at the current rate and offset, per curve slot
+    // (up to waveBins = one whole cycle): "curve from kick" must not read leftovers from an earlier setting
+    std::array<std::atomic<int>, 4> scFresh {};
     // Multiband: the sidechain signal split by a copy of the crossover, so each band can be compared with the same part of it.
     std::array<std::array<std::atomic<float>, waveBins>, 3> bandScMin {}, bandScMax {};
     std::atomic<double> cycleSeconds { 0.5 }; // length of one LFO cycle, for the editor's smoothing preview
@@ -135,6 +142,21 @@ public:
 private:
     static juce::AudioProcessorValueTreeState::ParameterLayout createLayout();
     void syncTable(int slot);
+    double scKeyCycle[4] = {};   // audio thread: the cycle length and offset the sidechain slices were recorded with
+    float scKeyOffset[4] = {};
+    void noteSidechainSlice(int slot, double cycle, float offset)   // once per new slice
+    {
+        auto& fresh = scFresh[(size_t) slot];
+        int count = fresh.load(std::memory_order_relaxed);
+        if (std::fabs(cycle - scKeyCycle[slot]) > 0.005 * cycle || offset != scKeyOffset[slot])
+        {
+            scKeyCycle[slot] = cycle;
+            scKeyOffset[slot] = offset;
+            count = 0;
+        }
+        if (count < waveBins) ++count;
+        fresh.store(count, std::memory_order_relaxed);
+    }
     struct HostInfo { double bpm = 120.0, ppq = 0.0; bool havePpq = false, playing = false; };
     void processSingle(juce::AudioBuffer<float>& main, const HostInfo& host, const juce::MidiBuffer& midi, int midiOffset,
                        const float* const* scData, int scChannels);

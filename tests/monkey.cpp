@@ -132,7 +132,7 @@ int main(int argc, char** argv)
             proc.processBlock(buf, midi);
             for (int c = 0; c < 2; ++c)
                 for (int i = 0; i < n; ++i)
-                    if (!std::isfinite(buf.getSample(c, i)) || std::fabs(buf.getSample(c, i)) > 400.f) // +48 dB of trim is legal
+                    if (!std::isfinite(buf.getSample(c, i)) || std::fabs(buf.getSample(c, i)) > 1000.f) // legal: +48 dB of trim (x251), and a crossover can raise noise peaks 3x on top
                         if (badSamples++ < 6)
                         {
                             auto v = [&](const char* id) { return (double) proc.apvts.getRawParameterValue(id)->load(); };
@@ -219,6 +219,7 @@ int main(int argc, char** argv)
                 proc.applyBandCurves({ set.low, set.mid, set.high }, set.three);
             }
         }
+        else if (what < 0.835f) proc.fitCurveToKick(pick(FreeLfoProcessor::numSlots), unit() < 0.5f ? kickfit::Style::safe : kickfit::Style::precise); // the kick buttons
         else if (what < 0.86f) editor->setSize(880 + pick(1121), 500 + pick(801));
         else if (what < 0.875f) { popup.reset(); proc.editorBeingDeleted(editor.get()); editor.reset(); } // as a host closes it
         else if (what < 0.89f) popup = PresetMenu::createPanel(proc, pick(FreeLfoProcessor::numSlots), nullptr, editor->getLookAndFeel());
