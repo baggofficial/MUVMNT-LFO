@@ -11,6 +11,20 @@ FetchContent_Declare(JUCE
     GIT_SHALLOW ON)
 FetchContent_MakeAvailable(JUCE)
 
+# JUCE 8.0.6 crashes if a VST3 host supports right-click parameter menus but returns no menu for a request
+# (https://github.com/juce-framework/JUCE/issues/1788). Add the missing check to the fetched copy before it is compiled.
+set(vst3_client "${juce_SOURCE_DIR}/modules/juce_audio_plugin_client/juce_audio_plugin_client_VST3.cpp")
+file(READ "${vst3_client}" vst3_code)
+if(NOT vst3_code MATCHES "FreeLfo: no menu")
+    set(unchecked "return std::make_unique<EditorContextMenu> (editor, menu);")
+    string(FIND "${vst3_code}" "${unchecked}" unchecked_at)
+    if(unchecked_at EQUAL -1)
+        message(FATAL_ERROR "JUCE's VST3 context menu code has changed: check whether the null-menu patch in CMakeLists.txt is still needed")
+    endif()
+    string(REPLACE "${unchecked}" "if (menu == nullptr) return {}; // FreeLfo: no menu from the host\n\n            ${unchecked}" vst3_code "${vst3_code}")
+    file(WRITE "${vst3_client}" "${vst3_code}")
+endif()
+
 juce_add_plugin(FreeLfoTool
     COMPANY_NAME "FreeLfo"
     PRODUCT_NAME "Free LFO Tool"

@@ -158,6 +158,11 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     modeSwitch.onClick = [this] { setMultiband(!multibandOn()); };
     addAndMakeVisible(modeSwitch);
 
+    // which parameter each knob drives, for the DAW's right-click options (the Rate knob's is set in bindRate)
+    for (auto& [knob, id] : std::initializer_list<std::pair<ResetClickSlider*, const char*>> {
+             { &depth, "depth" }, { &smooth, "smooth" }, { &offset, "offset" }, { &wave, "waveOpacity" },
+             { &inTrim, "inGain" }, { &outTrim, "outGain" } })
+        knob->hostParam = proc.apvts.getParameter(id);
     depthA = std::make_unique<SA>(proc.apvts, "depth", depth);
     smoothA = std::make_unique<SA>(proc.apvts, "smooth", smooth);
     offsetA = std::make_unique<SA>(proc.apvts, "offset", offset);
@@ -224,6 +229,7 @@ void FreeLfoEditor::bindRate()
 {
     const bool syncMode = mode.getSelectedItemIndex() <= 0;
     rateA.reset(); // detach before swapping which parameter the knob drives
+    rate.hostParam = proc.apvts.getParameter(syncMode ? "division" : "hz");
 
     // NB: creating a SliderAttachment installs its own text functions, so ours go in AFTER it, or they are ignored
     if (syncMode)

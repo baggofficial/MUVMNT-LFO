@@ -13,6 +13,7 @@ It is an independent, from-scratch implementation inspired by the workflow of Xf
 - [Features](#features)
 - [Install](#install)
 - [Using it](#using-it)
+- [For producers: the trade-offs](#for-producers-the-trade-offs)
 - [How it sounds: the design rules](#how-it-sounds-the-design-rules)
 - [Performance](#performance)
 - [Testing](#testing)
@@ -86,7 +87,7 @@ Only the VST3 format is built (plus a standalone app for development). AU, AAX a
 
 | Do this | To get this |
 |---|---|
-| Double-click a knob, or right-click it | Type an exact value (rates accept `1/8`, `8`, `1 bar`...). Right-click also offers Reset to default; Cmd/Ctrl-click resets too |
+| Double-click a knob, or right-click it | Type an exact value (rates accept `1/8`, `8`, `1 bar`...). Right-click also offers Reset to default, followed by your DAW's own options for that parameter (such as automation) if it provides them to VST3 plugins; Cmd/Ctrl-click resets too |
 | Double-click empty space | Add a point (new points start smooth, with their handles spread out) |
 | Drag a point | Move it (the first and last points move together vertically) |
 | Drag a handle | Bend the curve; the opposite handle follows on smooth points |
@@ -100,7 +101,7 @@ Only the VST3 format is built (plus a standalone app for development). AU, AAX a
 | Drag a diamond (Simple mode) | Bend that segment through the point; double-click to straighten |
 | Drag the number next to **Snap** | Change the number of grid lines |
 | Wave icon (top left) | Switch between **Single** (one wave) and **Multiband** (three stacked waves); the icon shows the current mode |
-| Small knobs under the meters | Input / output gain; double-click, Ctrl-click (Cmd on macOS) or Alt/Option-click resets to 0 dB |
+| Small knobs under the meters | Input / output gain (right-click for reset and your DAW's options); double-click, Ctrl-click (Cmd on macOS) or Alt/Option-click resets to 0 dB |
 | Ctrl-click (Cmd on macOS) or Alt-click a knob | Reset it to its default |
 | CLIP button (multiband, under the gain knobs) | Cycle the output clipper: Off / Soft / Hard |
 | Power button (top right) | Bypass |
@@ -111,6 +112,55 @@ Only the VST3 format is built (plus a standalone app for development). AU, AAX a
 **Rate knob.** In Sync mode it steps through the straight note values from slow to fast; the **•** (dotted) and **3** (triplet) buttons next to it modify the value. In Hz mode it is a continuous frequency.
 
 **Multiband tab.** Click a coloured region on the strip to edit that band, drag a split line to move it, click the pill on a split line to pick its slope (Crossover only), and use the **S** chips to solo bands. The knobs below belong to the selected band. The chain beside each of Rate, Depth, Smooth and Offset links that control: every band then follows one value (the mid band's, or the low band's in 2-band mode), and turning a link on copies the value you were looking at.
+
+## For producers: the trade-offs
+
+**Short version:** use **Single** unless you need different ducking for the lows, mids and highs. Multiband gives you more control, but it uses filters, and filters have side effects.
+
+### Single band
+
+Single band is only a volume knob that follows your curve. It has no filters and adds no latency or phase shift. Where the curve is at 100%, your audio passes through bit for bit (with the IN and OUT gain knobs at 0 dB).
+
+What to watch comes from the curve itself, as with any volume shaper:
+
+- **Clicks.** A very fast drop or rise can click, especially on bass and 808s, if it cuts the wave in the middle of a swing. Make the edge a little less steep or add some **Smooth**. The end-of-cycle meter helps you check the point where the curve wraps around.
+- **Too much Smooth** rounds off your shape and makes it react later, so the pump can feel less tight and the duck may arrive late for the kick. Use only as much as you need.
+- **Very fast, deep movement** (fast Hz rates, hard gates) changes the tone as well as the volume. That can be the effect you want.
+- **It ducks everything together.** Hats and vocals in the same audio dip along with the bass. If that is a problem, try Multiband.
+
+These also apply to each band in Multiband.
+
+### Multiband: Crossover (default)
+
+**Good for:** the clearest separation between bands, for example ducking the lows hard while leaving the highs almost untouched.
+
+- **It changes the wave even when the curves are flat.** The volume of each frequency stays the same, but frequencies near a split are shifted in time (phase shift). The plugin reports no latency, because the shift differs from frequency to frequency and your DAW can't compensate for it.
+- **Drums can feel a bit softer**, snares for example. It is often subtle. Compare with the bypass button, which skips the filters. Setting Depth to 0 does not.
+- **Peaks can get higher**, even while nothing is being ducked. In a test with a clipped 55 Hz bass and flat curves, peaks rose by about 4 to 6.5 dB (6 dB slope: no rise). Watch the OUT meter. Lower the OUT knob, or use **CLIP**, which stops peaks at 0 dB but adds distortion when it works.
+- **Be careful with parallel processing.** If you blend the output with an unprocessed copy of the same sound, some frequencies can partly or almost completely cancel (every slope except 6 dB). This includes layering it with a dry duplicate or using a wet/dry mix outside the plugin. Use the plugin's **Depth** control instead if you want less effect.
+
+**Choosing a slope:** steeper slopes keep the bands more separate, but shift more and use more CPU. With a split at 150 Hz, the delay around the split is roughly 3 ms at 24 dB, up to about 8 ms at 48 dB and up to about 19 ms at 96 dB. At a 2.5 kHz split with 24 dB it is only about 0.2 ms. **24 dB is a good starting point.** The 6 dB slope has no phase shift with flat curves, but its bands overlap a lot.
+
+### Multiband: Dynamic EQ
+
+**Good for:** keeping your sound as close to the original as possible, especially full mixes and drums. It works like an EQ that moves with your curves.
+
+- **Flat curves leave the audio untouched**, bit for bit (with the gain knobs at 0 dB). It adds no latency.
+- **It still shifts phase while ducking**, like a normal EQ, when the bands are at different levels. When all bands are at the same level, it is a plain volume change.
+- **The bands are less separate.** The slope is fixed and gentle, so ducking one band also affects its neighbours more.
+- **It doesn't duck as deeply.** Example: with a 200 Hz split and the low band fully ducked, a 60 Hz tone drops by about 21 dB in Dynamic EQ and about 42 dB in Crossover at 24 dB. At 100 Hz it is about 12 dB and 25 dB. If you need the low end almost gone, use Crossover or move the split higher (which also affects more of the sound above it).
+- **Keep three-band splits far apart.** If they are close together, the mid band has a weaker, less focused effect.
+
+### Which one should I use?
+
+| You want | Try |
+|---|---|
+| Classic sidechain pumping on one sound | Single |
+| Hard, clean ducking of only the lows | Multiband, Crossover |
+| Gentle movement on a full mix, keeping drums close to the original | Multiband, Dynamic EQ |
+| Blending with a dry copy outside the plugin | Single |
+
+Trust your ears: match the volume and compare with bypass while the whole track is playing.
 
 ## How it sounds: the design rules
 

@@ -482,6 +482,7 @@ MultibandPanel::MultibandPanel(FreeLfoProcessor& p) : proc(p), strip(p), curve(p
     addAndMakeVisible(linkBtn);
     linkA = std::make_unique<BA>(proc.apvts, "mbLink", linkBtn);
     waveA = std::make_unique<SA>(proc.apvts, "waveOpacity", wave);
+    wave.hostParam = proc.apvts.getParameter("waveOpacity");
 
     rebind();
     startTimerHz(10);
@@ -535,6 +536,7 @@ void MultibandPanel::rebind()
 
     modeA = std::make_unique<CA>(proc.apvts, "mode" + es, modeBox);
     const bool syncMode = proc.apvts.getRawParameterValue("mode" + es)->load() < 0.5f;
+    rate.hostParam = proc.apvts.getParameter((syncMode ? "div" : "hz") + es);
     // NB: creating a SliderAttachment installs its own text functions, so ours go in AFTER it, or they are ignored
     if (syncMode)
     {
@@ -563,6 +565,9 @@ void MultibandPanel::rebind()
     depthA = std::make_unique<SA>(proc.apvts, "depth" + (ld ? src : ss), depth);
     smoothA = std::make_unique<SA>(proc.apvts, "smooth" + (ls ? src : ss), smooth);
     offsetA = std::make_unique<SA>(proc.apvts, "offset" + (lo ? src : ss), offset);
+    depth.hostParam = proc.apvts.getParameter("depth" + (ld ? src : ss));
+    smooth.hostParam = proc.apvts.getParameter("smooth" + (ls ? src : ss));
+    offset.hostParam = proc.apvts.getParameter("offset" + (lo ? src : ss));
     depthL.setText(ld ? "Depth (all bands)" : "Depth", juce::dontSendNotification);
     smoothL.setText(ls ? "Smooth (all bands)" : "Smooth", juce::dontSendNotification);
     offsetL.setText(lo ? "Offset (all bands)" : "Offset", juce::dontSendNotification);

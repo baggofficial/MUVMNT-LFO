@@ -1,5 +1,5 @@
 #pragma once
-#include <juce_gui_basics/juce_gui_basics.h>
+#include <juce_audio_processors/juce_audio_processors.h>
 #include "Fonts.h"
 
 // Two themes: "light paper" (default) and a dark one inspired by After Effects' graph editor
@@ -274,11 +274,37 @@ private:
 
 // A slider that also goes back to its default on Ctrl-click (Windows / Linux) or Cmd-click (macOS). Alt / Option-click
 // and the rest work as in any JUCE slider. On macOS, Ctrl-click is the right-click, so it is left to the subclass.
+// A right click opens a menu: the knob's own choices, followed by whatever the DAW offers for the parameter the knob
+// is driving (usually things like creating automation). Hosts that offer nothing leave just our own choices.
 class ResetClickSlider : public juce::Slider
 {
 public:
+    juce::RangedAudioParameter* hostParam = nullptr; // the parameter the knob drives right now; set wherever it is attached
+
+    juce::PopupMenu buildMenu()
+    {
+        juce::PopupMenu m;
+        if (canType()) m.addItem(1, "Enter value...");
+        m.addItem(2, "Reset to default", isDoubleClickReturnEnabled());
+
+        auto* editor = findParentComponentOfClass<juce::AudioProcessorEditor>();
+        auto* host = editor != nullptr ? editor->getHostContext() : nullptr;
+        if (host != nullptr && hostParam != nullptr)
+            if (const auto fromHost = host->getContextMenuForParameter(hostParam))
+            {
+                const auto items = fromHost->getEquivalentPopupMenu(); // each of these carries its own action
+                if (items.getNumItems() > 0)
+                {
+                    m.addSeparator();
+                    for (juce::PopupMenu::MenuItemIterator it(items); it.next();) m.addItem(it.getItem());
+                }
+            }
+        return m;
+    }
+
     void mouseDown(const juce::MouseEvent& e) override
     {
+        if (e.mods.isPopupMenu()) { showMenu(e.getScreenPosition()); return; }
         resetClick = isEnabled() && !e.mods.isPopupMenu() && e.mods.isCommandDown(); // "command" is Ctrl outside macOS
         if (resetClick) juce::Slider::mouseDoubleClick(e);   // JUCE's own reset, so the host sees a proper edit
         else juce::Slider::mouseDown(e);
@@ -289,7 +315,24 @@ public:
     void mouseUp(const juce::MouseEvent& e) override { if (!resetClick) juce::Slider::mouseUp(e); }
 
 protected:
-    bool resetClick = false; // the current click was a reset: no drag, and no double-click action
+    virtual bool canType() const { return false; }
+    virtual void showTypeBox() {}
+    bool resetClick = false; // this click was a reset or opened the menu: no drag, and no double-click action
+
+private:
+    void showMenu(juce::Point<int> at)
+    {
+        resetClick = true;
+        auto m = buildMenu();
+        m.setLookAndFeel(&getLookAndFeel());   // the menu is its own native window, so give it our font and colours explicitly
+        juce::Component::SafePointer<ResetClickSlider> safe(this);
+        m.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea(juce::Rectangle<int>(at, at).expanded(1)),
+                        [safe](int r) { // the DAW's items report -1 and have already run their own action
+                            if (safe == nullptr) return;
+                            if (r == 1) safe->showTypeBox();
+                            else if (r == 2) safe->setValue(safe->getDoubleClickReturnValue(), juce::sendNotificationSync);
+                        });
+    }
 };
 
 // The very small IN / OUT gain knobs under the meters. 0 dB points straight up; double-click, Ctrl-click or Alt-click goes back there.
@@ -305,7 +348,7 @@ public:
         setMouseCursor(juce::MouseCursor::PointingHandCursor);
     }
 
-    // no right-click menu here, so a Mac's Ctrl-click can reset too
+    // unlike the big knobs, a Mac's Ctrl-click resets here too (a right click opens the menu)
     void mouseDown(const juce::MouseEvent& e) override
     {
         if (e.mods.isCtrlDown() && !e.mods.isRightButtonDown()) { resetClick = true; juce::Slider::mouseDoubleClick(e); return; }
@@ -355,22 +398,9 @@ public:
 
     void mouseDoubleClick(const juce::MouseEvent&) override { if (!resetClick) showTextBox(); }
 
-    void mouseDown(const juce::MouseEvent& e) override
-    {
-        if (!e.mods.isPopupMenu()) { ResetClickSlider::mouseDown(e); return; }
-        resetClick = false;
-        juce::PopupMenu m;
-        m.setLookAndFeel(&getLookAndFeel());   // the menu is its own native window, so give it our font and colours explicitly
-        m.addItem(1, "Enter value...");
-        m.addItem(2, "Reset to default", isDoubleClickReturnEnabled());
-        juce::Component::SafePointer<Knob> safe(this);
-        m.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea(juce::Rectangle<int>(e.getScreenPosition(), e.getScreenPosition()).expanded(1)),
-                        [safe](int r) {
-                            if (safe == nullptr) return;
-                            if (r == 1) safe->showTextBox();
-                            else if (r == 2) safe->setValue(safe->getDoubleClickReturnValue(), juce::sendNotificationSync);
-                        });
-    }
+protected:
+    bool canType() const override { return true; }
+    void showTypeBox() override { showTextBox(); }
 };
 
 class PaperLookAndFeel : public juce::LookAndFeel_V4

@@ -619,6 +619,114 @@ static bool resetClickRegression()
     return ok;
 }
 
+// A stand-in for a DAW that offers right-click options for a parameter: it remembers which parameter was asked about.
+struct FakeHostMenus : juce::AudioProcessorEditorHostContext
+{
+    enum Offer { anItem, noMenu, emptyMenu };
+    Offer offer = anItem;
+    mutable juce::String asked, ran;
+
+    struct Menu : juce::HostProvidedContextMenu
+    {
+        const FakeHostMenus& host;
+        const juce::String id;
+        Menu(const FakeHostMenus& h, juce::String i) : host(h), id(std::move(i)) {}
+        juce::PopupMenu getEquivalentPopupMenu() const override
+        {
+            juce::PopupMenu m;
+            if (host.offer == anItem) m.addItem("Create automation clip", true, false, [h = &host, i = id] { h->ran = i; });
+            return m;
+        }
+        void showNativeMenu(juce::Point<int>) const override {}
+    };
+    std::unique_ptr<juce::HostProvidedContextMenu> getContextMenuForParameter(const juce::AudioProcessorParameter* prm) const override
+    {
+        const auto* withId = dynamic_cast<const juce::AudioProcessorParameterWithID*>(prm);
+        asked = withId != nullptr ? withId->paramID : juce::String();
+        if (offer == noMenu) return {};
+        return std::make_unique<Menu>(*this, asked);
+    }
+};
+
+// Right-clicking a knob offers the DAW's options for exactly the parameter that knob is driving at that moment.
+static bool hostMenuRegression()
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    FakeHostMenus host;
+    bool ok = true;
+    std::printf("right-click DAW options:\n");
+    auto report = [&](bool good, const char* what, const juce::String& detail) {
+        std::printf("  %-52s %s  (%s)\n", what, good ? "ok" : "FAILED", detail.toRawUTF8());
+        ok = ok && good;
+    };
+
+    // every knob on screen, left to right then top to bottom: the parameter its menu asks the DAW about
+    auto knobs = [](juce::Component& root) {
+        std::vector<ResetClickSlider*> found;
+        std::function<void(juce::Component&)> walk = [&](juce::Component& c) {
+            for (auto* child : c.getChildren())
+                if (child->isVisible()) { if (auto* k = dynamic_cast<ResetClickSlider*>(child)) found.push_back(k); walk(*child); }
+        };
+        walk(root);
+        return found;
+    };
+    auto expect = [&](const char* what, juce::StringArray want) {
+        std::unique_ptr<juce::AudioProcessorEditor> ed(p.createEditor()); // built from the current settings
+        ed->setHostContext(&host);
+        juce::StringArray got;
+        bool offered = true;
+        for (auto* k : knobs(*ed))
+        {
+            host.asked.clear();
+            bool listed = false;
+            const auto menu = k->buildMenu(); // the iterator only borrows it
+            for (juce::PopupMenu::MenuItemIterator it(menu); it.next();)
+                if (it.getItem().text == "Create automation clip")
+                {
+                    listed = true;
+                    host.ran.clear();
+                    it.getItem().action(); // choosing it must reach the DAW's own action
+                    listed = host.ran == host.asked;
+                }
+            offered = offered && listed;
+            got.add(host.asked);
+        }
+        got.sort(false); want.sort(false);
+        report(offered && got == want, what, got.joinIntoString(" "));
+        p.editorBeingDeleted(ed.get());
+    };
+
+    expect("single, Sync", { "division", "depth", "smooth", "offset", "waveOpacity", "inGain", "outGain" });
+    setParam(p, "mode", 1.f);
+    expect("single, Hz", { "hz", "depth", "smooth", "offset", "waveOpacity", "inGain", "outGain" });
+    setParam(p, "mb", 1.f); // multiband opens on the low band, with the rates linked to the mid band
+    expect("multiband, low band, linked rate", { "divM", "depthL", "smoothL", "offsetL", "waveOpacity", "inGain", "outGain" });
+    setParam(p, "mbLink", 0.f); setParam(p, "modeL", 1.f);
+    expect("multiband, low band, own rate in Hz", { "hzL", "depthL", "smoothL", "offsetL", "waveOpacity", "inGain", "outGain" });
+    setParam(p, "linkDepth", 1.f); setParam(p, "linkSmooth", 1.f); setParam(p, "linkOffset", 1.f);
+    expect("multiband, linked knobs: the shared (mid) parameter", { "hzL", "depthM", "smoothM", "offsetM", "waveOpacity", "inGain", "outGain" });
+
+    // a DAW with nothing to offer, or no support at all, leaves just our own choices
+    std::unique_ptr<juce::AudioProcessorEditor> ed(p.createEditor());
+    auto ownOnly = [&](const char* what) {
+        bool good = true;
+        for (auto* k : knobs(*ed))
+        {
+            const int own = dynamic_cast<Knob*>(k) != nullptr ? 2 : 1; // the small gain knobs have no typing box
+            good = good && k->buildMenu().getNumItems() == own;
+        }
+        report(good, what, "own choices only");
+    };
+    ownOnly("DAW without right-click support");
+    ed->setHostContext(&host);
+    host.offer = FakeHostMenus::noMenu;    ownOnly("DAW returns no menu");
+    host.offer = FakeHostMenus::emptyMenu; ownOnly("DAW returns an empty menu");
+    p.editorBeingDeleted(ed.get());
+    return ok;
+}
+
 // Double-clicking at the 64-point limit adds nothing and says why; older curves with more points stay editable.
 static bool pointLimitRegression()
 {
@@ -1227,7 +1335,7 @@ int main(int argc, char** argv)
             save(fe.createComponentSnapshot(fe.getLocalBounds(), true, 1.0f), dir.getChildFile("preset_popup_open.png"));
         }
     }
-    const bool rz = resizeRegression() && labelRegression() && resetClickRegression() && pointLimitRegression() && loudScopeRegression();
+    const bool rz = resizeRegression() && labelRegression() && resetClickRegression() && hostMenuRegression() && pointLimitRegression() && loudScopeRegression();
     const bool un = undoRegression() && presetRegression() && handleSnapRegression() && deletePointRegression();
     return un && a && b && c && d && f && g && h && k && m && n && o && q && rz ? 0 : 1;
 }
