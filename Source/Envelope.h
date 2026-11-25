@@ -28,6 +28,12 @@ class Envelope
 {
 public:
     static constexpr int tableSize = 2048;
+    // The most points a curve can be given (adding, pasting, preset files, mode conversion). Beyond this the editor
+    // gets slow to redraw and the dots sit on top of each other.
+    static constexpr size_t maxPoints = 64;
+    // A saved project may hold more than maxPoints (made before there was a limit) and loads unchanged, so it keeps
+    // its sound. Anything above this much is taken to be damaged data.
+    static constexpr size_t loadCap = 512;
 
     std::vector<EnvPoint> points;
 
@@ -284,7 +290,7 @@ public:
                 }
                 if (err > worstErr) { worstErr = err; worst = (int) i; }
             }
-            if (worst < 0) return trial;
+            if (worst < 0 || cur.points.size() >= maxPoints) return trial; // never split past the limit
             cur.splitSegment((size_t) worst);
         }
         Envelope last = cur;
@@ -410,7 +416,8 @@ public:
     }
 
     // Older saves load too: fewer than 6 fields = straight segments, fewer than 8 = no simple-mode bend.
-    static Envelope deserialize(const std::string& str)
+    // `fallback` is returned if the text holds more than loadCap points.
+    static Envelope deserialize(const std::string& str, const Envelope& fallback = Envelope())
     {
         Envelope e;
         e.points.clear();
@@ -424,6 +431,7 @@ public:
             {
                 if (n < 6) p.inDx = p.inDy = p.outDx = p.outDy = 0.f;
                 if (n < 8) { p.bend = 0.f; p.bendX = 0.5f; } // saves from before the simple-mode bend
+                if (e.points.size() >= loadCap) return fallback; // stop reading: this is not a real curve
                 e.points.push_back(p);
             }
         }

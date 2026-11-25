@@ -36,8 +36,10 @@ namespace
             saveBtn.onClick = [this] { askName(); };
             copyBtn.onClick = [this] { juce::SystemClipboard::copyTextToClipboard(presets::toText(proc.getEnvelope(slot))); close(); };
             pasteBtn.onClick = [this] {
+                const auto text = juce::SystemClipboard::getTextFromClipboard().toStdString();
                 Envelope e;
-                if (presets::fromText(juce::SystemClipboard::getTextFromClipboard().toStdString(), e)) apply(e);
+                if (presets::fromText(text, e)) apply(e);
+                else if (presets::hasTooManyPoints(text)) showNote("Not pasted: over " + limitText());
             };
             reload();
         }
@@ -111,8 +113,35 @@ namespace
 
         void apply(const Envelope& e) { proc.applyCurve(e, slot); close(); }
 
+        static juce::String limitText() { return juce::String((int) Envelope::maxPoints) + " points"; }
+
+        // A short message across the bottom of the popup, just above the buttons
+        void showNote(const juce::String& text)
+        {
+            note = text;
+            repaint();
+            juce::Timer::callAfterDelay(4000, [safe = juce::Component::SafePointer<PresetPanel>(this), text] {
+                if (safe != nullptr && safe->note == text) { safe->note.clear(); safe->repaint(); }
+            });
+        }
+
+        void paintOverChildren(juce::Graphics& g) override
+        {
+            if (note.isEmpty()) return;
+            const auto r = juce::Rectangle<float>(8.f, (float) saveBtn.getY() - 28.f, (float) getWidth() - 16.f, 24.f);
+            g.setColour(paper::panel);
+            g.fillRoundedRectangle(r, 6.f);
+            g.setColour(paper::amber);
+            g.drawRoundedRectangle(r, 6.f, 1.2f);
+            g.setColour(paper::text);
+            g.setFont(fonts::regular(11.5f));
+            g.drawFittedText(note, r.reduced(6.f, 0.f).toNearestInt(), juce::Justification::centred, 1, 0.8f);
+        }
+
         void askName()
         {
+            // a project from before the limit can hold more points than a preset may: refuse instead of saving a file that won't load
+            if (proc.getEnvelope(slot).points.size() > Envelope::maxPoints) { showNote("Not saved: over " + limitText()); return; }
             auto* w = new juce::AlertWindow("Save curve as preset", "Name of the preset:", juce::MessageBoxIconType::NoIcon);
             w->addTextEditor("name", "", "");
             w->addButton("Save", 1, juce::KeyPress(juce::KeyPress::returnKey));
@@ -143,10 +172,12 @@ namespace
             Group mine { "My presets", {} };
             auto files = PresetMenu::userFolder().findChildFiles(juce::File::findFiles, false, "*.lfocurve");
             std::sort(files.begin(), files.end(), [](const juce::File& a, const juce::File& b) { return a.getFileName().compareIgnoreCase(b.getFileName()) < 0; });
+            int overLimit = 0;
             for (auto& f : files)
             {
                 Envelope e;
-                if (!presets::fromText(f.loadFileAsString().trim().toStdString(), e)) continue;
+                const auto text = f.loadFileAsString().trim().toStdString();
+                if (!presets::fromText(text, e)) { if (presets::hasTooManyPoints(text)) ++overLimit; continue; }
                 Tile t; t.name = f.getFileNameWithoutExtension(); t.env = e; t.path = curvePath(e); t.user = true; t.file = f;
                 mine.items.push_back(std::move(t));
             }
@@ -174,16 +205,19 @@ namespace
             saveBtn.setBounds(row.removeFromLeft(bw)); row.removeFromLeft(gap);
             copyBtn.setBounds(row.removeFromLeft(bw)); row.removeFromLeft(gap);
             pasteBtn.setBounds(row);
-            pasteBtn.setEnabled(clipboardHasCurve());
+            pasteBtn.setEnabled(clipboardHasCurve()); // also for a curve over the limit, so a click can say why it is refused
             setSize(w, y + 2 + 26 + pad);
             hover = -1;
+            if (overLimit > 0)
+                showNote(juce::String(overLimit) + (overLimit == 1 ? " preset" : " presets") + " hidden: over " + limitText());
             repaint();
         }
 
         static bool clipboardHasCurve()
         {
             Envelope probe;
-            return presets::fromText(juce::SystemClipboard::getTextFromClipboard().toStdString(), probe);
+            const auto text = juce::SystemClipboard::getTextFromClipboard().toStdString();
+            return presets::fromText(text, probe) || presets::hasTooManyPoints(text);
         }
 
         FreeLfoProcessor& proc;
@@ -192,6 +226,7 @@ namespace
         std::vector<Tile> tiles;
         std::vector<Heading> headings;
         int hover = -1;
+        juce::String note;
         juce::TextButton saveBtn { "Save as..." }, copyBtn { "Copy" }, pasteBtn { "Paste" };
     };
 }

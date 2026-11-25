@@ -925,7 +925,11 @@ void FreeLfoProcessor::setStateInformation(const void* data, int size)
             const char* keys[3] = { "envLow", "envMid", "envHigh" };
             for (int b = 0; b < 3; ++b)
                 if (state.hasProperty(keys[b]))
-                    setEnvelope(Envelope::deserialize(state[keys[b]].toString().toStdString()), b + 1);
+                {
+                    Envelope fallback; // for damaged data: this band's own default
+                    fallback.resetToBandPump(b);
+                    setEnvelope(Envelope::deserialize(state[keys[b]].toString().toStdString(), fallback), b + 1);
+                }
         }
     }
 }

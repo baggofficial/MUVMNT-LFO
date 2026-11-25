@@ -628,7 +628,8 @@ void EnvelopeEditor::frame()
     const unsigned blk = proc.blockCounter.load(std::memory_order_relaxed);
     const bool audioMoving = blk != lastBlock || (now - proc.uiPhaseTimeMs.load(std::memory_order_relaxed)) < 60.0;
     lastBlock = blk;
-    if (audioMoving || positionLabels()[3] != cachedLabels || computeKey() != curveKey || cachedGrid != gridX() || cachedTheme != paper::version) repaint();
+    const bool noteExpired = limitNoteDrawn && !isShowingLimitNote(); // one more repaint to take the note away
+    if (noteExpired || audioMoving || positionLabels()[3] != cachedLabels || computeKey() != curveKey || cachedGrid != gridX() || cachedTheme != paper::version) repaint();
 }
 
 void EnvelopeEditor::paint(juce::Graphics& g)
@@ -668,6 +669,21 @@ void EnvelopeEditor::paint(juce::Graphics& g)
     auto top = toScreen(phase, 1.f), bottom = toScreen(phase, 0.f);
     g.setColour(paper::text.withAlpha(0.7f));
     g.drawLine(top.x, top.y, bottom.x, bottom.y, 1.f);
+
+    limitNoteDrawn = isShowingLimitNote();
+    if (limitNoteDrawn)
+    {
+        const auto note = juce::Rectangle<float>(juce::jmin(340.f, (float) getWidth() - 16.f), 24.f)
+                              .withCentre({ (float) getWidth() * 0.5f, 28.f });
+        g.setColour(paper::panel.withAlpha(0.96f));
+        g.fillRoundedRectangle(note, 6.f);
+        g.setColour(paper::amber);
+        g.drawRoundedRectangle(note, 6.f, 1.2f);
+        g.setColour(paper::text);
+        g.setFont(fonts::regular(12.f));
+        g.drawText(juce::String((int) Envelope::maxPoints) + " points is the limit. Double-click a point to remove it.",
+                   note.reduced(6.f, 0.f), juce::Justification::centred);
+    }
 }
 
 void EnvelopeEditor::mouseDown(const juce::MouseEvent& e)
@@ -853,6 +869,12 @@ void EnvelopeEditor::mouseDoubleClick(const juce::MouseEvent& e)
         auto n = toNorm(e.position);
         if (snapNow(e.mods)) n.x = std::round(n.x * gridX()) / gridX();
         if (n.x <= 0.f || n.x >= 1.f) return;
+        if (env.points.size() >= Envelope::maxPoints) // full: say so, and leave the curve and the undo history alone
+        {
+            limitNoteUntil = juce::Time::getMillisecondCounterHiRes() + 2800.0;
+            repaint();
+            return;
+        }
         env.points.push_back({ n.x, n.y });
         env.normalize();
         controlsHidden = false;

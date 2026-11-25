@@ -277,6 +277,45 @@ int main()
         }
     }
 
+    // ---- the point limit
+    {
+        auto many = [](int n) {   // n points, zig-zag, straight segments
+            Envelope m; m.points.clear();
+            for (int i = 0; i < n; ++i) m.points.push_back({ (float) i / (float) (n - 1), i % 2 == 0 ? 0.2f : 0.8f });
+            m.normalize();
+            return m;
+        };
+        assert(Envelope::maxPoints == 64 && Envelope::loadCap == 512);
+        Envelope out;
+        assert(presets::fromText(presets::toText(many(64)), out) && out.points.size() == 64);   // exactly at the limit: fine
+        const size_t before = out.points.size();
+        assert(!presets::fromText(presets::toText(many(65)), out) && out.points.size() == before); // refused whole, target untouched
+        assert(presets::hasTooManyPoints(presets::toText(many(65))));
+        assert(!presets::hasTooManyPoints(presets::toText(many(64))));
+        assert(!presets::hasTooManyPoints("some other text;;;"));
+        std::string unterminated = presets::toText(many(65)); unterminated.pop_back();            // last ';' missing
+        assert(!presets::fromText(unterminated, out));
+        // saved projects: more than 64 loads unchanged; more than 512 is treated as damaged
+        for (int n : { 65, 200, 512 }) assert(Envelope::deserialize(many(n).serialize()).serialize() == many(n).serialize());
+        Envelope fallback; fallback.resetToBandPump(2);
+        assert(Envelope::deserialize(many(513).serialize(), fallback).serialize() == fallback.serialize());
+        assert(Envelope::deserialize(many(20000).serialize()).serialize() == Envelope().serialize());
+        // converting for Simple mode may add points, but never past the limit: S-shaped segments that all want splitting
+        for (int n : { 10, 40, 63, 64 })
+        {
+            Envelope s = many(n);
+            const float span = 1.f / (float) (n - 1);
+            for (int i = 0; i + 1 < n; ++i) { s.points[(size_t) i].outDx = span; s.points[(size_t) i + 1].inDx = -span; }
+            const Envelope simple = s.simplifiedCopy(0.0001f);
+            assert(simple.points.size() >= (size_t) n && simple.points.size() <= Envelope::maxPoints);
+        }
+        for (const auto& pr : presets::factory())
+        {
+            assert(pr.env.points.size() <= Envelope::maxPoints);
+            assert(pr.env.simplifiedCopy().points.size() <= Envelope::maxPoints);
+        }
+    }
+
     std::puts("envelope tests passed");
     return 0;
 }

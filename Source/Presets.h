@@ -125,6 +125,14 @@ namespace presets
     // A one-line text form for the clipboard and the preset files.
     inline std::string toText(const Envelope& e) { return "FreeLFOCurve1:" + e.serialize(); }
 
+    // True for a curve from this plugin that has more points than a curve may be given (so the user can be told why).
+    inline bool hasTooManyPoints(const std::string& text)
+    {
+        const std::string prefix = "FreeLFOCurve1:";
+        return text.compare(0, prefix.size(), prefix) == 0
+               && (size_t) std::count(text.begin() + (long) prefix.size(), text.end(), ';') > Envelope::maxPoints;
+    }
+
     // Parses toText() output; false if the text is not a curve from this plugin.
     inline bool fromText(const std::string& text, Envelope& out)
     {
@@ -132,8 +140,9 @@ namespace presets
         if (text.compare(0, prefix.size(), prefix) != 0) return false;
         const std::string payload = text.substr(prefix.size());
         if (std::count(payload.begin(), payload.end(), ';') < 2) return false;   // a curve has at least two points
+        if (hasTooManyPoints(text)) return false;                                // refused whole, never cut short
         const Envelope e = Envelope::deserialize(payload);
-        if (e.points.size() < 2) return false;
+        if (e.points.size() < 2 || e.points.size() > Envelope::maxPoints) return false;
         out = e;
         return true;
     }

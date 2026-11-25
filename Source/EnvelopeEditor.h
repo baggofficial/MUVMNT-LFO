@@ -22,6 +22,7 @@ public:
     bool keyPressed(const juce::KeyPress&) override; // Cmd/Ctrl+Z undo, Shift+Cmd/Ctrl+Z or Ctrl+Y redo
 
     bool areControlsHidden() const { return controlsHidden; }
+    bool isShowingLimitNote() const { return limitNoteUntil > juce::Time::getMillisecondCounterHiRes(); }
     // Note values at 1/4, 1/2, 3/4 and the end of the cycle ("1/16", "1/8", ...); empty strings in Hz mode
     std::array<juce::String, 4> positionLabels() const;
     // Snapping is off by default; holding Option (macOS) / Alt (Windows) snaps while you drag. If the Snap switch
@@ -108,6 +109,8 @@ private:
     juce::Image gridImg, curveImg; // cached layers, see paint()
     size_t curveKey = 0;
     double lastFrameMs = 0.0;
+    double limitNoteUntil = 0.0;   // the "point limit" note is on screen until this time
+    bool limitNoteDrawn = false;
     unsigned lastBlock = 0;
     juce::VBlankAttachment vblank; // keep last: it calls frame() as soon as it exists
 };

@@ -609,6 +609,65 @@ static bool resetClickRegression()
     return ok;
 }
 
+// Double-clicking at the 64-point limit adds nothing and says why; older curves with more points stay editable.
+static bool pointLimitRegression()
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    bool ok = true;
+    std::printf("point limit:\n");
+    auto check = [&](bool cond, const char* what) { std::printf("  %-60s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
+    auto flat = [](int n) {   // n points along the middle line
+        Envelope e; e.points.clear();
+        for (int i = 0; i < n; ++i) e.points.push_back({ (float) i / (float) (n - 1), 0.5f });
+        e.normalize();
+        return e;
+    };
+    auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 386.f - y * 376.f); };
+    p.setEnvelope(flat(63), 0);
+    EnvelopeEditor ed(p, 0);
+    ed.setBounds(0, 0, 800, 400);
+    MouseDriver m { ed };
+    auto doubleClick = [&](juce::Point<float> at) { m.downPos = at; ed.mouseDoubleClick(m.make(at, false, juce::ModifierKeys::leftButtonModifier)); };
+    auto count = [&] { return (int) p.getEnvelope(0).points.size(); };
+
+    doubleClick(toScreen(0.508f, 0.9f));
+    check(count() == 64 && !ed.isShowingLimitNote(), "the 64th point can be added");
+    const auto full = p.getEnvelope(0).serialize();
+    doubleClick(toScreen(0.31f, 0.15f));
+    check(count() == 64 && p.getEnvelope(0).serialize() == full, "a 65th is not added");
+    check(ed.isShowingLimitNote(), "and a note says why");
+    save(ed.createComponentSnapshot(ed.getLocalBounds(), true, 1.0f), juce::File(g_outDir).getChildFile("point_limit.png"));
+    p.undo();
+    check(count() == 63, "the refused click left no undo step: undo removes the 64th");
+    p.redo();
+    doubleClick(toScreen(0.508f, 0.9f));
+    check(count() == 63, "a point can still be deleted at the limit");
+
+    p.setEnvelope(flat(100), 0);   // as loaded from a project made before the limit
+    EnvelopeEditor old(p, 0);
+    old.setBounds(0, 0, 800, 400);
+    MouseDriver om { old };
+    auto oldClick = [&](juce::Point<float> at) { om.downPos = at; old.mouseDoubleClick(om.make(at, false, juce::ModifierKeys::leftButtonModifier)); };
+    oldClick(toScreen(0.31f, 0.15f));
+    check(count() == 100 && old.isShowingLimitNote(), "over-limit older curve: unchanged, nothing can be added");
+    const auto at = p.getEnvelope(0).points[50];
+    oldClick(toScreen(at.x, at.y));
+    check(count() == 99, "over-limit older curve: points can be deleted");
+
+    // the preset popup says why it left a file out
+    const auto file = PresetMenu::userFolder().getChildFile("zz_too_many.lfocurve");
+    file.replaceWithText(presets::toText(flat(80)));
+    {
+        PaperLookAndFeel laf; laf.applyColours();
+        auto panel = PresetMenu::createPanel(p, 0, nullptr, laf);
+        save(panel->createComponentSnapshot(panel->getLocalBounds(), true, 1.0f), juce::File(g_outDir).getChildFile("point_limit_presets.png"));
+    }
+    file.deleteFile();
+    return ok;
+}
+
 // The window can be resized: every control must stay inside it, without overlapping, at the smallest and a large size.
 static bool resizeRegression()
 {
@@ -1120,7 +1179,7 @@ int main(int argc, char** argv)
             save(fe.createComponentSnapshot(fe.getLocalBounds(), true, 1.0f), dir.getChildFile("preset_popup_open.png"));
         }
     }
-    const bool rz = resizeRegression() && labelRegression() && resetClickRegression();
+    const bool rz = resizeRegression() && labelRegression() && resetClickRegression() && pointLimitRegression();
     const bool un = undoRegression() && presetRegression() && handleSnapRegression() && deletePointRegression();
     return un && a && b && c && d && f && g && h && k && m && n && o && q && rz ? 0 : 1;
 }

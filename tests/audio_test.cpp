@@ -946,6 +946,35 @@ static void testState()
     check(maxDiff(oa[0], ob[0]) == 0.f && maxDiff(oa[1], ob[1]) == 0.f, "a restored instance sounds identical to the original");
 }
 
+static void testPointLimitState()
+{
+    section("11b. Saved projects and the 64-point limit");
+    auto many = [](int n) {
+        Envelope m; m.points.clear();
+        for (int i = 0; i < n; ++i) m.points.push_back({ (float) i / (float) (n - 1), i % 2 == 0 ? 0.2f : 0.8f });
+        m.normalize();
+        return m;
+    };
+    {
+        Rig a; for (int s = 0; s < FreeLfoProcessor::numSlots; ++s) a.p.setEnvelope(many(150), s);
+        juce::MemoryBlock block; a.p.getStateInformation(block);
+        Rig b; b.p.setStateInformation(block.getData(), (int) block.getSize());
+        bool same = true;
+        for (int s = 0; s < FreeLfoProcessor::numSlots; ++s) same = same && b.p.getEnvelope(s).serialize() == many(150).serialize();
+        const auto in = noise(48000, 51);
+        const auto oa = a.render(in), ob = b.render(in);
+        check(same && maxDiff(oa[0], ob[0]) == 0.f, "a project with 150 points per curve loads unchanged and sounds the same");
+    }
+    {
+        Rig a; for (int s = 0; s < FreeLfoProcessor::numSlots; ++s) a.p.setEnvelope(many(2000), s);
+        juce::MemoryBlock block; a.p.getStateInformation(block);
+        Rig b; b.p.setEnvelope(many(7), 0); b.p.setStateInformation(block.getData(), (int) block.getSize());
+        bool defaults = b.p.getEnvelope(0).serialize() == Envelope().serialize();
+        for (int band = 0; band < 3; ++band) { Envelope d; d.resetToBandPump(band); defaults = defaults && b.p.getEnvelope(band + 1).serialize() == d.serialize(); }
+        check(defaults, "damaged data (over 512 points) falls back to each curve's own default");
+    }
+}
+
 static void testRealTimeSafety()
 {
     section("12. Real-time safety: no memory allocation on the audio thread");
@@ -1124,6 +1153,7 @@ int main()
     testTiming();
     testSidechainBus();
     testState();
+    testPointLimitState();
     testRealTimeSafety();
     testThreads();
     testCpu();
