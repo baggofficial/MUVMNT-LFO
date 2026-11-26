@@ -155,9 +155,7 @@ public:
         g.fillRoundedRectangle(b, 5.f);
         auto yOf = [&](float v) { return top + (1.f - (0.5f + 0.5f * juce::jlimit(-1.f, 1.f, v))) * h; };
 
-        // a quiet track with a zero line; only the arrows carry colour
-        g.setColour(theme::line);
-        g.drawRoundedRectangle(b.reduced(0.5f), theme::size::radius, theme::size::border);
+        // a quiet track with a zero line, no frame; only the arrows carry colour
         g.setColour(theme::gridMajor());
         g.fillRoundedRectangle(juce::Rectangle<float>(b.getCentreX() - 1.f, top, 2.f, h), 1.f);
         g.setColour(theme::sub.withAlpha(0.7f));

@@ -635,6 +635,32 @@ static void testPolarity()
     }
 }
 
+// Damaged project data must change nothing; the very texts JUCE choked on included
+static void testDamagedProjects()
+{
+    section("11f. Damaged project data is refused before it is read");
+    Rig a; a.param("depth", 0.42f);
+    juce::MemoryBlock saved; a.p.getStateInformation(saved);
+    Rig b; b.p.setStateInformation(saved.getData(), (int) saved.getSize());
+    auto depth = [&] { return b.p.apvts.getRawParameterValue("depth")->load(); };
+    check(std::fabs(depth() - 0.42f) < 0.001f, "a real saved project loads");
+    b.param("depth", 0.77f);
+    auto load = [&](const std::string& text) {
+        std::string bytes(8, '\0');
+        const juce::uint32 magic = 0x21324356, length = (juce::uint32) text.size();
+        std::memcpy(&bytes[0], &magic, 4); std::memcpy(&bytes[4], &length, 4); bytes += text;
+        std::unique_ptr<char[]> exact(new char[bytes.size()]); // nothing readable after the last byte
+        std::memcpy(exact.get(), bytes.data(), bytes.size());
+        b.p.setStateInformation(exact.get(), (int) bytes.size());
+    };
+    for (const char* text : { "<?\?><E e=\"\"e=\"\">&#x", "<a>text\xE2", "<STATE><PARAM id=\"depth\" value=\"0.1\"", "<STATE><!-- " }) load(text);
+    const std::string whole((const char*) saved.getData() + 8, saved.getSize() - 9);
+    for (size_t n = 1; n + 1 < whole.size(); n += 97) load(whole.substr(0, n));
+    check(std::fabs(depth() - 0.77f) < 0.001f, "unfinished and malformed texts leave the settings alone");
+    for (int size : { 0, 1, 8, 9, 20 }) b.p.setStateInformation(saved.getData(), size);
+    check(std::fabs(depth() - 0.77f) < 0.001f, "truncated data leaves the settings alone");
+}
+
 static void testBandVolumes()
 {
     section("3h. Multiband band volumes");
@@ -1144,6 +1170,7 @@ static void testCurveFromKick()
             r.p.prepareToPlay(48000.0, 512);
         }
         bool plucks = false;   // false: a constant 0.5 signal; true: a plucked 220 Hz tone on every 16th
+        bool lateOnly = false; // the sound stays nearly silent through the first half of each beat
         // plays `seconds` of that signal with a kick on every beat of the sidechain; returns the output
         Sig play(double seconds, float kickLevel = 0.9f)
         {
@@ -1159,7 +1186,7 @@ static void testCurveFromKick()
                     const float k = kickLevel * (float) (std::sin(2.0 * juce::MathConstants<double>::pi * (50.0 * into + 2.4 * (1.0 - std::exp(-into / 0.02)))) * std::exp(-into / 0.09));
                     const float in = plucks ? (float) (0.5 * std::sin(2.0 * juce::MathConstants<double>::pi * 220.0 * (double) t / 48000.0)
                                                        * std::exp(-std::fmod(into, beatSeconds / 4.0) / 0.05))
-                                            : 0.5f;
+                                            : (lateOnly && into < 0.5 * beatSeconds ? 0.05f : 0.5f);
                     buf.setSample(0, i, in); buf.setSample(1, i, in); buf.setSample(2, i, k); buf.setSample(3, i, k);
                 }
                 r.p.processBlock(buf, midi);
@@ -1171,6 +1198,43 @@ static void testCurveFromKick()
     };
     auto curves = [](FreeLfoProcessor& p) { std::string s; for (int k = 0; k < FreeLfoProcessor::numSlots; ++k) s += p.getEnvelope(k).serialize() + "|"; return s; };
     auto status = [](FreeLfoProcessor& p, int slot) { return p.fitCurveToKick(slot).status; };
+    {   // Detailed fits to the loudest of the sound's last four cycles, and never to cycles from before a settings change
+        for (int slot : { 0, 1 })
+        {
+            // how far Detailed opens early in the cycle, while the kick is still loud
+            auto opening = [&](const std::function<void(KickRig&)>& history) {
+                KickRig k;
+                k.r.p.editorOpen.store(true);
+                if (slot > 0) { k.r.param("mb", 1.f); k.r.param("xLow", 400.f); }
+                history(k);
+                const auto result = k.r.p.fitCurveToKick(slot, kickfit::Style::precise);
+                return result.status == Status::ok ? result.curve.evaluate(0.16f) : -1.f;
+            };
+            auto play = [&](KickRig& k, double beats, bool late) { k.lateOnly = late; k.play(beats * beat); };
+            const float full = opening([&](KickRig& k) { play(k, 6.0, false); });
+            const float lateAlone = opening([&](KickRig& k) { play(k, 6.0, true); });
+            const float remembered = opening([&](KickRig& k) { play(k, 4.0, false); play(k, 2.0, true); });
+            const float forgotten = opening([&](KickRig& k) { play(k, 4.0, false); play(k, 5.3, true); });
+            const float afterChange = opening([&](KickRig& k) {
+                play(k, 5.0, false);
+                k.r.param("offset", 0.5f); k.r.param("offsetL", 0.5f); k.r.param("offsetM", 0.5f); k.play(0.05);
+                k.r.param("offset", 0.f); k.r.param("offsetL", 0.f); k.r.param("offsetM", 0.f); play(k, 1.4, true);
+            });
+            const char* where = slot > 0 ? "Multiband" : "Full Band";
+            const auto detail = fmt("opens to: full %.2f, late %.2f, 2 beats after %.2f, 5 after %.2f, after a change %.2f", full, lateAlone, remembered, forgotten, afterChange);
+            if (slot == 0)
+            {
+                check(full >= 0.f && lateAlone > full + 0.2f, fmt("%s: a sound that comes in late leaves Detailed more room", where), detail);
+                check(std::fabs(remembered - full) < 0.05f, fmt("%s: beats from just before still count", where), detail);
+                check(std::fabs(forgotten - lateAlone) < 0.05f, fmt("%s: after four cycles they are forgotten", where), detail);
+                check(std::fabs(afterChange - lateAlone) < 0.08f, fmt("%s: nothing from before a settings change is used", where), detail);
+            }
+            else // the band split smears the test signal, so only what must hold for any signal is checked
+                check(full >= 0.f && remembered <= forgotten + 0.01f && std::fabs(forgotten - lateAlone) < 0.08f && std::fabs(afterChange - lateAlone) < 0.1f,
+                      fmt("%s: the same history rules per band", where), detail);
+        }
+    }
+
 
     {
         Rig plain;
@@ -1269,6 +1333,15 @@ static void testCurveFromKick()
         k.play(beat * 9.0);
         const auto res = k.r.p.fitCurveToKick(0);
         check(res.status == Status::severalHits && res.hits == 4 && curves(k.r.p) == before, "four kicks in one cycle are counted and refused", fmt("%d hits", res.hits));
+        k.r.param("division", 4.f); // half a bar: two kicks, which Detailed can follow
+        k.play(beat * 5.0);
+        const auto simple = k.r.p.fitCurveToKick(0);
+        const auto two = k.r.p.fitCurveToKick(0, kickfit::Style::precise);
+        const auto& e = two.curve;
+        check(simple.status == Status::severalHits && two.status == Status::ok && two.hits == 2 && e.points.size() <= 16
+              && e.evaluate(0.02f) < 0.2f && e.evaluate(0.40f) > e.evaluate(0.52f) + 0.3f && e.evaluate(0.9f) > e.evaluate(0.52f) + 0.3f,
+              "two kicks in one cycle: Simple refuses, Detailed ducks both",
+              fmt("%d points; open %.2f on the first, %.2f between, %.2f on the second, %.2f after", (int) e.points.size(), e.evaluate(0.02f), e.evaluate(0.40f), e.evaluate(0.52f), e.evaluate(0.9f)));
     }
 
     for (float engine : { 0.f, 1.f })
@@ -1587,6 +1660,7 @@ int main()
     testTiming();
     testSidechainBus();
     testState();
+    testDamagedProjects();
     testPointLimitState();
     testCurveFromKick();
     testLinkedNames();

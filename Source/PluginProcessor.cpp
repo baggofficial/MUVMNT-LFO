@@ -1,4 +1,5 @@
 #include "PluginProcessor.h"
+#include "SavedText.h"
 #include "PluginEditor.h"
 
 const std::array<const char*, FreeLfoProcessor::numDivisions> FreeLfoProcessor::divisionNames = {
@@ -370,7 +371,9 @@ kickfit::Result FreeLfoProcessor::fitCurveToKick(int slot, kickfit::Style style)
     };
     const auto peaks = peaksOf(slot);
     // the sound being ducked, as it came in, over the same cycle (the band's own part of it in Multiband)
-    const auto sound = loudestPerSlice(slot > 0 ? bwMin[(size_t) slot - 1] : waveMin, slot > 0 ? bwMax[(size_t) slot - 1] : waveMax);
+    auto sound = loudestPerSlice(slot > 0 ? bwMin[(size_t) slot - 1] : waveMin, slot > 0 ? bwMax[(size_t) slot - 1] : waveMax);
+    for (const auto& cycleBefore : olderSound[(size_t) slot]) // ... and the loudest it was in the cycles before that one
+        for (size_t i = 0; i < sound.size(); ++i) sound[i] = juce::jmax(sound[i], cycleBefore[i].load(std::memory_order_relaxed));
 
     if (slot > 0) // the outline is scaled to its own peak, so a band with only a faint trace of the kick must be caught here
     {
@@ -802,9 +805,11 @@ void FreeLfoProcessor::processSingle(juce::AudioBuffer<float>& mainBuf, const Ho
                 }
                 if (bin >= (int) ((1.f - wrapWindow) * waveBins)) { endLo = juce::jmin(endLo, outNow); endHi = juce::jmax(endHi, outNow); }
                 lastOut = outNow;
+                if (scChannels > 0 && isNew)
+                    noteSidechainSlice(0, cycleSeconds.load(std::memory_order_relaxed), (float) offset, (size_t) bin,
+                                       waveMin[(size_t) bin].load(std::memory_order_relaxed), waveMax[(size_t) bin].load(std::memory_order_relaxed));
                 track(waveMin, waveMax, mono);
                 if (scChannels > 0) track(scMin, scMax, scMono);
-                if (scChannels > 0 && isNew) noteSidechainSlice(0, cycleSeconds.load(std::memory_order_relaxed), (float) offset);
 
                 // Rough pitch for the rainbow: zero crossings per sample (with hysteresis against noise), averaged over ~25 ms.
                 // A sine of f Hz crosses zero 2f/sr times per sample.
@@ -1036,7 +1041,8 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const Hos
                 bandLastOut[b] = outNow;
                 if (scOn)
                 {
-                    if (isNew) noteSidechainSlice(b + 1, bandCycleSeconds[(size_t) b].load(std::memory_order_relaxed), laneSig[b].offset);
+                    if (isNew) noteSidechainSlice(b + 1, bandCycleSeconds[(size_t) b].load(std::memory_order_relaxed), laneSig[b].offset, (size_t) bin[b],
+                                                  bwMin[(size_t) b][(size_t) bin[b]].load(std::memory_order_relaxed), bwMax[(size_t) b][(size_t) bin[b]].load(std::memory_order_relaxed));
                     auto& klo = bandScMin[(size_t) b][(size_t) bin[b]];
                     auto& khi = bandScMax[(size_t) b][(size_t) bin[b]];
                     const float kv = (float) sb[b];
@@ -1082,8 +1088,21 @@ void FreeLfoProcessor::getStateInformation(juce::MemoryBlock& dest)
         copyXmlToBinary(*xml, dest);
 }
 
+// JUCE (8.0.6) can read past the end of damaged project text, so only complete text, laid out like our own saved
+// projects, ever reaches its XML reader (see SavedText.h). The bytes are as AudioProcessor::copyXmlToBinary writes them:
+// a marker, the text's length, the text.
+static bool looksLikeSavedProject(const void* data, int size)
+{
+    if (data == nullptr || size <= 8) return false;
+    const auto* bytes = static_cast<const char*>(data);
+    const int length = (int) juce::ByteOrder::littleEndianInt(bytes + 4);
+    return length > 0 && savedtext::isSavedProject(bytes + 8, (size_t) juce::jmin(size - 8, length));
+}
+
 void FreeLfoProcessor::setStateInformation(const void* data, int size)
 {
+    if (! looksLikeSavedProject(data, size)) return; // damaged: keep the current settings
+
     if (auto xml = getXmlFromBinary(data, size))
     {
         auto state = juce::ValueTree::fromXml(*xml);

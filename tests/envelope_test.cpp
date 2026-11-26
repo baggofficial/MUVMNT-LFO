@@ -2,7 +2,11 @@
 #include "../Source/Envelope.h"
 #include "../Source/Presets.h"
 #include "../Source/KickToCurve.h"
+#include "../Source/Overlap.h"
+#include "../Source/SavedText.h"
+#include <string>
 #include <functional>
+#include <algorithm>
 #include <limits>
 #include <array>
 #include <cassert>
@@ -453,10 +457,70 @@ int main()
                     assert(mine > worstCase - 512 * 0.04);
                 }
             }
-            // precise refuses exactly what safe refuses
+            // precise refuses what safe refuses, where there is nothing to shape
             for (const auto& f : { std::function<double(double)>([](double) { return 0.0; }), std::function<double(double)>(bass),
                                    std::function<double(double)>([&](double t) { return kick(t, 40.0, 1.5, 0.9); }) })
                 assert(kickfit::analyse(slices(f, beat), beat, Style::precise).status == run(f, beat).status);
+        }
+        // precise also handles what safe refuses as "never fades" or "several hits": long kicks and a few hits per cycle
+        {
+            const double fast = 60.0 / 160.0;
+            auto distorted = [&](double t, double decay, double drive) { return std::tanh(drive * kick(t, 50.0, decay, 1.0)) / std::tanh(drive); };
+            auto fits = [&](const std::function<double(double)>& f, double cycle, int hits) {
+                const auto peaks = slices(f, cycle);
+                const auto safe = kickfit::analyse(peaks, cycle, kickfit::Style::safe);
+                const auto r = kickfit::analyse(peaks, cycle, kickfit::Style::precise, std::vector<float>(512, 0.5f));
+                assert(safe.status == Status::noGaps || safe.status == Status::severalHits);   // safe is as it was
+                assert(r.status == Status::ok && r.hits == hits);
+                const auto& e = r.curve;
+                assert(e.points.size() >= 3 && e.points.size() <= 16 && e.points.front().x == 0.f && e.points.back().x == 1.f && e.points.front().y == e.points.back().y);
+                for (size_t i = 1; i < e.points.size(); ++i) assert(e.points[i].x > e.points[i - 1].x);
+                // close to the room the kick leaves nearly everywhere, and never wide open on a hit
+                auto k = kickfit::detail::outline(peaks, std::clamp((int) std::lround(0.013 / (cycle / 512)), 1, 32));
+                const float top = *std::max_element(k.begin(), k.end());
+                int over = 0;
+                float most = 0.f;
+                for (int i = 0; i < 480; ++i)
+                {
+                    const float v = e.evaluate(((float) i + 0.5f) / 512.f);
+                    assert(v >= 0.f && v <= 1.f);
+                    over += v > kickfit::freeBeside(k[(size_t) i] / top) + 0.17f;
+                    most = std::max(most, v);
+                }
+                assert(over < 30 && most >= 0.25f);
+                return e;
+            };
+            // a distorted kick and an 808 that are still ringing when the next one comes: ducked on the hit, rising all along
+            for (const auto& f : { std::function<double(double)>([&](double t) { return distorted(t, 0.16, 5.0); }),
+                                   std::function<double(double)>([&](double t) { return kick(t, 46.0, 0.32, 0.95); }) })
+            {
+                const auto e = fits(f, fast, 1);
+                // on the beat: the drop ends at the loop point, with no stretch of silence before it
+                for (size_t i = 0; i + 1 < e.points.size(); ++i) assert(! (e.points[i].x > 0.85f && e.points[i].y < 0.02f));
+                assert(e.evaluate(0.95f) > 0.1f);
+                assert(e.evaluate(0.005f) < 0.05f && e.evaluate(0.8f) > e.evaluate(0.3f) && e.evaluate(0.8f) < 0.95f && e.points.back().y < 0.05f);
+            }
+            // two hits: down, up, down again, up again
+            {
+                const auto e = fits([&](double t) { return kick(t, 55.0, 0.035, 0.9) + kick(t - 0.5 * fast, 55.0, 0.035, 0.75); }, fast, 2);
+                assert(e.evaluate(0.02f) < 0.15f && e.evaluate(0.40f) > 0.85f && e.evaluate(0.51f) < 0.4f && e.evaluate(0.85f) > 0.85f);
+                assert(e.evaluate(0.95f) > 0.85f);   // still open until the drop just before the loop point
+            }
+            // two hits away from the beat: full level at the loop point
+            {
+                const auto e = fits([&](double t) { return kick(t - 0.25 * beat, 55.0, 0.04, 0.9) + kick(t - 0.7 * beat, 55.0, 0.04, 0.9); }, beat, 2);
+                assert(e.evaluate(0.001f) > 0.95f && e.evaluate(0.26f) < 0.1f && e.evaluate(0.55f) > 0.9f && e.evaluate(0.71f) < 0.1f && e.evaluate(0.97f) > 0.95f);
+            }
+            // four short kicks in a bar still fit in 16 points
+            fits([&](double t) { double s = 0; for (int h = 0; h < 4; ++h) s += kick(t - h * beat, 50.0, 0.06, 0.9); return s; }, beat * 4.0, 4);
+            // nothing to shape, or more than it can follow: refused, saying what safe says
+            for (const auto& f : { std::function<double(double)>([&](double t) { return 0.7 * std::sin(twoPi * 55.0 * t); }),
+                                   std::function<double(double)>([&](double t) { return kick(t, 40.0, 1.5, 0.9); }),
+                                   std::function<double(double)>([&](double t) { return std::sin(twoPi * 55.0 * t) * (0.65 + 0.35 * std::sin(twoPi * t / fast)); }),
+                                   std::function<double(double)>([&](double t) { return distorted(std::fmod(t, fast), 0.30, 10.0); }) })
+                assert(kickfit::analyse(slices(f, fast), fast, kickfit::Style::precise).status == Status::noGaps);
+            const auto eight = [&](double t) { double s = 0; for (int h = 0; h < 8; ++h) s += kick(t - h * beat / 2.0, 50.0, 0.03, 0.9); return s; };
+            assert(kickfit::analyse(slices(eight, beat * 4.0), beat * 4.0, kickfit::Style::precise).status == Status::severalHits);
         }
         // a sharp hit right on the beat can seem a few milliseconds early (the loudness outline blurs it): safe then holds
         // silence up to the loop point, precise just ends its drop there; a hit that really is early is ducked by both
@@ -482,6 +546,41 @@ int main()
             assert(reallyEarly.status == Status::ok && pointsNearEnd(reallyEarly.curve) == 2);
             assert(reallyEarly.curve.evaluate((float) (1.0 - 0.015 / beat)) < 0.05f);
         }
+        // precise on a short, sharp kick (what the mid and high bands mostly hold): it opens little further than the kick
+        // itself leaves room for. Averaging the kick around each slice used to read it too quiet (twice this excess)
+        for (const auto& [decay, limit] : { std::pair<double, float> { 0.010, 0.6f }, std::pair<double, float> { 0.015, 1.0f } })
+        {
+            const auto kickPeaks = slices([&, d = decay](double t) { return 0.9 * std::sin(twoPi * 900.0 * t) * std::exp(-t / d); }, beat);
+            const auto r = kickfit::analyse(kickPeaks, beat, kickfit::Style::precise, std::vector<float>(512, 0.5f));
+            assert(r.status == Status::ok);
+            const float top = *std::max_element(kickPeaks.begin(), kickPeaks.end());
+            float excess = 0.f;
+            for (int i = 0; i < 480; ++i)
+            {
+                const float near = std::max({ kickPeaks[(size_t) i], kickPeaks[(size_t) i + 1], kickPeaks[(size_t) i + 2] }) / top; // within 2 ms
+                excess += std::max(0.f, r.curve.evaluate(((float) i + 0.5f) / 512.f) - (1.f - near));
+            }
+            assert(excess < limit);
+        }
+        // a kick still ringing when the cycle ends: precise stays at what it leaves, with no jump up just before the drop
+        {
+            const auto r = kickfit::analyse(slices([&](double t) { return kick(t, 50.0, 0.22, 0.9); }, beat), beat, kickfit::Style::precise, std::vector<float>(512, 0.5f));
+            assert(r.status == Status::ok);
+            for (int i = 700; i < 970; ++i) assert(r.curve.evaluate((float) (i + 1) / 1000.f) - r.curve.evaluate((float) i / 1000.f) < 0.004f);
+            assert(r.curve.evaluate(0.97f) < 0.95f && r.curve.evaluate(0.97f) > 0.5f && r.curve.points.back().y == 0.f);
+        }
+        // precise bridges a short gap in the sound: it will be somewhere else on the next beat
+        {
+            const auto kickPeaks = slices([&](double t) { return kick(t, 50.0, 0.16, 0.9); }, beat);
+            std::vector<float> steady(512, 0.6f), gappy = steady;
+            for (int i = 60; i < 100; ++i) gappy[(size_t) i] = 0.f; // 36 ms of nothing, while the kick is still loud
+            const auto a = kickfit::analyse(kickPeaks, beat, kickfit::Style::precise, steady);
+            const auto b = kickfit::analyse(kickPeaks, beat, kickfit::Style::precise, gappy);
+            assert(a.status == Status::ok && b.status == Status::ok);
+            for (int i = 0; i < 512; ++i) assert(std::fabs(a.curve.evaluate(i / 512.f) - b.curve.evaluate(i / 512.f)) < 0.05f);
+        }
+        assert(kickfit::freeBeside(0.f) == 1.f && kickfit::freeBeside(0.05f) == 1.f && std::fabs(kickfit::freeBeside(0.5f) - 0.5f) < 1e-6f && kickfit::freeBeside(1.f) == 0.f); // what is left, exactly
+
         // random junk must give either a refusal or a usable curve
         unsigned seed = 12345;
         auto rnd = [&seed] { seed = seed * 1664525u + 1013904223u; return (float) (seed >> 8) / 16777216.f; };
@@ -500,7 +599,9 @@ int main()
             std::vector<float> sound(512);
             for (auto& v : sound) v = trial % 5 == 0 ? 0.f : rnd() * rnd();
             const auto fine = kickfit::analyse(peaks, cycle, kickfit::Style::precise, sound);
-            assert(fine.status == r.status);
+            // precise only differs where safe finds no single fading hit: there it may manage one through the whole cycle
+            assert(fine.status == r.status
+                   || (fine.status == Status::ok && (r.status == Status::noGaps || r.status == Status::severalHits)));
             if (fine.status == Status::ok)
             {
                 assert(fine.curve.points.size() >= 3 && fine.curve.points.size() <= 16 && fine.curve.points.front().y == fine.curve.points.back().y);
@@ -508,6 +609,95 @@ int main()
                 for (int i = 0; i < 1024; ++i) { const float v = fine.curve.evaluate(i / 1024.f); assert(v >= 0.f && v <= 1.f); }
             }
         }
+    }
+
+    // ---- the kick overlap marker on the graph
+    {
+        constexpr int n = overlap::bins;
+        const double cycle = 60.0 / 128.0, pi = 3.14159265358979323846;
+        auto peaksOf = [&](const std::function<double(double)>& f) {
+            std::vector<float> peaks(n, 0.f);
+            const int total = (int) (cycle * 48000.0);
+            for (int i = 0; i < total; ++i)
+            {
+                float& slice = peaks[(size_t) ((double) i / total * n)];
+                slice = std::max(slice, (float) std::fabs(f(i / 48000.0)));
+            }
+            return peaks;
+        };
+        // its sliding windows give the same outline as the one "curve from kick" reads
+        {
+            unsigned seed = 7;
+            std::vector<float> junk(n), fast(n);
+            for (auto& v : junk) { seed = seed * 1664525u + 1013904223u; v = (float) (seed >> 8) / 16777216.f; }
+            for (int radius = 1; radius <= overlap::maxRadius; ++radius)
+            {
+                overlap::outline(junk.data(), fast.data(), radius);
+                const auto slow = kickfit::detail::outline(junk, radius);
+                for (int i = 0; i < n; ++i) assert(std::fabs(fast[(size_t) i] - slow[(size_t) i]) < 1e-5f);
+            }
+        }
+        const auto kickPeaks = peaksOf([&](double t) { return std::sin(2.0 * pi * (50.0 * t + 2.4 * (1.0 - std::exp(-t / 0.02)))) * std::exp(-t / 0.1) * 0.85; });
+        struct Sound { const char* name; std::function<double(double)> f; };
+        const Sound sounds[] = {
+            { "sub bass", [&](double t) { return 0.6 * std::sin(2.0 * pi * 55.0 * t); } },
+            { "bright bass", [&](double t) { double v = 0.0; for (int h = 1; h <= 40; ++h) v += std::sin(2.0 * pi * 110.0 * h * t + h * h * 0.37) / std::pow((double) h, 0.62); return v * 0.17; } },
+            { "bass and chord", [&](double t) { double v = 0.0; for (int h = 1; h <= 7; ++h) v += std::sin(2.0 * pi * 55.0 * h * t) / (h * std::sqrt((double) h)) * 0.27;
+                                               for (double hz : { 220.0, 261.6, 329.6 }) v += 0.1 * std::sin(2.0 * pi * hz * t); return v; } } };
+        // runs of marked slices, and how many are marked
+        auto runs = [](const bool* m) { int count = 0; for (int i = 0; i < overlap::bins; ++i) count += m[i] && (i == 0 || ! m[i - 1]); return count; };
+        auto total = [](const bool* m) { return (int) std::count(m, m + overlap::bins, true); };
+        std::vector<float> weak(n), full(n, 1.f), open(n, 1.f);
+        for (int i = 0; i < n; ++i) { const float rise = std::clamp(((float) i / n - 0.15f) / 0.1f, 0.f, 1.f); weak[(size_t) i] = 0.75f + 0.25f * rise; full[(size_t) i] = rise; }
+        bool marked[overlap::bins];
+        for (const auto& sound : sounds)
+        {
+            const auto peaks = peaksOf(sound.f);
+            // barely ducked: one solid stretch from the hit until the kick has faded
+            assert(overlap::mark(kickPeaks.data(), peaks.data(), weak.data(), cycle, marked));
+            std::printf("overlap, %-15s %d stretch(es), %.0f%% of the cycle\n", sound.name, runs(marked), 100.0 * total(marked) / n);
+            assert(runs(marked) == 1 && marked[2] && total(marked) > n / 10 && total(marked) < n / 3);
+            assert(! marked[n / 2] && ! marked[n - 10]);       // the kick is long gone there
+            // fully ducked under the kick: nothing to mark where the curve is closed
+            overlap::mark(kickPeaks.data(), peaks.data(), full.data(), cycle, marked);
+            for (int i = 0; i < (int) (0.15 * n); ++i) assert(! marked[i]);
+            // not ducked at all: marked from the very start
+            assert(overlap::mark(kickPeaks.data(), peaks.data(), open.data(), cycle, marked) && marked[2]);
+        }
+        const auto sub = peaksOf(sounds[0].f);
+        const std::vector<float> nothing(n, 0.f);
+        assert(! overlap::mark(nothing.data(), sub.data(), open.data(), cycle, marked));
+        assert(! overlap::mark(kickPeaks.data(), nothing.data(), open.data(), cycle, marked));
+        // the two take turns (the sound only plays once the kick has faded): no overlap
+        const auto later = peaksOf([&](double t) { return t > cycle * 0.5 ? 0.6 * std::sin(2.0 * pi * 55.0 * t) : 0.0; });
+        assert(! overlap::mark(kickPeaks.data(), later.data(), open.data(), cycle, marked));
+        // junk cannot upset it, at any cycle length
+        std::vector<float> bad(n, std::numeric_limits<float>::quiet_NaN());
+        for (double seconds : { 0.0, -1.0, 0.001, 0.03, 0.47, 8.0, 1.0e9 })
+        {
+            overlap::mark(bad.data(), sub.data(), open.data(), seconds, marked);
+            overlap::mark(kickPeaks.data(), sub.data(), open.data(), seconds, marked);
+        }
+    }
+
+    // ---- saved projects: only complete text in the plugin's own layout reaches JUCE's XML reader
+    {
+        auto ok = [](const std::string& t) { return savedtext::isSavedProject(t.data(), t.size()); };
+        const std::string head = "<?xml version=\"1.0\" encoding=\"UTF-8\"?> ";
+        const std::string good = head + "<STATE envelope=\"0,0;1,1\" note=\"a &amp; &lt;b&gt; &quot;c&apos; &#233;&#10;\" endZone=\"0\"><PARAM id=\"depth\" value=\"1.0\"/><PARAM id=\"mb\" value=\"0.0\" /></STATE>";
+        assert(ok(good) && ok(good.substr(head.size())) && ok(good + "\n") && ok("<A/>"));
+        assert(ok(good + std::string(1, '\0') + "\xF0 anything after the terminator"));
+        // every way of cutting it short is refused
+        for (size_t n = 0; n < good.size(); ++n) assert(! ok(good.substr(0, n)));
+        // the texts that made JUCE read past the end, and their relatives
+        for (const char* bad : { "<?\?><E e=\"\"e=\"\">&#x", "<a>text\xE2", "<a b=\"&#x\"/>", "<a b=\"&#\"/>", "<a b=\"&#0;\"/>", "<a b=\"&#99999999999;\"/>", "<a b=\"&amp\"/>",
+                                 "<a b=\"&nope;\"/>", "<a b=\"<\"/>", "<a b=\"1\"c=\"2\"/>", "<a b=1/>", "<a b/>", "<a><b></a></b>", "<a>text</a>", "<a><!-- x --></a>",
+                                 "<a><![CDATA[x]]></a>", "<!DOCTYPE a><a/>", "<?xml?><a/>", "<a/><b/>", "<a/>x", "<1a/>", "<a b=\"\x01\"/>", "<a b=\"\xC3\xA9\"/>", "" })
+            assert(! ok(bad));
+        std::string deep, closing;
+        for (int i = 0; i < 100000; ++i) { deep += "<a>"; closing += "</a>"; }
+        assert(! ok(deep + closing));   // no runaway nesting
+        assert(! savedtext::isSavedProject(nullptr, 10));
     }
 
     std::puts("envelope tests passed");

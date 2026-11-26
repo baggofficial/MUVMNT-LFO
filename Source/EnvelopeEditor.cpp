@@ -1,4 +1,5 @@
 #include "EnvelopeEditor.h"
+#include "Overlap.h"
 
 // ---------------------------------------------------------------- EnvelopeEditor
 
@@ -375,35 +376,24 @@ void EnvelopeEditor::drawWaveforms(juce::Graphics& g)
 }
 
 // Where the sidechain signal (the kick) and the plugin's output are both loud at the same position in the cycle: hatched
-// in the kick's colour. Each is measured against its own peak, so it does not depend on levels; the output is what is left
-// after the ducking, so a spot where the curve really ducks under the kick is not marked. In Multiband each band is
-// compared with the same band of the kick.
+// in the kick's colour (see Overlap.h for how "loud" is judged). Each is measured against its own peak, so it does not
+// depend on levels; the output is what is left after the ducking, so a spot where the curve really ducks under the kick
+// is not marked. In Multiband each band is compared with the same band of the kick.
 void EnvelopeEditor::drawOverlap(juce::Graphics& g, const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& mnArr,
                                  const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& mxArr,
                                  const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& scMn,
                                  const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& scMx, float opacity)
 {
     constexpr int bins = FreeLfoProcessor::waveBins;
-    float kick[bins], out[bins];
-    float kMax = 0.f, oMax = 0.f;
+    static_assert(bins == overlap::bins, "the marker works on the scope's slices");
+    float kick[bins], sound[bins];
     for (int i = 0; i < bins; ++i)
     {
         kick[i] = juce::jmax(std::abs(scMn[(size_t) i].load(std::memory_order_relaxed)), std::abs(scMx[(size_t) i].load(std::memory_order_relaxed)));
-        out[i] = juce::jmax(std::abs(mnArr[(size_t) i].load(std::memory_order_relaxed)), std::abs(mxArr[(size_t) i].load(std::memory_order_relaxed))) * outGain[i];
-        kMax = juce::jmax(kMax, kick[i]);
-        oMax = juce::jmax(oMax, out[i]);
+        sound[i] = juce::jmax(std::abs(mnArr[(size_t) i].load(std::memory_order_relaxed)), std::abs(mxArr[(size_t) i].load(std::memory_order_relaxed)));
     }
-    if (kMax < 0.01f || oMax < 0.01f) return;   // no kick, or no signal: nothing to compare
-
-    float c[bins];
-    for (int i = 0; i < bins; ++i) c[i] = juce::jmin(kick[i] / kMax, out[i] / oMax);
-    float sm[bins];                                      // a little smoothing, so single wiggles do not make confetti
-    for (int i = 0; i < bins; ++i)
-    {
-        float sum = 0.f; int n = 0;
-        for (int k = juce::jmax(0, i - 3); k <= juce::jmin(bins - 1, i + 3); ++k) { sum += c[k]; ++n; }
-        sm[i] = sum / (float) n;
-    }
+    bool marked[bins];
+    if (! overlap::mark(kick, sound, outGain, cycleSecs(), marked)) return;
 
     const float top = toScreen(0.f, 1.f).y, bottom = toScreen(0.f, 0.f).y;
     const auto ink = theme::dark ? juce::Colours::white : juce::Colours::black;
@@ -424,7 +414,7 @@ void EnvelopeEditor::drawOverlap(juce::Graphics& g, const std::array<std::atomic
     };
     for (int i = 0; i < bins; ++i)
     {
-        if (sm[i] > 0.4f) { if (runStart < 0) runStart = i; }
+        if (marked[i]) { if (runStart < 0) runStart = i; }
         else flush(i);
     }
     flush(bins - 1);

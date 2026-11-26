@@ -93,6 +93,11 @@ public:
     // How many sidechain slices have been recorded in a row at the current rate and offset, per curve slot
     // (up to waveBins = one whole cycle): "curve from kick" must not read leftovers from an earlier setting
     std::array<std::atomic<int>, 4> scFresh {};
+    // The sound being ducked in the cycles before the one on the scope: the loudest |sample| per slice, per curve slot, newest
+    // first; 0 where there is nothing. "Detailed" fits its curve to the loudest of these and the last cycle, because the next
+    // beats are rarely quite like the last one. Recorded only while the sidechain is (24 KB).
+    static constexpr int olderCycles = 3;
+    std::array<std::array<std::array<std::atomic<float>, waveBins>, olderCycles>, 4> olderSound {};
     // Multiband: the sidechain signal split by a copy of the crossover, so each band can be compared with the same part of it.
     std::array<std::array<std::atomic<float>, waveBins>, 3> bandScMin {}, bandScMax {};
     std::atomic<double> cycleSeconds { 0.5 }; // length of one LFO cycle, for the editor's smoothing preview
@@ -156,7 +161,9 @@ private:
     void syncTable(int slot);
     double scKeyCycle[4] = {};   // audio thread: the cycle length and offset the sidechain slices were recorded with
     float scKeyOffset[4] = {};
-    void noteSidechainSlice(int slot, double cycle, float offset)   // once per new slice
+    int scSlices[4] = {};        // audio thread: slices recorded in a row (like scFresh, but counting on past one cycle)
+    // Call before a slice is overwritten with the new cycle: its old peak moves into the history, if it is from this run
+    void noteSidechainSlice(int slot, double cycle, float offset, size_t bin, float oldLow, float oldHigh)   // once per new slice
     {
         auto& fresh = scFresh[(size_t) slot];
         int count = fresh.load(std::memory_order_relaxed);
@@ -166,6 +173,13 @@ private:
             scKeyOffset[slot] = offset;
             count = 0;
         }
+        if (count == 0) scSlices[slot] = 0;
+        if (scSlices[slot] < 1000000) ++scSlices[slot];
+        const bool fromThisRun = scSlices[slot] > waveBins; // this slice has been round once already
+        auto& history = olderSound[(size_t) slot];
+        for (int k = olderCycles - 1; k > 0; --k)
+            history[(size_t) k][bin].store(fromThisRun ? history[(size_t) k - 1][bin].load(std::memory_order_relaxed) : 0.f, std::memory_order_relaxed);
+        history[0][bin].store(fromThisRun ? juce::jmax(std::abs(oldLow), std::abs(oldHigh)) : 0.f, std::memory_order_relaxed);
         if (count < waveBins) ++count;
         fresh.store(count, std::memory_order_relaxed);
     }
