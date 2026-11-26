@@ -4,6 +4,8 @@ A free VST3 volume-shaper effect: draw a curve, and the plugin ducks your sound 
 
 Made by [**BAGG**](https://thebaggpack.com/bio), a Danish electronic music producer. [Hear the music](#about-bagg).
 
+**[Download the beta](https://github.com/baggofficial/MUVMNT-LFO/releases)** for Windows or macOS.
+
 It is an independent, from-scratch implementation inspired by the workflow of Xfer Records' LFOTool and the volume shaper in Cableguys' ShaperBox. It contains no code from either.
 
 ![Full Band: the curve over the incoming audio (grey) and what the plugin lets through (coloured by pitch)](docs/images/single-dark.png)
@@ -82,15 +84,15 @@ It is an independent, from-scratch implementation inspired by the workflow of Xf
 ## Install
 
 **Windows (VST3)**
-1. Open the repository's [**Actions** tab](https://github.com/baggofficial/MUVMNT-LFO/actions), open the latest successful run, and download the `MUVMNT-LFO-windows-vst3` artifact.
-2. Copy `MUVMNT LFO.vst3` to `C:\Program Files\Common Files\VST3\`.
+1. From the [**Releases** page](https://github.com/baggofficial/MUVMNT-LFO/releases), download the newest file ending in `windows-vst3.zip`, and unzip it.
+2. Copy the `MUVMNT LFO.vst3` folder to `C:\Program Files\Common Files\VST3\`.
 3. Rescan plugins in your DAW.
 
 **macOS (VST3, macOS 11 or newer, Apple Silicon and Intel)**
 
 The Mac version is built and tested automatically, but **has not been tried in a DAW from this download yet**.
-1. From the same [**Actions** tab](https://github.com/baggofficial/MUVMNT-LFO/actions) run, download the `MUVMNT-LFO-macos-vst3` artifact.
-2. Unzip it. Inside is a second zip: unzip that too, to get `MUVMNT LFO.vst3`.
+1. From the [**Releases** page](https://github.com/baggofficial/MUVMNT-LFO/releases), download the newest file ending in `macos-vst3.zip`.
+2. Unzip it to get `MUVMNT LFO.vst3`.
 3. Copy `MUVMNT LFO.vst3` to `~/Library/Audio/Plug-Ins/VST3/` (in Finder: **Go > Go to Folder**).
 4. The build is not notarised by Apple, so macOS is likely to block it. If you trust the download, remove the block by running this in Terminal:
    ```bash
