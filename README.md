@@ -83,9 +83,19 @@ It is an independent, from-scratch implementation inspired by the workflow of Xf
 2. Copy `MUVMNT LFO.vst3` to `C:\Program Files\Common Files\VST3\`.
 3. Rescan plugins in your DAW.
 
-**macOS (VST3 and standalone app)**: build from source (see below) and copy `MUVMNT LFO.vst3` to `~/Library/Audio/Plug-Ins/VST3/`. The build is not code-signed, so macOS may ask you to allow it.
+**macOS (VST3, macOS 11 or newer, Apple Silicon and Intel)**
 
-Only the VST3 format is built (plus a standalone app for development). AU, AAX and CLAP are not available yet.
+The Mac version is built and tested automatically, but **has not been tried in a DAW from this download yet**.
+1. From the same [**Actions** tab](https://github.com/baggofficial/MUVMNT-LFO/actions) run, download the `MUVMNT-LFO-macos-vst3` artifact.
+2. Unzip it. Inside is a second zip: unzip that too, to get `MUVMNT LFO.vst3`.
+3. Copy `MUVMNT LFO.vst3` to `~/Library/Audio/Plug-Ins/VST3/` (in Finder: **Go > Go to Folder**).
+4. The build is not notarised by Apple, so macOS is likely to block it. If you trust the download, remove the block by running this in Terminal:
+   ```bash
+   xattr -dr com.apple.quarantine "$HOME/Library/Audio/Plug-Ins/VST3/MUVMNT LFO.vst3"
+   ```
+5. Rescan plugins in your DAW.
+
+Only the VST3 format is built, so hosts that need Audio Units (Logic Pro, GarageBand) cannot load it. AU, AAX and CLAP are not available yet. A standalone app for development can be built from source.
 
 ## Using it
 
@@ -233,7 +243,7 @@ These are the promises the plugin is built to keep, and the test suite checks ea
 
 (512-sample blocks; 32-sample blocks cost more, up to about 45% in the lightest modes.) A bypassed plugin does no audio processing. These figures are from one machine and will differ on yours: Full Band is almost free, and the heaviest multiband setting at 192 kHz is still around 2.3% of a core.
 
-**The open window** is the expensive part. On an Apple M1 Pro with audio running, a test program showing the window at its default size used about **24% of one core in Full Band** and **30% in 3-band Multiband** at 60 fps (whole process, audio included; two runs each, while other programs were also running). Much of that is a fixed cost per window update, so the **30 fps** switch in the top bar helps: the same test then used about 15 to 16% and 24%. Closing the plugin window removes that cost. It has **not been measured on Windows**, which draws the window differently. The macOS (Apple Silicon) VST3 is about 5 MB on disk.
+**The open window** is the expensive part. On an Apple M1 Pro with audio running, a test program showing the window at its default size used about **24% of one core in Full Band** and **30% in 3-band Multiband** at 60 fps (whole process, audio included; two runs each, while other programs were also running). Much of that is a fixed cost per window update, so the **30 fps** switch in the top bar helps: the same test then used about 15 to 16% and 24%. Closing the plugin window removes that cost. It has **not been measured on Windows**, which draws the window differently. On macOS, the VST3 is about 5 MB on disk when built for Apple Silicon only, and about 10 MB for the download, which holds both Apple Silicon and Intel versions.
 
 ## Testing
 
@@ -248,7 +258,7 @@ Everything below runs offline, without a DAW or a sound card. A small **fake DAW
 | `LfoBench` | CPU per block (including the bypassed and editor-open cases), plus quick null and multiband sanity checks | `build/LfoBench_artefacts/Release/LfoBench` |
 | `LfoSnap` | Renders the editor to PNG files without a DAW and drives it with synthetic mouse events: editing, snapping, handles, hiding, themes, layout, menus, split and band-volume dragging, the meters, the Auto Curve buttons and Ø IN | `build/LfoSnap_artefacts/Release/LfoSnap <output-folder>` |
 
-The four programs that need JUCE are built with `-DFREELFO_BENCH=ON` (see below). GitHub Actions builds the Windows and macOS plugins and runs `LfoAudioTest` on both for every push; timing limits are relaxed there because shared machines are noisy.
+The four programs that need JUCE are built with `-DFREELFO_BENCH=ON` (see below). GitHub Actions builds the Windows and macOS plugins and runs `LfoAudioTest` for every push (on macOS for both Apple Silicon and, through Rosetta, Intel); timing limits are relaxed there because shared machines are noisy.
 
 ## Building from source
 
