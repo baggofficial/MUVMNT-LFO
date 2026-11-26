@@ -1,4 +1,4 @@
-// Offline audio tests for Free LFO Tool: a fake DAW (130 bpm) renders audio through the real processor and checks it.
+// Offline audio tests for MUVMNT LFO: a fake DAW (130 bpm) renders audio through the real processor and checks it.
 //
 //   Build:  cmake -B build -DFREELFO_BENCH=ON && cmake --build build --target LfoAudioTest
 //   Run:    build/LfoAudioTest_artefacts/Release/LfoAudioTest           (exit code 0 = everything passed)
@@ -1637,7 +1637,7 @@ static void testTypedDivisions()
 int main()
 {
     juce::ScopedJuceInitialiser_GUI init;
-    std::printf("Free LFO Tool audio tests (fake DAW at %.0f bpm)\n", kTestBpm);
+    std::printf("MUVMNT LFO audio tests (fake DAW at %.0f bpm)\n", kTestBpm);
     testTypedDivisions();
     testNull();
     testSilence();

@@ -18,7 +18,7 @@ jobs:
         run: build/LfoAudioTest_artefacts/Release/LfoAudioTest.exe
       - uses: actions/upload-artifact@v4
         with:
-          name: FreeLfoTool-windows-vst3
+          name: MUVMNT-LFO-windows-vst3
           path: build/FreeLfoTool_artefacts/Release/VST3/
 
   macos:

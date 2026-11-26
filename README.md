@@ -1,10 +1,8 @@
-# Free LFO Tool
+# MUVMNT LFO
 
 A free VST3 volume-shaper effect: draw a curve, and the plugin ducks your sound along it, locked to the tempo of your DAW. It is made for sidechain-style pumping, gating, tremolo and rhythmic volume patterns, and it has a **multiband mode** that gives the lows, mids and highs their own curves.
 
 It is an independent, from-scratch implementation inspired by the workflow of Xfer Records' LFOTool and the volume shaper in Cableguys' ShaperBox. It contains no code from either.
-
-The plugin shows up in your DAW as **Free LFO Tool**; its window carries the name **MUVMNT LFO**.
 
 ![Full Band: the curve over the incoming audio (grey) and what the plugin lets through (coloured by pitch)](docs/images/single-dark.png)
 
@@ -81,11 +79,11 @@ The plugin shows up in your DAW as **Free LFO Tool**; its window carries the nam
 ## Install
 
 **Windows (VST3)**
-1. Open the repository's **Actions** tab, open the latest successful run, and download the `FreeLfoTool-windows-vst3` artifact.
-2. Copy `Free LFO Tool.vst3` to `C:\Program Files\Common Files\VST3\`.
+1. Open the repository's [**Actions** tab](https://github.com/baggofficial/MUVMNT-LFO/actions), open the latest successful run, and download the `MUVMNT-LFO-windows-vst3` artifact.
+2. Copy `MUVMNT LFO.vst3` to `C:\Program Files\Common Files\VST3\`.
 3. Rescan plugins in your DAW.
 
-**macOS (VST3 and standalone app)**: build from source (see below) and copy `Free LFO Tool.vst3` to `~/Library/Audio/Plug-Ins/VST3/`. The build is not code-signed, so macOS may ask you to allow it.
+**macOS (VST3 and standalone app)**: build from source (see below) and copy `MUVMNT LFO.vst3` to `~/Library/Audio/Plug-Ins/VST3/`. The build is not code-signed, so macOS may ask you to allow it.
 
 Only the VST3 format is built (plus a standalone app for development). AU, AAX and CLAP are not available yet.
 
@@ -310,7 +308,7 @@ docs/images/            screenshots used in this README
 
 ## License and credits
 
-Free LFO Tool is open source under the [GNU Affero General Public License v3](LICENSE) (AGPL-3.0), the same license JUCE 8 is offered under. You can use, study, modify and share it, and if you distribute a modified version you must share its source under the same license.
+MUVMNT LFO is open source under the [GNU Affero General Public License v3](LICENSE) (AGPL-3.0), the same license JUCE 8 is offered under. You can use, study, modify and share it, and if you distribute a modified version you must share its source under the same license.
 
 VST is a trademark of Steinberg Media Technologies GmbH. The VST3 SDK is used through JUCE. LFOTool and ShaperBox are products of their respective owners, mentioned only as inspiration.
 

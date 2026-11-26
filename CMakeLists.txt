@@ -26,8 +26,9 @@ if(NOT vst3_code MATCHES "FreeLfo: no menu")
 endif()
 
 juce_add_plugin(FreeLfoTool
-    COMPANY_NAME "FreeLfo"
-    PRODUCT_NAME "Free LFO Tool"
+    COMPANY_NAME "MUVMNT"
+    PRODUCT_NAME "MUVMNT LFO"
+    # Hosts know the plugin by these two codes, not by its name. Keep them, or saved DAW projects lose the plugin.
     PLUGIN_MANUFACTURER_CODE Frlf
     PLUGIN_CODE Flt1
     FORMATS VST3 Standalone
