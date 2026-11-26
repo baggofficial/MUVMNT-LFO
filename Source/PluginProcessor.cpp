@@ -121,6 +121,11 @@ juce::AudioProcessorValueTreeState::ParameterLayout FreeLfoProcessor::createLayo
     l.add(std::make_unique<AudioParameterBool>(ParameterID { "linkDepth", 1 }, "Link Depth", false));
     l.add(std::make_unique<AudioParameterBool>(ParameterID { "linkSmooth", 1 }, "Link Smooth", false));
     l.add(std::make_unique<AudioParameterBool>(ParameterID { "linkOffset", 1 }, "Link Offset", false));
+    // Each band's own level, after its ducking (never linked: these set the balance between the bands)
+    for (int b = 0; b < 3; ++b)
+        l.add(std::make_unique<AudioParameterFloat>(ParameterID { "gain" + String(bandSuffix(b)), 1 }, String(names[b]) + " Volume",
+                                                    NormalisableRange<float>(minBandDb, maxBandDb, 0.1f), 0.f,
+                                                    AudioParameterFloatAttributes().withLabel("dB")));
     return l;
 }
 
@@ -164,6 +169,7 @@ FreeLfoProcessor::FreeLfoProcessor()
     pXLow = apvts.getRawParameterValue("xLow");
     pXHigh = apvts.getRawParameterValue("xHigh");
     for (int b = 0; b < 3; ++b) pSoloBand[b] = apvts.getRawParameterValue(juce::String("solo") + bandSuffix(b));
+    for (int b = 0; b < 3; ++b) pBandGain[b] = apvts.getRawParameterValue(juce::String("gain") + bandSuffix(b));
     pSlopeLow = apvts.getRawParameterValue("slopeLow");
     pSlopeHigh = apvts.getRawParameterValue("slopeHigh");
     pLink = apvts.getRawParameterValue("mbLink");
@@ -233,6 +239,11 @@ void FreeLfoProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     for (auto* g : { &inGain, &outGain }) g->reset(sampleRate, 0.020);
     inGain.setCurrentAndTargetValue(juce::Decibels::decibelsToGain(readParam(pInGain, 0.f)));
     outGain.setCurrentAndTargetValue(juce::Decibels::decibelsToGain(readParam(pOutGain, 0.f)));
+    for (int b = 0; b < 3; ++b)
+    {
+        bandVolume[b].reset(sampleRate, 0.020);
+        bandVolume[b].setCurrentAndTargetValue(volumeGain(readParam(pBandGain[b], 0.f)));
+    }
     dryScratch.setSize(2, juce::jmax(samplesPerBlock, 8192));
     bypassMix = pBypass != nullptr && pBypass->load() > 0.5f ? 1.f : 0.f;
     zcrCoef = 1.f - std::exp(-1.f / (0.025f * (float) sampleRate));
@@ -928,6 +939,7 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const Hos
 
     float gateTarget[3];
     for (int b = 0; b < 3; ++b) gateTarget[b] = (!anySolo || soloOn[b]) ? 1.f : 0.f;
+    for (int b = 0; b < 3; ++b) bandVolume[b].setTargetValue(volumeGain(readParam(pBandGain[b], 0.f)));
 
     float* data[2] = { buf.getWritePointer(0), numCh > 1 ? buf.getWritePointer(1) : nullptr };
     bool bad = false;
@@ -955,7 +967,7 @@ void FreeLfoProcessor::processMultiband(juce::AudioBuffer<float>& buf, const Hos
 
             // solo / mute changes fade over a few ms instead of cutting
             gate[b] = smoothStep(gate[b], gateTarget[b], declickCoef);
-            g[b] = bandSmoothed[b] * gate[b];
+            g[b] = bandSmoothed[b] * gate[b] * bandVolume[b].getNextValue();
             bin[b] = juce::jmin(waveBins - 1, (int) (L.p * waveBins));
 
             L.p += L.inc;
@@ -1065,7 +1077,14 @@ void FreeLfoProcessor::setStateInformation(const void* data, int size)
         auto state = juce::ValueTree::fromXml(*xml);
         if (state.isValid())
         {
+            // projects saved before the band volumes existed have no value for them: they mean 0 dB, not "leave as it is"
+            bool hasVolume[3];
+            for (int b = 0; b < 3; ++b) hasVolume[b] = state.getChildWithProperty("id", juce::String("gain") + bandSuffix(b)).isValid();
             apvts.replaceState(state);
+            for (int b = 0; b < 3; ++b)
+                if (! hasVolume[b])
+                    if (auto* prm = apvts.getParameter(juce::String("gain") + bandSuffix(b)))
+                        prm->setValueNotifyingHost(prm->getDefaultValue());
             for (auto* prm : getParameters()) // a damaged project must not leave "not a number" settings behind
                 if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*>(prm))
                     if (! std::isfinite(apvts.getRawParameterValue(ranged->paramID)->load()))

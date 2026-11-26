@@ -333,7 +333,14 @@ void EnvelopeEditor::drawWaveforms(juce::Graphics& g)
     fillWavePath(g, mnArr, mxArr, nullptr, in.withAlpha(waveOpacity * 0.30f));
     juce::FillType outFill(out.withAlpha(waveOpacity * outputStrength));
     if (slot == 0) rainbowFill(waveOpacity * outputStrength, outFill); // single tab: rainbow; the multiband tab keeps its band colours
-    fillWavePath(g, mnArr, mxArr, outGain, outFill);
+    if (const float volume = bandVolumeGain(); volume != 1.f) // what the plugin lets through: the band's volume counts too
+    {
+        float scaled[FreeLfoProcessor::waveBins];
+        for (int i = 0; i < FreeLfoProcessor::waveBins; ++i) scaled[i] = outGain[i] * volume;
+        fillWavePath(g, mnArr, mxArr, scaled, outFill);
+    }
+    else
+        fillWavePath(g, mnArr, mxArr, outGain, outFill);
 
     if (proc.sidechainActive.load())
     {
@@ -569,6 +576,13 @@ void EnvelopeEditor::renderCurveLayer(juce::Graphics& g)
     }
 }
 
+// The shown band's volume as a gain factor (the single curve has none)
+float EnvelopeEditor::bandVolumeGain() const
+{
+    if (slot == 0) return 1.f;
+    return FreeLfoProcessor::volumeGain(proc.apvts.getRawParameterValue(juce::String("gain") + FreeLfoProcessor::bandSuffix(slot - 1))->load());
+}
+
 size_t EnvelopeEditor::computeKey() const
 {
     size_t h = 1469598103u;
@@ -583,6 +597,7 @@ size_t EnvelopeEditor::computeKey() const
     mix((float) selected); mix((float) dragKind); mix((float) dragSeg); mix(controlsHidden ? 1.f : 0.f);
     if (slot > 0)
     {
+        mix(bandVolumeGain());   // the output waveform moves with it, audio running or not
         mix(proc.apvts.getRawParameterValue("mbBands")->load());
         for (int other = 1; other <= 3; ++other)
             if (other != slot)

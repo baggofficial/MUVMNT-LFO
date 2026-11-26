@@ -62,6 +62,7 @@ private:
                      const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& scMx, float opacity);
     void renderCurveLayer(juce::Graphics&);
     size_t computeKey() const;
+    float bandVolumeGain() const;
     float predictedPhase() const;
 
     juce::Point<float> toScreen(float x, float y) const;
@@ -165,12 +166,7 @@ public:
         g.drawText("+1", b.withHeight(10.f), juce::Justification::centred);
         g.drawText("-1", b.withTop(b.getBottom() - 10.f), juce::Justification::centred);
 
-        // green at 0, through amber, to red at the peaks (+1 / -1)
-        auto colourFor = [](float v) {
-            const auto green = theme::meterGreen, amber = theme::meterYellow, red = theme::meterRed;
-            const float a = juce::jlimit(0.f, 1.f, std::abs(v));
-            return a < 0.44f ? green.interpolatedWith(amber, a / 0.44f) : amber.interpolatedWith(red, (a - 0.44f) / 0.56f);
-        };
+        auto colourFor = [](float v) { return theme::wrapColour(std::abs(v)); }; // white at 0 to red at the peaks (+1 / -1)
 
         const int s = editor.getSlot();
         const int count = proc.wrapCount[(size_t) s].load(std::memory_order_acquire);

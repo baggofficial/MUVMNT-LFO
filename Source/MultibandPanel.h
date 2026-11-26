@@ -8,7 +8,10 @@
 
 // Frequency strip: three coloured regions (low / mid / high) with two draggable split points
 // on a log-frequency axis. Click a region to edit that band; "S" solos a band.
-class BandStrip : public juce::Component
+// Each band's response line is also its volume control: drag it up or down.
+// A split is one handle from top to bottom: its line, its slope pill and its frequency tag all drag it, and a click
+// on the pill that does not move opens the slope menu. Nothing else sits near a split line.
+class BandStrip : public juce::Component, public juce::SettableTooltipClient
 {
 public:
     explicit BandStrip(FreeLfoProcessor&);
@@ -18,6 +21,18 @@ public:
     void mouseDrag(const juce::MouseEvent&) override;
     void mouseUp(const juce::MouseEvent&) override;
     void mouseMove(const juce::MouseEvent&) override;
+    void mouseExit(const juce::MouseEvent&) override;
+    void mouseDoubleClick(const juce::MouseEvent&) override;
+
+    juce::Point<float> volumeHandle(int band) const; // the grip in the middle of a band's line
+    int volumeLineAt(juce::Point<float>) const;      // the band whose line is under this point, or -1
+    juce::PopupMenu volumeMenu(int band);            // right-click on a line: reset, then the DAW's own entries
+    static juce::String volumeText(float db);
+    int splitAt(juce::Point<float>) const;           // the split that a press here would grab, or -1
+    float splitLineX(int split) const;
+    juce::Rectangle<float> slopeBounds(int split) const { return slopeChip(splitLineX(split)); }
+    juce::Rectangle<float> frequencyTag(int split) const;
+    juce::Rectangle<float> soloBounds(int band) const;
 
     void setSelected(int band) { selected = band; repaint(); }
     std::function<void(int)> onSelect;
@@ -31,16 +46,28 @@ private:
     double splitHz(int split) const;
     float freqToX(double hz) const;
     double xToFreq(float x) const;
-    juce::Rectangle<float> soloChip(float regionRight) const;
     juce::Rectangle<float> slopeChip(float splitX) const;
     void openSlopeMenu(int split);
     void plotArea(float& top, float& bottom) const;
+    float yForDb(double db) const;
+    float volumeDb(int band) const;
+    juce::RangedAudioParameter* volumeParam(int band) const;
+    void resetVolume(int band);
+    std::function<double(int, double)> response() const; // (band, Hz) -> that band's level in dB, its volume included
     struct Region { int band; float x0, x1; };
+    juce::Rectangle<float> soloChip(const Region&) const;
+    static bool nameFits(const Region&);
     std::array<Region, 3> regions(int& count) const;
 
     FreeLfoProcessor& proc;
     int selected = 0;
     int dragHandle = -1; // 0 = low split, 1 = high split
+    int hoverSplit = -1;
+    float splitGrabOffset = 0.f, splitDownX = 0.f; // grabbing beside the line must not make it jump
+    bool splitMoved = false, pressedSlope = false;
+    int volumeBand = -1, hoverBand = -1;       // the line being dragged / under the mouse
+    float volumeDragDb = 0.f, volumeDragY = 0.f, volumeDownY = 0.f;
+    bool volumeGesture = false;                // set once the mouse really moves, so a plain click changes nothing
     int lastSig = -1;
     unsigned lastBlock = 0;
     spectrum::Analyser analyser;                       // preallocated: the 30 Hz update allocates nothing

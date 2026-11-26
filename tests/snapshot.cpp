@@ -956,6 +956,188 @@ static bool hostMenuRegression()
     return ok;
 }
 
+// A band's line in the frequency strip is its volume: drag, reset, right-click, and a plain click changes nothing.
+static bool bandVolumeRegression(const juce::File& dir)
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    setParam(p, "mb", 1.f);
+    bool ok = true;
+    auto check = [&](bool good, const char* what) { std::printf("  %-64s %s\n", what, good ? "ok" : "FAILED"); ok = ok && good; };
+    std::printf("band volume lines:\n");
+
+    struct Gestures : juce::AudioProcessorParameter::Listener
+    {
+        int began = 0, ended = 0;
+        void parameterValueChanged(int, float) override {}
+        void parameterGestureChanged(int, bool starting) override { (starting ? began : ended)++; }
+    } gestures;
+    auto* low = p.apvts.getParameter("gainL");
+    low->addListener(&gestures);
+
+    FreeLfoEditor ed(p);
+    ed.setSize(880, 500);
+    BandStrip* strip = nullptr;
+    std::function<void(juce::Component&)> walk = [&](juce::Component& c) {
+        for (auto* child : c.getChildren()) { if (auto* s = dynamic_cast<BandStrip*>(child)) strip = s; walk(*child); }
+    };
+    walk(ed);
+    check(strip != nullptr, "the frequency strip is there");
+    if (strip == nullptr) return false;
+
+    auto value = [&](const char* id) { return p.apvts.getRawParameterValue(id)->load(); };
+    auto zero = [&](const char* id) { return std::abs(value(id)) < 0.001f; }; // a host's 0..1 value rounds by a hair
+    juce::Point<float> pressed;
+    auto event = [&](juce::Point<float> at, juce::ModifierKeys mods, bool dragged) {
+        const auto now = juce::Time::getCurrentTime();
+        return juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), at, mods, 1.f, 0.f, 0.f, 0.f, 0.f,
+                                strip, strip, now, pressed, now, 1, dragged);
+    };
+    const juce::ModifierKeys left { juce::ModifierKeys::leftButtonModifier };
+    auto drag = [&](juce::Point<float> from, float dy, juce::ModifierKeys mods) {
+        pressed = from;
+        strip->mouseDown(event(from, mods, false));
+        strip->mouseDrag(event(from.translated(0.f, dy * 0.5f), mods, true));
+        strip->mouseDrag(event(from.translated(0.f, dy), mods, true));
+        strip->mouseUp(event(from.translated(0.f, dy), mods, true));
+    };
+
+    for (int band = 0; band < 3; ++band)
+        check(strip->volumeLineAt(strip->volumeHandle(band)) == band, "each band's grip can be grabbed");
+
+    const auto start = strip->volumeHandle(0);
+    drag(start, 0.f, left);
+    check(zero("gainL") && gestures.began == 0, "a plain click on a line changes nothing");
+
+    drag(start, -7.f, left);
+    const float raised = value("gainL");
+    check(raised > 3.f && raised < 5.9f, "dragging up turns the band up");
+    check(gestures.began == 1 && gestures.ended == 1, "one drag is one edit for the DAW");
+    check(std::abs(strip->volumeHandle(0).y - (start.y - 7.f)) < 1.5f, "the line follows the mouse");
+    check(zero("gainM") && zero("gainH"), "the other bands stay put");
+
+    drag(strip->volumeHandle(0), -500.f, left);
+    check(std::abs(value("gainL") - 6.f) < 0.01f, "it stops at +6 dB");
+    drag(strip->volumeHandle(0), 500.f, left);
+    check(std::abs(value("gainL") + 12.f) < 0.01f, "and at -12 dB");
+
+    const auto at = strip->volumeHandle(0);
+    pressed = at;
+    strip->mouseDoubleClick(event(at, left, false));
+    check(zero("gainL"), "double-click resets to 0 dB");
+    for (int mod : { (int) juce::ModifierKeys::altModifier, (int) juce::ModifierKeys::ctrlModifier, (int) juce::ModifierKeys::commandModifier })
+    {
+        setParam(p, "gainL", -6.f);
+        drag(strip->volumeHandle(0), 0.f, juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier | mod));
+        check(zero("gainL"), "Alt, Ctrl and Cmd clicks reset to 0 dB");
+    }
+
+    drag(strip->volumeHandle(0), -10.f, juce::ModifierKeys(juce::ModifierKeys::leftButtonModifier | juce::ModifierKeys::shiftModifier));
+    check(value("gainL") > 0.5f && value("gainL") < raised * 0.4f, "Shift drags finer");
+    setParam(p, "gainL", 0.f);
+
+    FakeHostMenus host;
+    ed.setHostContext(&host);
+    host.asked.clear();
+    const auto menu = strip->volumeMenu(2);
+    juce::StringArray items;
+    for (juce::PopupMenu::MenuItemIterator it(menu); it.next();) if (! it.getItem().isSeparator) items.add(it.getItem().text);
+    check(host.asked == "gainH" && items.joinIntoString("|") == "Reset to 0 dB|Create automation clip", "right-click offers reset and the DAW's options for that band");
+    ed.setHostContext(nullptr);
+
+    // where a band line meets a split line, the split wins: dragging there moves the split, not a volume
+    const float split = p.apvts.getRawParameterValue("xLow")->load();
+    const float splitX = 8.f + (float) (std::log(split / 20.0) / std::log(1000.0)) * (float) (strip->getWidth() - 16); // the strip's log axis
+    bool clear = true;
+    for (int y = 0; y < strip->getHeight(); ++y)
+        for (float dx = -7.f; dx <= 7.f; dx += 1.f) clear = clear && strip->volumeLineAt({ splitX + dx, (float) y }) < 0;
+    check(clear, "no volume line can be grabbed on or right beside a split line");
+    pressed = { splitX + 3.f, start.y };
+    strip->mouseDown(event(pressed, left, false));
+    strip->mouseDrag(event(pressed.translated(30.f, -8.f), left, true));
+    strip->mouseUp(event(pressed.translated(30.f, -8.f), left, true));
+    check(p.apvts.getRawParameterValue("xLow")->load() > split * 1.1f && zero("gainL") && zero("gainM"), "on a split line the split is dragged, not a volume");
+    setParam(p, "xLow", split);
+    low->removeListener(&gestures);
+
+    // ---- splits: one handle from top to bottom
+    std::printf("splitter handles:\n");
+    auto* xLow = p.apvts.getParameter("xLow");
+    xLow->addListener(&gestures);
+    auto hz = [&] { return p.apvts.getRawParameterValue("xLow")->load(); };
+    auto lineX = [&] { return strip->splitLineX(0); };
+    auto menuWasOpen = [] { const bool open = juce::PopupMenu::dismissAllActiveMenus(); juce::MessageManager::getInstance()->runDispatchLoopUntil(60); return open; };
+    menuWasOpen();
+    const auto pill = strip->slopeBounds(0);
+    const auto tag = strip->frequencyTag(0);
+    struct Spot { const char* what; juce::Point<float> at; };
+    const Spot spots[] = { { "drag by the line", { lineX(), 62.f } },
+                           { "drag from 9 px beside the line", { lineX() - 9.f, 66.f } },
+                           { "drag by the slope pill's edge", { pill.getX() + 3.f, pill.getCentreY() } },
+                           { "drag by the slope pill's arrow", { pill.getRight() - 6.f, pill.getCentreY() } },
+                           { "drag by the frequency tag", { tag.getX() + 4.f, tag.getCentreY() } } };
+    for (const auto& spot : spots)
+    {
+        setParam(p, "xLow", 200.f);
+        gestures.began = gestures.ended = 0;
+        const float beforeX = lineX();
+        pressed = spot.at;
+        strip->mouseDown(event(spot.at, left, false));
+        strip->mouseDrag(event(spot.at.translated(40.f, 6.f), left, true));
+        strip->mouseUp(event(spot.at.translated(40.f, 6.f), left, true));
+        const bool followed = std::abs(lineX() - (beforeX + 40.f)) < 1.5f; // by the distance moved: no jump to the pointer
+        check(followed && gestures.began == 1 && gestures.ended == 1 && ! menuWasOpen() && zero("gainL") && zero("gainM"), spot.what);
+    }
+    for (const auto& spot : spots)
+    {
+        setParam(p, "xLow", 200.f);
+        gestures.began = gestures.ended = 0;
+        const bool onPill = pill.contains(spot.at);
+        pressed = spot.at;
+        strip->mouseDown(event(spot.at, left, false));
+        strip->mouseDrag(event(spot.at.translated(1.f, 0.f), left, true)); // a shaky click
+        strip->mouseUp(event(spot.at.translated(1.f, 0.f), left, true));
+        const bool opened = menuWasOpen();
+        check(std::abs(hz() - 200.f) < 0.6f && gestures.began == 0 && opened == onPill,
+              onPill ? "a click on the slope pill opens its menu and moves nothing" : "a click elsewhere on the split changes nothing");
+    }
+    xLow->removeListener(&gestures);
+
+    for (int bands : { 1, 0 })
+    {
+        setParam(p, "mbBands", (float) bands);
+        for (int band = 0; band < 3; ++band)
+        {
+            if (bands == 0 && band == 1) continue;
+            const juce::String id = juce::String("solo") + FreeLfoProcessor::bandSuffix(band);
+            const auto chip = strip->soloBounds(band);
+            bool clear = true;
+            for (float x = chip.getX(); x < chip.getRight(); x += 1.f) clear = clear && strip->splitAt({ x, chip.getCentreY() }) < 0;
+            drag(chip.getCentre(), 0.f, left);
+            const bool on = value(id.toRawUTF8()) > 0.5f;
+            drag(chip.getCentre(), 0.f, left);
+            check(clear && on && value(id.toRawUTF8()) < 0.5f, "each solo button is clear of the splits and switches");
+        }
+    }
+    setParam(p, "mbBands", 1.f);
+
+    setParam(p, "gainL", 3.5f); setParam(p, "gainM", -8.f); setParam(p, "gainH", -2.f);
+    for (const bool dark : { true, false })
+    {
+        FreeLfoEditor shot(p);
+        shot.setDarkMode(dark, false);
+        shot.setSize(880, 500);
+        save(shot.createComponentSnapshot(shot.getLocalBounds(), true, 2.0f), dir.getChildFile(dark ? "volumes_dark.png" : "volumes_light.png"));
+        shot.setDarkMode(true, false);
+    }
+    setParam(p, "gainL", 6.f); setParam(p, "gainM", -12.f); setParam(p, "gainH", 6.f); setParam(p, "xHigh", 600.f); setParam(p, "xLow", 60.f); setParam(p, "mbEngine", 1.f);
+    FreeLfoEditor tight(p);
+    tight.setSize(880, 500);
+    save(tight.createComponentSnapshot(tight.getLocalBounds(), true, 2.0f), dir.getChildFile("volumes_extremes.png"));
+    return ok;
+}
+
 // Double-clicking at the 64-point limit adds nothing and says why; older curves with more points stay editable.
 static bool pointLimitRegression()
 {
@@ -1699,5 +1881,6 @@ int main(int argc, char** argv)
     const bool un = undoRegression() && presetRegression() && handleSnapRegression() && deletePointRegression();
     designShots(dir);
     menuShots(dir);
-    return modeSelectorRegression() && rateControlsRegression(dir) && kickButtonOk && frameRateRegression(dir) && un && a && b && c && d && f && g && h && k && m && n && o && q && rz ? 0 : 1;
+    const bool volumesOk = bandVolumeRegression(dir);
+    return volumesOk && modeSelectorRegression() && rateControlsRegression(dir) && kickButtonOk && frameRateRegression(dir) && un && a && b && c && d && f && g && h && k && m && n && o && q && rz ? 0 : 1;
 }

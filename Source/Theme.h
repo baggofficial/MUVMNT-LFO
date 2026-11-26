@@ -82,7 +82,17 @@ namespace theme
     inline juce::Colour gridMinor() { return gridFine; }
 
     // level meters
-    inline const juce::Colour meterGreen { 0xff39c46a }, meterYellow { 0xfff0b429 }, meterRed { 0xffff4d4d }; // end-of-cycle arrow
+    // the end-of-cycle arrow, by distance from the centre line (0 .. 1): white when safe, then soft yellow and orange,
+    // to red at the peaks. On the light theme the safe end is graphite, because white would vanish there.
+    inline juce::Colour wrapColour(float distance)
+    {
+        const juce::Colour stop[] { juce::Colour(dark ? 0xffffffff : 0xff222a35), juce::Colour(dark ? 0xfff4d675 : 0xffb58900),
+                                    juce::Colour(dark ? 0xfff0924a : 0xffd2691e), juce::Colour(dark ? 0xffe5484d : 0xffd32f36) };
+        constexpr float at[] { 0.f, 0.4f, 0.7f, 1.f };
+        const float a = juce::jlimit(0.f, 1.f, distance);
+        const int i = a < at[1] ? 0 : a < at[2] ? 1 : 2;
+        return stop[i].interpolatedWith(stop[i + 1], (a - at[i]) / (at[i + 1] - at[i]));
+    }
     // the level bars: a quieter, studio-style progression from low to over
     inline const juce::Colour levelLow { 0xff2f7d62 }, levelNormal { 0xff45a878 }, levelHigh { 0xffc3b254 },
                               levelNear { 0xffd58a43 }, levelOver { 0xffe5484d };

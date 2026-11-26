@@ -16,6 +16,10 @@ public:
     // Linked controls rename their parameter to "All Bands ...": this tells the DAW if that has changed (message thread)
     void refreshParameterNames();
 
+    static constexpr float minBandDb = -12.f, maxBandDb = 6.f; // the range of a Multiband band's volume
+    // what shows as 0.0 dB is a gain of exactly 1, whatever rounding the host's 0..1 value went through
+    static float volumeGain(float db) { return std::abs(db) < 0.05f ? 1.f : juce::Decibels::decibelsToGain(db); }
+
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
     bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
@@ -221,6 +225,8 @@ private:
     std::atomic<float>* pInGain = nullptr;
     std::atomic<float>* pOutGain = nullptr;
     juce::SmoothedValue<float> inGain { 1.f }, outGain { 1.f };   // the IN / OUT trims, glided so turning them never clicks
+    std::atomic<float>* pBandGain[3] = { nullptr, nullptr, nullptr };
+    juce::SmoothedValue<float> bandVolume[3] { 1.f, 1.f, 1.f };   // the Multiband volumes, glided the same way
     std::atomic<float>* pEngine = nullptr;
     float bypassMix = 0.f;                // 0 = processed, 1 = dry; ramps over 10 ms so bypass never clicks
     juce::AudioBuffer<float> dryScratch;  // the dry copy during a bypass crossfade (sized in prepareToPlay)

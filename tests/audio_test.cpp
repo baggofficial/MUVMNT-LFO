@@ -567,6 +567,72 @@ static void testTrims()
 // ---------------------------------------------------------------------------------------------
 // 4. Block-size independence
 // ---------------------------------------------------------------------------------------------
+static void testBandVolumes()
+{
+    section("3h. Multiband band volumes");
+    const auto in = noise(48000 * 2, 33, 0.2f);
+    const float six = juce::Decibels::decibelsToGain(6.0f);
+    for (int engine : { 0, 1 })
+    {
+        const char* name = engine == 0 ? "Crossover" : "Dynamic EQ";
+        for (bool three : { true, false })
+        {
+            auto run = [&](float volume) {
+                Rig r; r.param("mb", 1.f); r.param("mbEngine", (float) engine); r.param("mbBands", three ? 1.f : 0.f); r.allCurves(flatCurve(1.f));
+                for (const char* id : { "gainL", "gainM", "gainH" }) r.param(id, volume);
+                return r.render(in);
+            };
+            const auto flat = run(0.f), up = run(6.f);
+            float worst = 0.f;
+            for (int ch = 0; ch < 2; ++ch)
+                for (size_t i = 4800; i < in[0].size(); ++i) worst = std::max(worst, std::fabs(up[(size_t) ch][i] - flat[(size_t) ch][i] * six));
+            check(worst < 3e-6f, fmt("%s, %d bands: every band at +6 dB is exactly the 0 dB sound, 6 dB louder", name, three ? 3 : 2), fmt("worst difference %.1e", worst));
+            if (engine == 1) check(maxDiff(flat[0], in[0]) == 0.f, fmt("%s, %d bands: at 0 dB with open curves the input passes bit for bit", name, three ? 3 : 2));
+        }
+        auto level = [&](const char* id, float volume, double hz) {
+            Rig r; r.param("mb", 1.f); r.param("mbEngine", (float) engine); r.allCurves(flatCurve(1.f)); r.param(id, volume);
+            const auto t = sine(48000, hz, 48000.0, 0.2f);
+            return db(rms(r.render(t)[0], 24000) / rms(t[0], 24000));
+        };
+        const double low = level("gainL", -12.f, 40.0), lowLeaves = level("gainL", -12.f, 10000.0);
+        const double high = level("gainH", 6.f, 12000.0), highLeaves = level("gainH", 6.f, 50.0);
+        const double mid = level("gainM", -12.f, 700.0);
+        check(std::fabs(low + 12.0) < 1.0 && std::fabs(lowLeaves) < 0.2, fmt("%s: Low at -12 dB turns down the lows only", name), fmt("40 Hz %+.2f dB, 10 kHz %+.2f dB", low, lowLeaves));
+        check(std::fabs(high - 6.0) < 1.0 && std::fabs(highLeaves) < 0.2, fmt("%s: High at +6 dB turns up the highs only", name), fmt("12 kHz %+.2f dB, 50 Hz %+.2f dB", high, highLeaves));
+        check(mid < -6.0, fmt("%s: Mid volume reaches the middle", name), fmt("700 Hz %+.2f dB at -12 dB", mid));
+
+        // a jump of the volume while playing glides instead of clicking (compared with the tone at its loudest)
+        Rig r; r.param("mb", 1.f); r.param("mbEngine", (float) engine); r.allCurves(flatCurve(1.f));
+        const auto tone = sine(48000, 1000.0, 48000.0, 0.5f);
+        const auto out = r.render(tone, 256, [&](int block) { if (block == 90) r.param("gainM", -12.f); if (block == 130) r.param("gainM", 6.f); });
+        const float steady = maxSecondDiff(out[0], 40000, 47000), turning = maxSecondDiff(out[0], 90 * 256 - 64, 135 * 256);
+        check(turning < steady * 1.5f, fmt("%s: turning a band volume does not click", name), fmt("spike ratio %.2f", turning / steady));
+    }
+    {
+        Rig r; for (const char* id : { "gainL", "gainM", "gainH" }) r.param(id, 6.f);
+        r.allCurves(flatCurve(1.f));
+        check(maxDiff(r.render(in)[0], in[0]) == 0.f, "Full Band ignores the band volumes");
+        auto two = [&](float midVolume) { Rig x; x.param("mb", 1.f); x.param("mbBands", 0.f); x.param("gainM", midVolume); return x.render(in); };
+        check(maxDiff(two(0.f)[0], two(-12.f)[0]) == 0.f, "with 2 bands the unused Mid volume does nothing");
+    }
+    {
+        Rig a; a.param("gainL", 3.5f); a.param("gainM", -7.f); a.param("gainH", 6.f);
+        juce::MemoryBlock saved; a.p.getStateInformation(saved);
+        Rig b; b.p.setStateInformation(saved.getData(), (int) saved.getSize());
+        auto value = [](Rig& r, const char* id) { return r.p.apvts.getRawParameterValue(id)->load(); };
+        check(std::fabs(value(b, "gainL") - 3.5f) < 0.01f && std::fabs(value(b, "gainM") + 7.f) < 0.01f && std::fabs(value(b, "gainH") - 6.f) < 0.01f,
+              "band volumes are saved with the project");
+        // a project from before the volumes existed, loaded into a plugin whose volumes were moved
+        auto old = a.p.apvts.copyState();
+        for (const char* id : { "gainL", "gainM", "gainH" }) old.removeChild(old.getChildWithProperty("id", id), nullptr);
+        juce::MemoryBlock oldBlock;
+        juce::AudioProcessor::copyXmlToBinary(*old.createXml(), oldBlock);
+        b.p.setStateInformation(oldBlock.getData(), (int) oldBlock.getSize());
+        check(std::fabs(value(b, "gainL")) < 0.001f && std::fabs(value(b, "gainM")) < 0.001f && std::fabs(value(b, "gainH")) < 0.001f, "an older project loads with every band at 0 dB",
+              fmt("%.1f / %.1f / %.1f dB", value(b, "gainL"), value(b, "gainM"), value(b, "gainH")));
+    }
+}
+
 static void testBlockSizes()
 {
     section("4. The result must not depend on how the host chops up the audio");
@@ -799,7 +865,7 @@ static void testFuzz()
             {
                 const float nv = u(rng);
                 auto* pp = dynamic_cast<juce::RangedAudioParameter*>(prm);
-                if (pp != nullptr && (pp->paramID == "inGain" || pp->paramID == "outGain")) continue;   // they may boost, which this test forbids; tested in 3g
+                if (pp != nullptr && (pp->paramID == "inGain" || pp->paramID == "outGain" || pp->paramID.startsWith("gain"))) continue;   // they may boost, which this test forbids; tested in 3g and 3h
                 prm->setValueNotifyingHost(nv);
             }
             if (structure() != lastStructure) { lastStructure = structure(); settledSamples = 0; }
@@ -1323,7 +1389,7 @@ static void testThreads()
             for (auto* prm : params) if (u(rng) < 0.1f)
             {
                 auto* pp = dynamic_cast<juce::RangedAudioParameter*>(prm);
-                if (pp != nullptr && (pp->paramID == "inGain" || pp->paramID == "outGain")) continue;   // up to +48 dB would trip the runaway limit
+                if (pp != nullptr && (pp->paramID == "inGain" || pp->paramID == "outGain" || pp->paramID.startsWith("gain"))) continue;   // their boosts would trip the runaway limit
                 prm->setValueNotifyingHost(u(rng));
             }
         }
@@ -1442,6 +1508,7 @@ int main()
     testClipper();
     testDynamicEqMode();
     testTrims();
+    testBandVolumes();
     testBlockSizes();
     testSmoothingSlew();
     testClicks();

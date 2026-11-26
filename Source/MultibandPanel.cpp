@@ -5,6 +5,13 @@
 namespace
 {
     constexpr double minHz = 20.0, maxHz = 20000.0;
+    constexpr double stripTopDb = 12.0, stripBottomDb = -36.0; // the strip's level scale; the room above the +6 dB limit keeps 0 dB clear of the names
+    constexpr float lineReach = 6.f;   // how close to a band's line counts as on it
+    constexpr float splitReach = 10.f; // and to a split line
+    constexpr float nameInset = 14.f;  // band names start clear of the split line's reach
+    juce::String bandName(int band) { return band == 0 ? "LOW" : band == 1 ? "MID" : "HIGH"; }
+
+    juce::Font bandNameFont() { return fonts::semibold(theme::type::label).withExtraKerningFactor(0.09f); }
 
     juce::String hzText(double hz)
     {
@@ -37,7 +44,8 @@ int BandStrip::signature() const
     const auto v = [this](const char* id) { return proc.apvts.getRawParameterValue(id)->load(); };
     return (int) (v("xLow") * 3.f + v("xHigh") * 7.f + v("mbBands") * 100003.f
                   + (v("soloL") + v("soloM") * 2.f + v("soloH") * 4.f) * 7919.f
-                  + v("mbEngine") * 500009.f + v("slopeLow") * 1009.f + v("slopeHigh") * 2003.f + (float) theme::version * 31337.f);
+                  + v("mbEngine") * 500009.f + v("slopeLow") * 1009.f + v("slopeHigh") * 2003.f + (float) theme::version * 31337.f
+                  + v("gainL") * 130.f + v("gainM") * 17030.f + v("gainH") * 2230.f);
 }
 
 void BandStrip::animate()
@@ -173,9 +181,61 @@ std::array<BandStrip::Region, 3> BandStrip::regions(int& count) const
     return { Region { 0, x0, lo }, Region { 2, lo, x1 }, Region { 2, 0, 0 } };
 }
 
-juce::Rectangle<float> BandStrip::soloChip(float regionRight) const
+// The solo button sits just after the band's name, far from the split lines. In a band too narrow for both, the name
+// goes (its colour still says which band it is) and the button takes the middle.
+bool BandStrip::nameFits(const Region& r)
 {
-    return { regionRight - 26.f, 6.f, 20.f, 18.f };
+    return r.x1 - r.x0 >= nameInset + juce::GlyphArrangement::getStringWidth(bandNameFont(), bandName(r.band)) + 6.f + 20.f + splitReach;
+}
+
+juce::Rectangle<float> BandStrip::soloChip(const Region& r) const
+{
+    const float x = nameFits(r) ? r.x0 + nameInset + juce::GlyphArrangement::getStringWidth(bandNameFont(), bandName(r.band)) + 6.f
+                                : (r.x0 + r.x1) * 0.5f - 10.f;
+    return { x, 5.f, 20.f, 18.f };
+}
+
+juce::Rectangle<float> BandStrip::soloBounds(int band) const
+{
+    int count = 0;
+    const auto regs = regions(count);
+    for (int i = 0; i < count; ++i)
+        if (regs[(size_t) i].band == band) return soloChip(regs[(size_t) i]);
+    return {};
+}
+
+float BandStrip::splitLineX(int split) const { return freqToX(splitHz(split)); }
+
+// The frequency sits to the right of its split line. It moves to the left side where it would run into the next split,
+// or into the IN / OUT legend in the bottom right corner.
+juce::Rectangle<float> BandStrip::frequencyTag(int split) const
+{
+    int count = 0;
+    regions(count);
+    const float x = splitLineX(split);
+    const float w = juce::GlyphArrangement::getStringWidth(fonts::semibold(11.f), hzText(splitHz(split))) + 4.f;
+    const float limit = split < count - 2 ? splitLineX(split + 1) - 4.f : freqToX(maxHz) - 70.f;
+    const bool right = x + 5.f + w <= limit;
+    return { right ? x + 5.f : x - 5.f - w, (float) getHeight() - 23.f, w, 17.f };
+}
+
+// The nearest split whose line, slope pill or frequency tag is under the point
+int BandStrip::splitAt(juce::Point<float> at) const
+{
+    int count = 0;
+    regions(count);
+    int best = -1;
+    float nearest = 1.0e9f;
+    for (int i = 0; i < count - 1; ++i)
+    {
+        const float distance = std::abs(splitLineX(i) - at.x);
+        if (distance < nearest && (distance <= splitReach || frequencyTag(i).contains(at) || (! dynamicEq() && slopeBounds(i).contains(at))))
+        {
+            best = i;
+            nearest = distance;
+        }
+    }
+    return best;
 }
 
 // The small pill in the middle of a split line: shows that split's slope, click it to change it
@@ -188,6 +248,116 @@ void BandStrip::plotArea(float& top, float& bottom) const
 {
     top = 8.f;
     bottom = (float) getHeight() - 3.f; // the curves use the whole strip
+}
+
+float BandStrip::yForDb(double db) const
+{
+    float top, bottom;
+    plotArea(top, bottom);
+    return top + (float) juce::jlimit(0.0, 1.0, (stripTopDb - db) / (stripTopDb - stripBottomDb)) * (bottom - top);
+}
+
+juce::RangedAudioParameter* BandStrip::volumeParam(int band) const
+{
+    return proc.apvts.getParameter(juce::String("gain") + FreeLfoProcessor::bandSuffix(band));
+}
+
+float BandStrip::volumeDb(int band) const
+{
+    return proc.apvts.getRawParameterValue(juce::String("gain") + FreeLfoProcessor::bandSuffix(band))->load();
+}
+
+juce::String BandStrip::volumeText(float db)
+{
+    return (db > 0.04f ? "+" : "") + juce::String(std::abs(db) < 0.05f ? 0.f : db, 1) + " dB";
+}
+
+// Each band's real filter response (the actual crossover or Dynamic EQ maths), moved up or down by its volume
+std::function<double(int, double)> BandStrip::response() const
+{
+    const auto v = [this](const char* id) { return proc.apvts.getRawParameterValue(id)->load(); };
+    const double sr = proc.getSampleRate() > 0.0 ? proc.getSampleRate() : 48000.0;
+    const bool three = threeBands(), dyn = dynamicEq();
+    const double f1 = splitHz(0), f2 = juce::jmax((double) v("xHigh"), f1 * 1.2);
+    Splitter sp1, sp2;
+    sp1.set(f1, sr, (Slope) juce::jlimit(0, numSlopes - 1, juce::roundToInt(v("slopeLow"))));
+    sp2.set(f2, sr, (Slope) juce::jlimit(0, numSlopes - 1, juce::roundToInt(v("slopeHigh"))));
+    const std::array<float, 3> volume { volumeDb(0), volumeDb(1), volumeDb(2) };
+
+    return [=](int band, double hz) {
+        double mag;
+        if (dyn)   // what you hear with only this band open: the response of the Dynamic EQ's shelves
+            mag = DynamicEq::soloMagnitude(band, hz, f1, f2, three, sr);
+        else if (band == 0) mag = sp1.lowMagnitude(hz, sr);
+        else if (!three) mag = sp1.highMagnitude(hz, sr);
+        else mag = sp1.highMagnitude(hz, sr) * (band == 1 ? sp2.lowMagnitude(hz, sr) : sp2.highMagnitude(hz, sr));
+        return 20.0 * std::log10(juce::jmax(1e-6, mag)) + (double) volume[(size_t) band];
+    };
+}
+
+juce::Point<float> BandStrip::volumeHandle(int band) const
+{
+    int count = 0;
+    const auto regs = regions(count);
+    const auto level = response();
+    for (int i = 0; i < count; ++i)
+        if (regs[(size_t) i].band == band)
+        {
+            const auto& r = regs[(size_t) i];
+            float x = (r.x0 + r.x1) * 0.5f;
+            if (yForDb(level(band, xToFreq(x))) < 24.f) // up in the row of the name and its dB value: step to the right of them
+            {
+                const float textRight = soloChip(r).getRight() + 6.f + juce::GlyphArrangement::getStringWidth(fonts::semibold(11.f), volumeText(volumeDb(band))) + 6.f;
+                x = juce::jmax(x, juce::jmin(textRight + 10.f, r.x1 - splitReach - 9.f));
+            }
+            return { x, yForDb(level(band, xToFreq(x))) };
+        }
+    return {};
+}
+
+int BandStrip::volumeLineAt(juce::Point<float> at) const
+{
+    int count = 0;
+    const auto regs = regions(count);
+    if (splitAt(at) >= 0) return -1; // the splits come first
+    const auto level = response();
+    for (int i = 0; i < count; ++i)
+    {
+        const auto& r = regs[(size_t) i];
+        if (at.x < r.x0 || at.x >= r.x1 || soloChip(r).contains(at)) continue;
+        return std::abs(at.y - yForDb(level(r.band, xToFreq(at.x)))) <= lineReach ? r.band : -1;
+    }
+    return -1;
+}
+
+void BandStrip::resetVolume(int band)
+{
+    if (auto* p = volumeParam(band))
+    {
+        p->beginChangeGesture();
+        p->setValueNotifyingHost(p->getDefaultValue());
+        p->endChangeGesture();
+    }
+    repaint();
+}
+
+juce::PopupMenu BandStrip::volumeMenu(int band)
+{
+    juce::PopupMenu m;
+    m.addItem(1, "Reset to 0 dB");
+    auto* editor = findParentComponentOfClass<juce::AudioProcessorEditor>();
+    auto* host = editor != nullptr ? editor->getHostContext() : nullptr;
+    if (auto* p = volumeParam(band); host != nullptr && p != nullptr)
+        if (const auto fromHost = host->getContextMenuForParameter(p))
+        {
+            const auto items = fromHost->getEquivalentPopupMenu(); // each of these carries its own action
+            if (items.getNumItems() > 0)
+            {
+                m.addSeparator();
+                for (juce::PopupMenu::MenuItemIterator it(items); it.next();) m.addItem(it.getItem());
+            }
+        }
+    return m;
 }
 
 juce::PopupMenu BandStrip::slopeMenu(int current)
@@ -221,7 +391,6 @@ void BandStrip::paint(juce::Graphics& g)
     int count = 0;
     const auto regs = regions(count);
     const auto v = [this](const char* id) { return proc.apvts.getRawParameterValue(id)->load(); };
-    const char* names[3] = { "Low", "Mid", "High" };
     const float h = (float) getHeight();
     float plotTop, plotBottom;
     plotArea(plotTop, plotBottom);
@@ -243,46 +412,30 @@ void BandStrip::paint(juce::Graphics& g)
         }
     }
 
-    // octave guides + the -6 dB line where Linkwitz-Riley bands cross
+    // octave guides, 0 dB (dashed), and where Linkwitz-Riley bands cross (-6 dB, unlabelled so it is not read as a volume)
     for (double f : { 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0 })
     {
         g.setColour(theme::ink(0.05f));
         g.drawVerticalLine((int) freqToX(f), 0.f, h);
     }
-    const bool dyn = dynamicEq();
-    if (! dyn)
     {
-        const float y6 = plotTop + (plotBottom - plotTop) * (6.f / 36.f);
-        g.setColour(theme::ink(0.10f));
-        g.drawHorizontalLine((int) y6, freqToX(minHz), freqToX(maxHz));
-        g.setColour(theme::sub.withAlpha(0.8f));
-        g.setFont(fonts::regular(10.f));
-        g.drawText("-6 dB", juce::Rectangle<float>(freqToX(minHz) + 4.f, y6 + 3.f, 40.f, 11.f), juce::Justification::centredLeft);
+        const float dashes[] = { 3.f, 4.f };
+        const float y0 = std::floor(yForDb(0.0)) + 0.5f;
+        g.setColour(theme::ink(0.16f));
+        g.drawDashedLine({ freqToX(minHz), y0, freqToX(maxHz), y0 }, dashes, 2, 1.f);
+    }
+    if (! dynamicEq())
+    {
+        g.setColour(theme::ink(0.07f));
+        g.drawHorizontalLine((int) yForDb(-6.0), freqToX(minHz), freqToX(maxHz));
     }
 
     drawSpectrum(g, plotTop, plotBottom);
 
-    // Each band's real filter response (the actual crossover maths), drawn across the whole axis,
-    // so you can see how the neighbouring bands overlap at the split and how the slope changes it.
+    // Each band's real filter response, drawn across the whole axis, so you can see how the neighbouring bands
+    // overlap at the split and how the slope changes it. Its height is also the band's volume.
+    const auto level = response();
     {
-        const double sr = proc.getSampleRate() > 0.0 ? proc.getSampleRate() : 48000.0;
-        const bool three = count == 3;
-        Splitter sp1, sp2;
-        sp1.set(splitHz(0), sr, (Slope) juce::jlimit(0, numSlopes - 1, juce::roundToInt(v("slopeLow"))));
-        sp2.set(juce::jmax((double) v("xHigh"), splitHz(0) * 1.2), sr, (Slope) juce::jlimit(0, numSlopes - 1, juce::roundToInt(v("slopeHigh"))));
-
-        const double f2 = juce::jmax((double) v("xHigh"), splitHz(0) * 1.2);
-        auto magnitude = [&](int band, double hz) {
-            if (dyn)   // what you hear with only this band open: the response of the Dynamic EQ's shelves
-            {
-                return DynamicEq::soloMagnitude(band, hz, splitHz(0), f2, three, sr);
-            }
-            if (band == 0) return sp1.lowMagnitude(hz, sr);
-            if (!three) return sp1.highMagnitude(hz, sr);
-            return band == 1 ? sp1.highMagnitude(hz, sr) * sp2.lowMagnitude(hz, sr)
-                             : sp1.highMagnitude(hz, sr) * sp2.highMagnitude(hz, sr);
-        };
-
         const float xa = freqToX(minHz), xb = freqToX(maxHz);
         for (int pass = 0; pass < 2; ++pass)          // selected band last, so it sits on top
             for (int i = 0; i < count; ++i)
@@ -293,9 +446,7 @@ void BandStrip::paint(juce::Graphics& g)
                 juce::Path line, fill;
                 for (float x = xa; x <= xb + 0.5f; x += 2.f)
                 {
-                    const double mag = magnitude(band, xToFreq(x));
-                    const double db = 20.0 * std::log10(juce::jmax(1e-6, mag));
-                    const float y = plotTop + (float) juce::jlimit(0.0, 1.0, -db / 36.0) * (plotBottom - plotTop);
+                    const float y = yForDb(level(band, xToFreq(x)));
                     if (x == xa) { line.startNewSubPath(x, y); fill.startNewSubPath(x, plotBottom); fill.lineTo(x, y); }
                     else { line.lineTo(x, y); fill.lineTo(x, y); }
                 }
@@ -315,10 +466,39 @@ void BandStrip::paint(juce::Graphics& g)
         const auto area = juce::Rectangle<float>(r.x0, 1.f, r.x1 - r.x0, h - 2.f);
         const bool sel = r.band == selected;
         g.setColour(sel ? theme::bandText(r.band) : theme::bandColour(r.band).withAlpha(0.75f));
-        g.setFont(fonts::semibold(theme::type::label).withExtraKerningFactor(0.09f));
-        g.drawText(juce::String(names[r.band]).toUpperCase(), area.withTrimmedLeft(8.f).withTrimmedTop(2.f).withHeight(22.f), juce::Justification::centredLeft);
+        g.setFont(bandNameFont());
+        if (nameFits(r))
+            g.drawText(bandName(r.band), juce::Rectangle<float>(r.x0 + nameInset, 3.f, r.x1 - r.x0 - nameInset, 22.f), juce::Justification::centredLeft);
 
-        const auto chip = soloChip(r.x1);
+        // the grip on the band's line, and its volume beside the name (shown when it matters)
+        const bool active = hoverBand == r.band || volumeBand == r.band;
+        const auto grip = juce::Rectangle<float>(22.f, 4.f).withCentre(volumeHandle(r.band));
+        const auto shown = active ? grip.expanded(1.5f, 0.75f) : grip; // swells a little under the mouse
+        g.setColour(theme::bg.withAlpha(0.8f)); // a fine gap around it, so the thin bar stands off its line
+        g.fillRoundedRectangle(shown.expanded(1.25f), shown.getHeight() * 0.5f + 1.25f);
+        g.setColour(active ? theme::text : theme::strong(theme::bandColour(r.band)).withAlpha(sel ? 1.f : 0.85f));
+        g.fillRoundedRectangle(shown, shown.getHeight() * 0.5f);
+
+        const float db = volumeDb(r.band);
+        if (active || std::abs(db) >= 0.05f)
+        {
+            const float x = soloChip(r).getRight() + 8.f;
+            const float room = r.x1 - splitReach - x; // up to the next split's reach
+            g.setFont(fonts::semibold(11.f));
+            auto text = volumeText(db);
+            if (juce::GlyphArrangement::getStringWidth(g.getCurrentFont(), text) > room) text = text.upToFirstOccurrenceOf(" ", false, false);
+            const float w = juce::GlyphArrangement::getStringWidth(g.getCurrentFont(), text) + 6.f;
+            if (w <= room + 4.f)
+            {
+                const auto box = juce::Rectangle<float>(x - 3.f, 6.f, w, 15.f);
+                g.setColour(theme::bg.withAlpha(0.85f));
+                g.fillRoundedRectangle(box, 3.f);
+                g.setColour(theme::text);
+                g.drawText(text, box, juce::Justification::centred, false);
+            }
+        }
+
+        const auto chip = soloChip(r);
         const bool on = v((juce::String("solo") + FreeLfoProcessor::bandSuffix(r.band)).toRawUTF8()) > 0.5f;
         g.setColour(on ? theme::accent : theme::panel);
         g.fillRoundedRectangle(chip, 4.f);
@@ -327,21 +507,22 @@ void BandStrip::paint(juce::Graphics& g)
         g.drawText("S", chip, juce::Justification::centred);
     }
 
-    // split lines, their slope pills (click = menu), drag handles and frequency labels
+    // splits: line, slope pill (click = menu) and frequency tag are one handle, lit up together under the mouse
     const char* slopeText[numSlopes] = { "6 dB", "12 dB", "24 dB", "48 dB", "72 dB", "96 dB" };
     for (int i = 0; i < count - 1; ++i)
     {
-        const double hz = splitHz(i);
-        const float x = freqToX(hz);
-        g.setColour(theme::text.withAlpha(0.6f));
-        g.drawVerticalLine((int) x, 0.f, h);
+        const float x = splitLineX(i);
+        const bool lit = hoverSplit == i || dragHandle == i;
+        g.setColour(theme::text.withAlpha(lit ? 1.f : 0.6f));
+        if (lit) g.fillRect(juce::Rectangle<float>(x - 1.25f, 0.f, 2.5f, h));
+        else g.drawVerticalLine((int) x, 0.f, h);
 
         const auto chip = slopeChip(x);
         if (! dynamicEq())   // the Dynamic EQ has one fixed slope, so there is nothing to choose
         {
             g.setColour(theme::raised);
             g.fillRoundedRectangle(chip, theme::size::radiusSmall);
-            g.setColour(theme::sub.withAlpha(0.6f));
+            g.setColour(lit ? theme::text.withAlpha(0.8f) : theme::sub.withAlpha(0.6f));
             g.drawRoundedRectangle(chip, theme::size::radiusSmall, theme::size::border);
             g.setColour(theme::text);
             g.setFont(fonts::semibold(11.f));
@@ -356,13 +537,16 @@ void BandStrip::paint(juce::Graphics& g)
             g.strokePath(chevron, juce::PathStrokeType(1.3f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         }
 
-        // No drag knob: the split line itself is the handle. The frequency chip sits at its foot.
-        const auto label = juce::Rectangle<float>(x - 28.f, h - 22.f, 56.f, 15.f);
-        g.setColour(theme::bg.withAlpha(0.92f)); // keeps the split line from running through the text
-        g.fillRoundedRectangle(label, 4.f);
+        // the frequency at the foot, beside the line: plain text (dragging it moves the split too). A soft shadow in the
+        // background colour keeps it readable over the curves and the spectrum.
+        const auto label = frequencyTag(i);
+        const auto text = hzText(splitHz(i));
         g.setFont(fonts::semibold(11.f));
-        g.setColour(theme::sub);
-        g.drawText(hzText(hz), label, juce::Justification::centred);
+        g.setColour(theme::bg.withAlpha(0.75f));
+        for (const auto& offset : { juce::Point<float>(-1.f, 0.f), juce::Point<float>(1.f, 0.f), juce::Point<float>(0.f, -1.f), juce::Point<float>(0.f, 1.f) })
+            g.drawText(text, label + offset, juce::Justification::centred, false);
+        g.setColour(lit ? theme::text : theme::text.withAlpha(0.75f));
+        g.drawText(text, label, juce::Justification::centred, false);
     }
 }
 
@@ -370,9 +554,36 @@ void BandStrip::mouseDown(const juce::MouseEvent& e)
 {
     int count = 0;
     const auto regs = regions(count);
+    volumeBand = -1;
+
+    if (const int band = volumeLineAt(e.position); band >= 0) // a band's volume line
+    {
+        // like the small gain knobs: Ctrl-click (also Cmd / Alt) resets, a right click opens the menu
+        const bool reset = (e.mods.isCtrlDown() && ! e.mods.isRightButtonDown()) || e.mods.isCommandDown() || e.mods.isAltDown();
+        selected = band;
+        if (onSelect) onSelect(band);
+        if (reset) resetVolume(band);
+        else if (e.mods.isPopupMenu())
+        {
+            auto menu = volumeMenu(band);
+            menu.setLookAndFeel(&getLookAndFeel());
+            const auto at = e.getScreenPosition();
+            juce::Component::SafePointer<BandStrip> safe(this);
+            menu.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea(juce::Rectangle<int>(at, at).expanded(1)).withDeletionCheck(*this),
+                               [safe, band](int result) { if (safe != nullptr && result == 1) safe->resetVolume(band); }); // the DAW's items act by themselves
+        }
+        else
+        {
+            volumeBand = band;
+            volumeDragDb = volumeDb(band);
+            volumeDragY = volumeDownY = e.position.y;
+        }
+        repaint();
+        return;
+    }
 
     for (int i = 0; i < count; ++i) // solo chips first
-        if (soloChip(regs[(size_t) i].x1).contains(e.position))
+        if (soloChip(regs[(size_t) i]).contains(e.position))
         {
             // each band has its own solo switch, so several can be on at once
             const juce::String id = juce::String("solo") + FreeLfoProcessor::bandSuffix(regs[(size_t) i].band);
@@ -382,23 +593,15 @@ void BandStrip::mouseDown(const juce::MouseEvent& e)
             return;
         }
 
-    for (int i = 0; i < count - 1; ++i) // the pill on a split line opens that split's slope menu
-        if (! dynamicEq() && slopeChip(freqToX(splitHz(i))).contains(e.position))
-        {
-            openSlopeMenu(i);
-            return;
-        }
-
-    dragHandle = -1;
-    for (int i = 0; i < count - 1; ++i)
+    dragHandle = splitAt(e.position);
+    if (dragHandle >= 0) // nothing changes until the mouse moves: a click on the slope pill opens its menu on release
     {
-        const double hz = splitHz(i);
-        if (std::abs(freqToX(hz) - e.position.x) < 8.f)
-        {
-            dragHandle = i;
-            if (auto* p = proc.apvts.getParameter(i == 0 ? "xLow" : "xHigh")) p->beginChangeGesture();
-            return;
-        }
+        splitDownX = e.position.x;
+        splitGrabOffset = splitLineX(dragHandle) - e.position.x;
+        splitMoved = false;
+        pressedSlope = ! dynamicEq() && slopeBounds(dragHandle).contains(e.position);
+        repaint();
+        return;
     }
 
     for (int i = 0; i < count; ++i)
@@ -413,8 +616,29 @@ void BandStrip::mouseDown(const juce::MouseEvent& e)
 
 void BandStrip::mouseDrag(const juce::MouseEvent& e)
 {
+    if (volumeBand >= 0)
+    {
+        auto* p = volumeParam(volumeBand);
+        if (p == nullptr || (! volumeGesture && std::abs(e.position.y - volumeDownY) < 2.f)) return;
+        if (! volumeGesture) { volumeGesture = true; p->beginChangeGesture(); }
+        const double dbPerPixel = (stripTopDb - stripBottomDb) / (double) (yForDb(stripBottomDb) - yForDb(stripTopDb));
+        // relative to where the drag started; Shift moves four times finer
+        volumeDragDb = juce::jlimit(FreeLfoProcessor::minBandDb, FreeLfoProcessor::maxBandDb,
+                                    volumeDragDb + (float) ((volumeDragY - e.position.y) * dbPerPixel) * (e.mods.isShiftDown() ? 0.25f : 1.f));
+        volumeDragY = e.position.y;
+        const float value = ! e.mods.isShiftDown() && std::abs(volumeDragDb) < 0.4f ? 0.f : volumeDragDb; // 0 dB is easy to find again
+        p->setValueNotifyingHost(p->convertTo0to1(value));
+        repaint();
+        return;
+    }
     if (dragHandle < 0) return;
-    double hz = xToFreq(e.position.x);
+    if (! splitMoved)
+    {
+        if (std::abs(e.position.x - splitDownX) < 3.f) return;
+        splitMoved = true;
+        if (auto* p = proc.apvts.getParameter(dragHandle == 0 ? "xLow" : "xHigh")) p->beginChangeGesture();
+    }
+    double hz = xToFreq(e.position.x + splitGrabOffset);
     if (dragHandle == 0)
     {
         const double hi = proc.apvts.getRawParameterValue("xHigh")->load();
@@ -430,25 +654,49 @@ void BandStrip::mouseDrag(const juce::MouseEvent& e)
     repaint();
 }
 
-// Show a left-right resize cursor while the mouse is over a split line (the line is the drag handle)
+// Resize cursors say what can be dragged: left-right on a split, up-down over a band's volume line
 void BandStrip::mouseMove(const juce::MouseEvent& e)
 {
     int count = 0;
-    regions(count);
-    bool overLine = false;
-    for (int i = 0; i < count - 1 && !overLine; ++i)
-    {
-        const double hz = splitHz(i);
-        overLine = std::abs(freqToX(hz) - e.position.x) < 8.f && (dynamicEq() || !slopeChip(freqToX(hz)).contains(e.position));
-    }
-    setMouseCursor(overLine ? juce::MouseCursor::LeftRightResizeCursor : juce::MouseCursor::NormalCursor);
+    const auto regs = regions(count);
+    bool onSolo = false;
+    for (int i = 0; i < count; ++i) onSolo = onSolo || soloChip(regs[(size_t) i]).contains(e.position);
+    const int split = onSolo ? -1 : splitAt(e.position);
+    const int band = onSolo ? -1 : volumeLineAt(e.position);
+    setMouseCursor(split >= 0 ? juce::MouseCursor::LeftRightResizeCursor
+                              : band >= 0 ? juce::MouseCursor::UpDownResizeCursor : juce::MouseCursor::NormalCursor);
+    setTooltip(split >= 0 && ! dynamicEq() && slopeBounds(split).contains(e.position) ? juce::String("Drag to move the split. Click to choose its slope.")
+               : band >= 0 ? juce::String("Drag to set this band's volume (Shift: finer). Double-click resets it to 0 dB.")
+                           : juce::String());
+    if (band != hoverBand || split != hoverSplit) { hoverBand = band; hoverSplit = split; repaint(); }
+}
+
+void BandStrip::mouseExit(const juce::MouseEvent&)
+{
+    if (hoverBand >= 0 || hoverSplit >= 0) { hoverBand = hoverSplit = -1; repaint(); }
+}
+
+void BandStrip::mouseDoubleClick(const juce::MouseEvent& e)
+{
+    if (const int band = volumeLineAt(e.position); band >= 0 && ! e.mods.isPopupMenu()) resetVolume(band);
 }
 
 void BandStrip::mouseUp(const juce::MouseEvent&)
 {
-    if (dragHandle >= 0)
-        if (auto* p = proc.apvts.getParameter(dragHandle == 0 ? "xLow" : "xHigh")) p->endChangeGesture();
+    if (volumeGesture)
+        if (auto* p = volumeParam(volumeBand)) p->endChangeGesture();
+    volumeGesture = false;
+    volumeBand = -1;
+    const int released = dragHandle;
     dragHandle = -1;
+    if (released >= 0 && splitMoved)
+    {
+        if (auto* p = proc.apvts.getParameter(released == 0 ? "xLow" : "xHigh")) p->endChangeGesture();
+    }
+    else if (released >= 0 && pressedSlope)
+        openSlopeMenu(released);
+    splitMoved = pressedSlope = false;
+    repaint();
 }
 
 // ---------------------------------------------------------------- MultibandPanel
@@ -466,7 +714,7 @@ MultibandPanel::MultibandPanel(FreeLfoProcessor& p) : proc(p), strip(p), curve(p
     bandsBox.addItemList({ "2 bands", "3 bands" }, 1);
     engineBox.addItemList({ "Crossover", "Dynamic EQ" }, 1);
     engineBox.setTooltip("Crossover: splits the audio into bands. Steep, selectable slopes.\n"
-                         "Dynamic EQ: keeps the audio unchanged when the curves are fully open (gain knobs at 0 dB, clipper off),\n"
+                         "Dynamic EQ: keeps the audio unchanged when the curves are fully open (band volumes and gain knobs at 0 dB, clipper off),\n"
                          "but separates the bands more gently.");
     for (auto* b : { &dotBtn, &tripBtn }) { b->setClickingTogglesState(true); b->onStateChange = [this] { rate.updateText(); }; addAndMakeVisible(*b); }
     dotBtn.onClick = [this] { if (dotBtn.getToggleState()) tripBtn.setToggleState(false, juce::sendNotificationSync); rate.updateText(); };
