@@ -1,5 +1,6 @@
 #include "Fonts.h"
 #include "PluginEditor.h"
+#include "ControlStrip.h"
 
 // ---------------------------------------------------------------- FreeLfoEditor
 
@@ -76,7 +77,7 @@ static void saveDarkPreference(bool dark)
 FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     : AudioProcessorEditor(&p), proc(p), curve(p, 0), mbPanel(p)
 {
-    paper::setDark(loadDarkPreference());
+    theme::setDark(loadDarkPreference());
     laf.applyColours();
     setLookAndFeel(&laf);
     proc.editorOpen.store(true);
@@ -97,15 +98,14 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     addAndMakeVisible(kickPreciseBtn);
     kickSafeBtn.onClick = [this] { curveFromKick(kickfit::Style::safe); };
     kickPreciseBtn.onClick = [this] { curveFromKick(kickfit::Style::precise); };
-    kickL.setText("From kick", juce::dontSendNotification);
+    kickL.setText("Curve from kick", juce::dontSendNotification);
     kickL.setJustificationType(juce::Justification::centred);
     kickL.setInterceptsMouseClicks(false, false);
     addAndMakeVisible(kickL);
-    addChildComponent(mbPanel.modeBox);    // the multiband tab's Sync/Hz and band-count dropdowns sit in this header, like the single tab's
+    // the multiband tab's band-count and type dropdowns sit in this header
     addChildComponent(mbPanel.bandsBox);
     addChildComponent(mbPanel.engineBox);
 
-    mode.addItemList({ "Sync", "Hz" }, 1);
     addAndMakeVisible(mode);
 
     auto setup = [this](juce::Slider& s, juce::Label& l, const juce::String& text) {
@@ -120,7 +120,7 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     setup(depth, depthL, "Depth");
     setup(smooth, smoothL, "Smooth");
     setup(offset, offsetL, "Offset");
-    setup(wave, waveL, "Waveform");
+    setup(wave, waveL, "Audio view");
     smooth.setTextValueSuffix(" ms");
 
     addAndMakeVisible(retrigger);
@@ -146,6 +146,8 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     reset.onClick = [this] { if (multibandOn()) mbPanel.resetCurve(); else curve.resetCurve(); };
     addAndMakeVisible(reset);
 
+    addAndMakeVisible(brand);
+    reset.getProperties().set("quiet", true); // an action on the curve, not the most important thing on screen
     addAndMakeVisible(themeBtn);
     addAndMakeVisible(fpsBtn);
     fpsBtn.onClick = [this] { setFrameRate(thirtyFps ? 60 : 30); };
@@ -165,7 +167,7 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     redoBtn.setEnabled(false);
     undoBtn.onClick = [this] { proc.undo(); undoBtn.setEnabled(proc.canUndo()); redoBtn.setEnabled(proc.canRedo()); };
     redoBtn.onClick = [this] { proc.redo(); undoBtn.setEnabled(proc.canUndo()); redoBtn.setEnabled(proc.canRedo()); };
-    themeBtn.onClick = [this] { setDarkMode(!paper::dark); };
+    themeBtn.onClick = [this] { setDarkMode(!theme::dark); };
 
     // Tabs: Single = the original one-curve LFO (bit-exact pass-through), Multiband = per-band curves
     bypassA = std::make_unique<BA>(proc.apvts, "bypass", bypassBtn);
@@ -207,6 +209,8 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     bindRate();
     updateTab();
     startTimerHz(10); // follows the "mb" parameter if the host or a project load changes it
+    reset.setColour(juce::TextButton::textColourOffId, theme::sub);
+    kickL.setColour(juce::Label::textColourId, theme::dark ? theme::amber : theme::amber.darker(0.5f)); // the kick's gold names the group
     sendLookAndFeelChange(); // make every child (slider text boxes included) pick up the theme colours
 }
 
@@ -219,22 +223,22 @@ void FreeLfoEditor::setFrameRate(int framesPerSecond, bool persist)
 
 void FreeLfoEditor::setDarkMode(bool dark, bool persist)
 {
-    paper::setDark(dark);
+    theme::setDark(dark);
     laf.applyColours();
+    reset.setColour(juce::TextButton::textColourOffId, theme::sub);
+    kickL.setColour(juce::Label::textColourId, theme::dark ? theme::amber : theme::amber.darker(0.5f)); // the kick's gold names the group
     if (persist) saveDarkPreference(dark);
     sendLookAndFeelChange(); // every child re-reads the theme colours
     repaint();
 }
 
-static juce::String kickMessage(const kickfit::Result& r, kickfit::Style style)
+// Why no curve was made. Nothing to say when it worked: the new curve on screen shows that.
+static juce::String kickMessage(const kickfit::Result& r)
 {
     using S = kickfit::Status;
     switch (r.status)
     {
-        case S::ok:
-            if (style == kickfit::Style::safe) return "Safe curve made from your kick. Adjust it, or undo to go back.";
-            return r.soundHeard ? "Precise curve made from your kick and your sound. Adjust it, or undo."
-                                : "Your sound was silent, so Precise assumed it is loud all the way. Undo goes back.";
+        case S::ok:          return {};
         case S::noSidechain: return "No sidechain. Route your kick into the plugin's sidechain first.";
         case S::notReady:    return "Not enough recorded yet. Play at least one full cycle, then press again.";
         case S::quiet:       return "No kick heard. Check the sidechain routing and press while playing.";
@@ -249,9 +253,10 @@ static juce::String kickMessage(const kickfit::Result& r, kickfit::Style style)
 void FreeLfoEditor::curveFromKick(kickfit::Style style)
 {
     const auto result = proc.fitCurveToKick(shownMb ? mbPanel.currentSlot() : 0, style);
-    const auto text = kickMessage(result, style);
-    if (shownMb) mbPanel.showNote(text, 4500.0);
-    else curve.showNote(text, 4500.0);
+    const auto text = kickMessage(result);
+    const double showFor = text.isEmpty() ? 0.0 : 4500.0; // success also takes an earlier press's message away
+    if (shownMb) mbPanel.showNote(text, showFor);
+    else curve.showNote(text, showFor);
     undoBtn.setEnabled(proc.canUndo());
     redoBtn.setEnabled(proc.canRedo());
 }
@@ -279,7 +284,6 @@ void FreeLfoEditor::updateTab()
                                                                         &rateL, &depthL, &smoothL, &offsetL, &waveL })
         c->setVisible(!mb);
     mbPanel.setVisible(mb);
-    mbPanel.modeBox.setVisible(mb);
     mbPanel.bandsBox.setVisible(mb);
     mbPanel.engineBox.setVisible(mb);
 
@@ -321,13 +325,12 @@ void FreeLfoEditor::bindRate()
 
 void FreeLfoEditor::paint(juce::Graphics& g)
 {
-    g.fillAll(paper::bg);
-    auto panelArea = getLocalBounds().toFloat().reduced(8.f);
-    g.setColour(paper::panel);
-    g.fillRoundedRectangle(panelArea, 10.f);
-    g.setColour(paper::line);
-    g.drawRoundedRectangle(panelArea, 10.f, 1.f);
-
+    // One surface for the whole instrument: no outer card. Thin lines mark off the top bar and the groups in the bars.
+    g.fillAll(theme::window);
+    const int under = theme::size::top + theme::size::brandBar + theme::size::barGap / 2;
+    g.setColour(theme::line);
+    g.fillRect(0, under, getWidth(), 1);
+    for (const auto& s : separators) g.fillRect(s);
 }
 
 FreeLfoEditor::~FreeLfoEditor()
@@ -341,89 +344,99 @@ FreeLfoEditor::~FreeLfoEditor()
 void FreeLfoEditor::resized()
 {
     const bool mb = multibandOn();
-    auto r = getLocalBounds().reduced(18);
-    auto top = r.removeFromTop(36);
-    modeSwitch.setBounds(top.removeFromLeft(64).reduced(0, 4));
-    top.removeFromLeft(14);
-    if (!mb) mode.setBounds(top.removeFromLeft(80).reduced(0, 4));
-    else
-    {
-        mbPanel.modeBox.setBounds(top.removeFromLeft(80).reduced(0, 4));
-        top.removeFromLeft(8);
-        mbPanel.bandsBox.setBounds(top.removeFromLeft(92).reduced(0, 4));
-        top.removeFromLeft(8);
-        mbPanel.engineBox.setBounds(top.removeFromLeft(104).reduced(0, 4));
-    }
-    // Right-hand group, right to left: bypass | Reset | light-dark button | 60 / 30 fps | Snap switch + grid number | Bezier switch | retrigger.
-    // Items of a pair sit close together; groups are an even 16 px apart.
-    constexpr int gap = 16;
-    bypassBtn.setBounds(top.removeFromRight(34).withSizeKeepingCentre(34, 28));   // the top right corner, in both tabs
-    top.removeFromRight(8);
-    reset.setBounds(top.removeFromRight(60).reduced(0, 4));
-    top.removeFromRight(8);
+    namespace sz = theme::size;
+    auto r = getLocalBounds().reduced(sz::edge, 0);
+    r.removeFromTop(sz::top);
+    auto top = r.removeFromTop(sz::brandBar);
+    r.removeFromTop(sz::barGap);
+    auto tools = r.removeFromTop(sz::toolBar);
+    r.removeFromTop(6);
+    r.removeFromBottom(8);
+
+    separators.clear();
+    auto divide = [this](juce::Rectangle<int>& bar, bool fromRight) { // a short vertical line in a 17 px gap
+        const auto slot = fromRight ? bar.removeFromRight(sz::groupGap + 1) : bar.removeFromLeft(sz::groupGap + 1);
+        separators.push_back(slot.withSizeKeepingCentre(1, 16));
+    };
+
+    // ---- first bar, global:  MUVMNT LFO  ...  undo redo | fps, light/dark | bypass
+    brand.setBounds(top.removeFromLeft(BrandMark::width));
+    bypassBtn.setBounds(top.removeFromRight(32).withSizeKeepingCentre(32, 26));   // the top right corner, in both tabs
+    divide(top, true);
     themeBtn.setBounds(top.removeFromRight(24).withSizeKeepingCentre(22, 22));
-    top.removeFromRight(4);
-    fpsBtn.setBounds(top.removeFromRight(26).withSizeKeepingCentre(26, 26));
-    top.removeFromRight(10);
+    top.removeFromRight(sz::gap);
+    fpsBtn.setBounds(top.removeFromRight(26).withSizeKeepingCentre(26, 25));
+    divide(top, true);
     redoBtn.setBounds(top.removeFromRight(26).withSizeKeepingCentre(26, 26));
     undoBtn.setBounds(top.removeFromRight(26).withSizeKeepingCentre(26, 26));
-    top.removeFromRight(6);
-    presetBtn.setBounds(top.removeFromRight(52));
-    top.removeFromRight(gap);
-    gridBox.setBounds(top.removeFromRight(46).reduced(0, 5));
-    top.removeFromRight(6);
-    snap.setBounds(top.removeFromRight(toggleWidth("Snap")));
-    top.removeFromRight(gap);
-    bezier.setBounds(top.removeFromRight(28).withSizeKeepingCentre(28, 28));
-    top.removeFromRight(gap);
-    retrigger.setBounds(top.removeFromRight(toggleWidth("MIDI retrigger")));
 
-    r.removeFromTop(8);
+    // ---- second bar.  Left, how the sound is processed:  Single / Multiband, then (Multiband only) bands and type.
+    //      Right, tools for the curve:  retrigger, handles, snap, grid | presets, reset
+    constexpr int together = 6; // controls that belong to one group
+    modeSwitch.setBounds(tools.removeFromLeft(ModeSwitchButton::width));
+    if (mb)
+    {
+        divide(tools, false);
+        mbPanel.bandsBox.setBounds(tools.removeFromLeft(92).reduced(0, 2));
+        tools.removeFromLeft(together);
+        mbPanel.engineBox.setBounds(tools.removeFromLeft(112).reduced(0, 2));
+    }
+    reset.setBounds(tools.removeFromRight(88).reduced(0, 3));
+    tools.removeFromRight(together);
+    presetBtn.setBounds(tools.removeFromRight(96)); // choosing a shape and resetting it sit together: both replace the curve
+    divide(tools, true);
+    gridBox.setBounds(tools.removeFromRight(46).reduced(0, 3));
+    tools.removeFromRight(6);
+    snap.setBounds(tools.removeFromRight(toggleWidth("Snap")));
+    tools.removeFromRight(14);
+    bezier.setBounds(tools.removeFromRight(28).withSizeKeepingCentre(28, 26));
+    tools.removeFromRight(14);
+    retrigger.setBounds(tools.removeFromRight(toggleWidth("MIDI retrigger")));
+
     clipBtn.setVisible(mb);
-    // under the meters: the two trims with their values (each below its own meter), then the clipper (multiband)
-    inTrim.setBounds(r.getRight() - 44, r.getBottom() - 92 - 2, 24, 33);
-    outTrim.setBounds(r.getRight() - 20, r.getBottom() - 92 - 2, 24, 33);
+
+    // ---- under the graph: the control strip, with the meters' column carrying on beside it (gains, clipper)
+    auto body = r;
+    auto strip = body.removeFromBottom(controls::height);
+    const auto side = strip.removeFromRight(controls::meterColumn);
+    strip.removeFromRight(controls::meterGap);
+    inTrim.setBounds(side.getX(), side.getY() + 6, 22, 33);
+    outTrim.setBounds(side.getX() + 24, side.getY() + 6, 22, 33);
     inTrim.toFront(false);
     outTrim.toFront(false);
-    clipBtn.setBounds(r.getRight() - 40, r.getBottom() - 92 + 40, 40, 28);
-    // "From kick": its caption and two chips stacked left of the Waveform knob
-    auto placeKick = [this](juce::Rectangle<int> knob) {
-        const int x = knob.getCentreX() - 98, bottom = knob.getBottom();
-        kickL.setBounds(x - 8, bottom - 62, 72, 14);
-        kickSafeBtn.setBounds(x, bottom - 46, 56, 20);
-        kickPreciseBtn.setBounds(x, bottom - 22, 56, 20);
-    };
-    if (mb) { mbPanel.setBounds(r); placeKick(mbPanel.waveKnobBounds() + r.getPosition()); return; }
+    clipBtn.setBounds(side.getX() + 1, side.getY() + 47, 44, 30);
 
-    auto knobs = r.removeFromBottom(92);   // compact knobs: more room for the curve
+    // the kick analyser: its own group, a caption in line with the knob captions and a two-part switch level with the dials
+    const auto column = controls::columns(strip);
     {
-        auto area = r.withTrimmedBottom(8);
-        outMeter.setBounds(area.removeFromRight(18));
-        area.removeFromRight(4);
-        inMeter.setBounds(area.removeFromRight(18));
-        area.removeFromRight(6);
+        auto k = column.kick;
+        separators.push_back({ k.getX(), k.getY() + 18, 1, 48 });
+        kickL.setBounds(k.removeFromTop(controls::captionH));
+        auto both = k.withTrimmedBottom(16).withSizeKeepingCentre(124, 26);
+        kickSafeBtn.setBounds(both.removeFromLeft(60));
+        kickPreciseBtn.setBounds(both);
+    }
+
+    if (mb) { mbPanel.setBounds(r); repaint(); return; }
+
+    {
+        auto area = body.withTrimmedBottom(6);
+        auto meters = area.removeFromRight(controls::meterColumn);
+        inMeter.setBounds(meters.removeFromLeft(22));
+        outMeter.setBounds(meters.removeFromRight(22));
+        area.removeFromRight(controls::meterGap);
         curveMeter.setBounds(area.removeFromRight(curveMeter.preferredWidth()));
-        area.removeFromRight(6);
+        area.removeFromRight(controls::meterGap);
         curve.setBounds(area);
     }
 
-    const int w = knobs.getWidth() / 5;
-    auto place = [&](juce::Label& l, juce::Slider& s) {
-        auto c = knobs.removeFromLeft(w);
-        l.setBounds(c.removeFromTop(16));
-        s.setBounds(c);
-    };
-    const auto rateColumn = knobs.withWidth(w);
-    place(rateL, rate);
-    // dotted / triplet sit either side of the rate readout, like the note-value buttons on Xfer's LFO Tool
-    dotBtn.setBounds(rateColumn.getCentreX() - 56, rateColumn.getBottom() - 22, 24, 20);
-    tripBtn.setBounds(rateColumn.getCentreX() + 32, rateColumn.getBottom() - 22, 24, 20);
-    place(depthL, depth);
-    place(smoothL, smooth);
-    place(offsetL, offset);
-    place(waveL, wave);
-    wave.setBounds(wave.getBounds().reduced(44, 0));   // same centre, but its click area stays clear of the gain knobs under the meters
-    placeKick(wave.getBounds());
+    controls::place(rateL, rate, column.knob[0], controls::leadDial);
+    controls::placeRateExtras(mode, dotBtn, tripBtn, column.knob[0]);
+    controls::place(depthL, depth, column.knob[1], controls::leadDial);
+    controls::place(smoothL, smooth, column.knob[2], controls::dial);
+    controls::place(offsetL, offset, column.knob[3], controls::dial);
+    controls::place(waveL, wave, column.knob[4], controls::viewDial);
+    repaint(); // the separators may have moved
 }
 
 bool FreeLfoEditor::keyPressed(const juce::KeyPress& k)

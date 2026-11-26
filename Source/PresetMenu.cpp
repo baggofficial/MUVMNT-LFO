@@ -49,11 +49,11 @@ namespace
 
         void paint(juce::Graphics& g) override
         {
-            g.fillAll(paper::panel);
+            g.fillAll(theme::panel);
             g.setFont(fonts::semibold(11.f).withExtraKerningFactor(0.06f));
             for (auto& h : headings)
             {
-                g.setColour(paper::sub);
+                g.setColour(theme::sub);
                 g.drawText(h.text.toUpperCase(), h.area, juce::Justification::centredLeft);
             }
             for (int i = 0; i < (int) tiles.size(); ++i)
@@ -61,18 +61,19 @@ namespace
                 const auto& t = tiles[(size_t) i];
                 const bool over = i == hover;
                 auto r = t.area.toFloat();
-                g.setColour(over ? paper::accent.withAlpha(0.22f) : paper::bg);
+                g.setColour(over ? theme::accent.withAlpha(0.22f) : theme::bg);
                 g.fillRoundedRectangle(r, 6.f);
-                g.setColour(over ? paper::accent : paper::line);
+                g.setColour(over ? theme::accent : theme::line);
                 g.drawRoundedRectangle(r.reduced(0.5f), 6.f, 1.f);
                 auto c = r.reduced(10.f, 9.f);
-                g.setColour(paper::text.withAlpha(0.18f));                       // the 100% and 0% lines
+                g.setColour(theme::text.withAlpha(0.18f));                       // the 100% and 0% lines
                 g.drawLine(c.getX(), c.getY(), c.getRight(), c.getY(), 0.6f);
                 g.drawLine(c.getX(), c.getBottom(), c.getRight(), c.getBottom(), 0.6f);
                 const juce::PathStrokeType stroke(1.7f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
                 if (t.bandSet < 0)
                 {
-                    g.setColour(over ? paper::accent.brighter(0.3f) : paper::accent);
+                    const auto ink = slot > 0 ? theme::bandColour(slot - 1) : theme::accent;
+                    g.setColour(over ? ink.brighter(0.3f) : ink);
                     g.strokePath(t.path, stroke, toRect(c));
                     continue;
                 }
@@ -81,13 +82,13 @@ namespace
                 for (int b = 2; b >= 0; --b)
                 {
                     if (b == 1 && !set.three) continue;
-                    g.setColour(paper::bandColour(b));
+                    g.setColour(theme::bandColour(b));
                     g.strokePath(t.bandPaths[(size_t) b], stroke, toRect(c));
                 }
             }
             if (dividerX > 0)
             {
-                g.setColour(paper::line);
+                g.setColour(theme::line);
                 g.drawLine((float) dividerX, 12.f, (float) dividerX, (float) saveBtn.getY() - 10.f, 1.f);
             }
         }
@@ -103,6 +104,7 @@ namespace
             {
                 if (!tiles[(size_t) i].user) return;
                 juce::PopupMenu m;
+                m.setLookAndFeel(&getLookAndFeel());
                 m.addItem(1, "Delete \"" + tiles[(size_t) i].name + "\"");
                 const auto file = tiles[(size_t) i].file;
                 m.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea(juce::Rectangle<int>(e.getScreenPosition(), e.getScreenPosition())),
@@ -156,11 +158,11 @@ namespace
         {
             if (note.isEmpty()) return;
             const auto r = juce::Rectangle<float>(8.f, (float) saveBtn.getY() - 28.f, (float) getWidth() - 16.f, 24.f);
-            g.setColour(paper::panel);
+            g.setColour(theme::panel);
             g.fillRoundedRectangle(r, 6.f);
-            g.setColour(paper::amber);
+            g.setColour(theme::amber);
             g.drawRoundedRectangle(r, 6.f, 1.2f);
-            g.setColour(paper::text);
+            g.setColour(theme::text);
             g.setFont(fonts::regular(11.5f));
             g.drawFittedText(note, r.reduced(6.f, 0.f).toNearestInt(), juce::Justification::centred, 1, 0.8f);
         }
@@ -224,7 +226,7 @@ namespace
                 constexpr int bw2 = (columnW - gap) / 2, bh = 54;
                 for (const bool three : { true, false })
                 {
-                    headings.push_back({ three ? "All bands: 3-band" : "All bands: 2-band", { pad, multiBottom, columnW, headH } });
+                    headings.push_back({ three ? "All 3 bands" : "Low + High", { pad, multiBottom, columnW, headH } });
                     multiBottom += headH;
                     int col = 0;
                     for (size_t k = 0; k < bandSets.size(); ++k)
@@ -249,7 +251,7 @@ namespace
             int y = pad;
             for (auto& gr : groups)
             {
-                headings.push_back({ multi && gr.name == "Sidechain" ? "This band: sidechain" : gr.name, { left, y, columnW, headH } });
+                headings.push_back({ multi && gr.name == "Pumps" ? "This band: pumps" : gr.name, { left, y, columnW, headH } });
                 y += headH;
                 int col = 0;
                 for (auto& t : gr.items)
@@ -316,24 +318,27 @@ juce::File PresetMenu::userFolder()
 
 void PresetButton::paintButton(juce::Graphics& g, bool over, bool down)
 {
-    auto b = getLocalBounds().toFloat().reduced(0.5f, 4.5f);
-    g.setColour(down ? paper::track : over ? paper::bg : paper::panel);
+    auto b = getLocalBounds().toFloat().reduced(0.5f, 2.5f);
+    g.setColour(down ? theme::track : over ? theme::bg : theme::panel);
     g.fillRoundedRectangle(b, 6.f);
-    g.setColour(paper::line);
+    g.setColour(theme::line);
     g.drawRoundedRectangle(b, 6.f, 1.f);
 
-    // a tiny sidechain curve, then a chevron
+    // a tiny sidechain curve, the word, then a chevron
     static const juce::Path curve = curvePath(Envelope());
-    auto icon = b.withTrimmedLeft(8.f).withWidth(22.f).withSizeKeepingCentre(22.f, 11.f);
-    g.setColour(paper::text.withAlpha(over ? 1.f : 0.8f));
+    auto icon = b.withTrimmedLeft(8.f).withWidth(20.f).withSizeKeepingCentre(20.f, 11.f);
+    g.setColour(theme::text.withAlpha(over ? 1.f : 0.8f));
     g.strokePath(curve, juce::PathStrokeType(1.5f), toRect(icon));
+    g.setFont(fonts::semibold(12.f));
+    g.setColour(theme::text);
+    g.drawText("Presets", b.withTrimmedLeft(34.f).withTrimmedRight(18.f), juce::Justification::centredLeft, false);
 
     juce::Path chev;
     const auto c = juce::Point<float>(b.getRight() - 12.f, b.getCentreY());
     chev.startNewSubPath(c.x - 3.5f, c.y - 1.6f);
     chev.lineTo(c.x, c.y + 1.8f);
     chev.lineTo(c.x + 3.5f, c.y - 1.6f);
-    g.setColour(paper::sub);
+    g.setColour(theme::sub);
     g.strokePath(chev, juce::PathStrokeType(1.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 }
 
@@ -371,7 +376,7 @@ namespace
         }
         void paintOverChildren(juce::Graphics& g) override
         {
-            g.setColour(paper::line.brighter(0.2f));
+            g.setColour(theme::line.brighter(0.2f));
             g.drawRoundedRectangle(panel->getBounds().toFloat().reduced(0.5f), 8.f, 1.f);
         }
         void mouseDown(const juce::MouseEvent& e) override { if (!panel->getBounds().contains(e.getPosition())) dismiss(); }
@@ -383,7 +388,7 @@ namespace
         {
             setBounds(host.getLocalBounds());
             const auto ab = host.getLocalArea(&anchor, anchor.getLocalBounds());
-            const int x = juce::jlimit(4, juce::jmax(4, getWidth() - panel->getWidth() - 4), ab.getRight() - panel->getWidth());
+            const int x = juce::jlimit(4, juce::jmax(4, getWidth() - panel->getWidth() - 4), ab.getCentreX() - panel->getWidth() / 2);
             const int y = juce::jmax(0, juce::jmin(ab.getBottom() + 4, getHeight() - panel->getHeight() - 2)); // inside a small window too
             panel->setTopLeftPosition(x, y);
         }

@@ -4,7 +4,7 @@
 #include "PaperLookAndFeel.h"
 #include "Presets.h"
 
-// The header's preset button: a small curve icon and a chevron. Click for the preset menu
+// The preset button among the curve tools: a small curve icon, "Presets" and a chevron. Click for the preset menu
 // (factory presets with a thumbnail of each curve, your own saved presets, copy / paste / save).
 class PresetButton : public juce::Button
 {

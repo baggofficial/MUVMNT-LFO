@@ -22,6 +22,7 @@ public:
     void setSelected(int band) { selected = band; repaint(); }
     std::function<void(int)> onSelect;
     void animate(); // one step of the editor's animation clock: the live spectrum
+    static juce::PopupMenu slopeMenu(int current); // the choices behind a split's slope pill
 
 private:
     int signature() const;
@@ -60,8 +61,13 @@ public:
     void paint(juce::Graphics& g) override
     {
         const bool on = getToggleState();
-        auto c = on ? paper::accent : paper::sub.withAlpha(isMouseOver() ? 0.9f : 0.6f);
         const auto ctr = getLocalBounds().toFloat().getCentre();
+        if (on) // a filled chip says "linked" at a glance
+        {
+            g.setColour(theme::accent);
+            g.fillRoundedRectangle(getLocalBounds().toFloat().reduced(1.f), theme::size::radius);
+        }
+        auto c = on ? theme::onAccent : theme::sub.withAlpha(isMouseOver() ? 0.9f : 0.6f);
         g.setColour(c);
         for (int s = -1; s <= 1; s += 2)
         {
@@ -100,9 +106,10 @@ public:
 
 public:
     // These two live in the editor's header row (the editor adopts them), so they are public.
-    juce::ComboBox modeBox, bandsBox, engineBox;
+    juce::ComboBox bandsBox, engineBox;
 
 private:
+    SyncSwitch modeBox;   // Sync / Hz, beside the Rate knob
     LinkButton linkBtn;   // beside the Rate knob: all bands share one rate
     // Every control must be declared before the attachments below: members are destroyed in reverse order, and an
     // attachment lets go of its control as it dies, so the control has to be alive until then.
@@ -111,6 +118,7 @@ private:
     int signature() const;
     void copyToLinkSource(const char* base, const char* linkId); // turning a link on: the shown band's value goes to every band
     void rebind(); // point the knobs at the selected band's parameters
+    void placeChains();
 
     FreeLfoProcessor& proc;
     BandStrip strip;

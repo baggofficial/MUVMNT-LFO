@@ -235,9 +235,9 @@ bool EnvelopeEditor::rainbowFill(float alpha, juce::FillType& out) const
         const float k = juce::jlimit(0.f, 1.f, std::log(hz / a[i].hz) / std::log(a[i + 1].hz / a[i].hz));
         const float hue = a[i].hue + (a[i + 1].hue - a[i].hue) * k;
         const float sat = a[i].sat + (a[i + 1].sat - a[i].sat) * k;
-        const auto c = juce::Colour::fromHSV(std::fmod(hue, 360.f) / 360.f, sat, paper::dark ? 1.f : 0.88f, alpha);
+        const auto c = juce::Colour::fromHSV(std::fmod(hue, 360.f) / 360.f, sat * 0.82f, theme::dark ? 1.f : 0.88f, alpha);
         // lots of bass and highs together: toward pink / purple
-        const auto blend = juce::Colour::fromHSV(0.84f, 0.65f, paper::dark ? 1.f : 0.88f, alpha);
+        const auto blend = juce::Colour::fromHSV(0.84f, 0.65f, theme::dark ? 1.f : 0.88f, alpha);
         return c.interpolatedWith(blend, juce::jlimit(0.f, 1.f, m * m * 1.4f) * 0.8f);
     };
     juce::ColourGradient grad(colourAt(soft[0], mix[0]), x0, 0.f, colourAt(soft[stops - 1], mix[stops - 1]), x1, 0.f, false);
@@ -282,8 +282,10 @@ std::array<juce::String, 4> EnvelopeEditor::positionLabels() const
 void EnvelopeEditor::renderGrid(juce::Graphics& g)
 {
     auto area = getLocalBounds().toFloat();
-    g.setColour(paper::bg);
-    g.fillRoundedRectangle(area, 6.f);
+    g.setColour(theme::bg);
+    g.fillRoundedRectangle(area, theme::size::radius);
+    g.setColour(theme::line);
+    g.drawRoundedRectangle(area.reduced(0.5f), theme::size::radius, theme::size::border);
 
     // grid
     const int gx = gridX(), gy = gridY();
@@ -292,22 +294,22 @@ void EnvelopeEditor::renderGrid(juce::Graphics& g)
     auto crisp = [](float v) { return std::floor(v) + 0.5f; };
     for (int i = 0; i <= gx; ++i)
     {
-        g.setColour(i % strong == 0 ? paper::gridMajor() : paper::gridMinor());
+        g.setColour(i % strong == 0 ? theme::gridMajor() : theme::gridMinor());
         auto a = toScreen((float) i / gx, 0.f), b = toScreen((float) i / gx, 1.f);
         g.drawLine(crisp(a.x), a.y, crisp(b.x), b.y, 1.f);
     }
     const int strongY = juce::jmax(1, gy / 2); // the middle and the top / bottom edges
     for (int i = 0; i <= gy; ++i)
     {
-        g.setColour(i % strongY == 0 ? paper::gridMajor() : paper::gridMinor());
+        g.setColour(i % strongY == 0 ? theme::gridMajor() : theme::gridMinor());
         auto a = toScreen(0.f, (float) i / gy), b = toScreen(1.f, (float) i / gy);
         g.drawLine(a.x, crisp(a.y), b.x, crisp(b.y), 1.f);
     }
 
     // very small note values under the graph, to find your way in the cycle (drawn at the quarters, whatever the grid is)
     const auto labels = positionLabels();
-    g.setFont(fonts::regular(8.5f));
-    g.setColour(paper::sub.withAlpha(0.85f));
+    g.setFont(fonts::regular(theme::type::axis));
+    g.setColour(theme::sub);
     for (int k = 1; k <= 4; ++k)
     {
         const auto at = toScreen((float) k / 4.f, 0.f);
@@ -320,16 +322,17 @@ void EnvelopeEditor::renderGrid(juce::Graphics& g)
 // ducking is visible on the audio itself. Single tab: neutral input, accent-coloured output. Multiband: the band's colour.
 void EnvelopeEditor::drawWaveforms(juce::Graphics& g)
 {
+    constexpr float outputStrength = 0.82f; // clearly visible, but behind the curve you edit
     const float waveOpacity = proc.apvts.getRawParameterValue("waveOpacity")->load();
     if (waveOpacity < 0.01f) return;
-    const auto in = slot > 0 ? paper::bandColour(slot - 1) : (paper::dark ? juce::Colours::white : juce::Colours::black);
-    const auto out = slot > 0 ? paper::bandColour(slot - 1) : paper::accent;
+    const auto in = slot > 0 ? theme::bandColour(slot - 1) : (theme::dark ? juce::Colours::white : juce::Colours::black);
+    const auto out = slot > 0 ? theme::bandColour(slot - 1) : theme::accent;
     const auto& mnArr = slot > 0 ? proc.bwMin[(size_t) slot - 1] : proc.waveMin;
     const auto& mxArr = slot > 0 ? proc.bwMax[(size_t) slot - 1] : proc.waveMax;
 
     fillWavePath(g, mnArr, mxArr, nullptr, in.withAlpha(waveOpacity * 0.30f));
-    juce::FillType outFill(out.withAlpha(waveOpacity));
-    if (slot == 0) rainbowFill(waveOpacity, outFill); // single tab: rainbow; the multiband tab keeps its band colours
+    juce::FillType outFill(out.withAlpha(waveOpacity * outputStrength));
+    if (slot == 0) rainbowFill(waveOpacity * outputStrength, outFill); // single tab: rainbow; the multiband tab keeps its band colours
     fillWavePath(g, mnArr, mxArr, outGain, outFill);
 
     if (proc.sidechainActive.load())
@@ -355,11 +358,11 @@ void EnvelopeEditor::drawWaveforms(juce::Graphics& g)
         w.closeSubPath();
         // A contrasting halo (dark on the dark theme, light on the light one), a see-through fill so the scope underneath still
         // shows, and a bright line on top: the kick stays readable over the rainbow and the grey input.
-        g.setColour((paper::dark ? juce::Colours::black : juce::Colours::white).withAlpha(0.55f * juce::jmax(0.3f, waveOpacity)));
+        g.setColour((theme::dark ? juce::Colours::black : juce::Colours::white).withAlpha(0.55f * juce::jmax(0.3f, waveOpacity)));
         g.strokePath(w, juce::PathStrokeType(4.f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-        g.setColour(paper::amber.withAlpha(waveOpacity * 0.5f));
+        g.setColour(theme::amber.withAlpha(waveOpacity * 0.5f));
         g.fillPath(w);
-        g.setColour(paper::amber.brighter(paper::dark ? 0.35f : 0.f).withAlpha(juce::jmin(1.f, waveOpacity + 0.2f)));
+        g.setColour(theme::amber.brighter(theme::dark ? 0.35f : 0.f).withAlpha(juce::jmin(1.f, waveOpacity + 0.2f)));
         g.strokePath(w, juce::PathStrokeType(1.7f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
     }
 }
@@ -396,13 +399,13 @@ void EnvelopeEditor::drawOverlap(juce::Graphics& g, const std::array<std::atomic
     }
 
     const float top = toScreen(0.f, 1.f).y, bottom = toScreen(0.f, 0.f).y;
-    const auto ink = paper::dark ? juce::Colours::white : juce::Colours::black;
+    const auto ink = theme::dark ? juce::Colours::white : juce::Colours::black;
     int runStart = -1;
     auto flush = [&](int endBin) {
         if (runStart < 0) return;
         const float x0 = toScreen((float) runStart / (bins - 1), 0.f).x, x1 = toScreen((float) endBin / (bins - 1), 0.f).x;
         const auto r = juce::Rectangle<float>(x0, top, juce::jmax(2.f, x1 - x0), bottom - top);
-        g.setColour(paper::amber.withAlpha(0.14f * juce::jmax(0.3f, opacity)));
+        g.setColour(theme::amber.withAlpha(0.14f * juce::jmax(0.3f, opacity)));
         g.fillRect(r);
         g.saveState();
         g.reduceClipRegion(r.toNearestInt());
@@ -437,7 +440,7 @@ void EnvelopeEditor::renderCurveLayer(juce::Graphics& g)
                 if (i == 0) gp.startNewSubPath(p); else gp.lineTo(p);
             }
             gp.lineTo(toScreen(1.f, ghost[other - 1].points.back().y));
-            g.setColour(paper::bandColour(other - 1).withAlpha(0.38f));
+            g.setColour(theme::bandColour(other - 1).withAlpha(0.38f));
             g.strokePath(gp, juce::PathStrokeType(2.f, juce::PathStrokeType::curved));
         }
     }
@@ -464,23 +467,20 @@ void EnvelopeEditor::renderCurveLayer(juce::Graphics& g)
     const auto curveColour = mainColour();
     {
         const float yTop = toScreen(0.f, 1.f).y, yBottom = toScreen(0.f, 0.f).y;
-        juce::ColourGradient fade(curveColour.withAlpha(paper::dark ? 0.36f : 0.28f), 0.f, yTop,
-                                  curveColour.withAlpha(paper::dark ? 0.03f : 0.02f), 0.f, yBottom, false);
+        const float strength = slot == 0 ? 0.45f : 0.85f; // the neutral Single curve needs less fill than a coloured one
+        juce::ColourGradient fade(curveColour.withAlpha((theme::dark ? 0.30f : 0.24f) * strength), 0.f, yTop,
+                                  curveColour.withAlpha(theme::dark ? 0.03f : 0.02f), 0.f, yBottom, false);
         g.setGradientFill(fade);
         g.fillPath(fill);
     }
     // A contrasting halo under the line (dark on the dark theme, light on the light one) so the curve stays readable
-    // on top of a waveform in the same colour; then a slightly more vivid line. All of this is cached, no per-frame cost.
-    g.setColour((paper::dark ? juce::Colours::black : juce::Colours::white).withAlpha(0.6f));
-    g.strokePath(line, juce::PathStrokeType(6.f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    // A soft glow around the line: a few wider, fainter strokes underneath it
-    for (const auto glow : { std::pair<float, float> { 11.f, 0.05f }, { 7.f, 0.09f }, { 4.5f, 0.15f } })
-    {
-        g.setColour(curveColour.withAlpha(glow.second * (paper::dark ? 1.3f : 0.7f)));
-        g.strokePath(line, juce::PathStrokeType(glow.first, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-    }
-    g.setColour(paper::dark ? curveColour.brighter(0.25f).interpolatedWith(juce::Colours::white, 0.15f) : curveColour);
-    g.strokePath(line, juce::PathStrokeType(2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    // on top of a waveform; one faint, narrow glow for depth. All of this is cached, no per-frame cost.
+    g.setColour((theme::dark ? juce::Colours::black : juce::Colours::white).withAlpha(0.65f));
+    g.strokePath(line, juce::PathStrokeType(5.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    g.setColour(curveColour.withAlpha(theme::dark ? 0.16f : 0.09f));
+    g.strokePath(line, juce::PathStrokeType(4.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+    g.setColour(theme::dark && slot > 0 ? curveColour.brighter(0.2f) : curveColour);
+    g.strokePath(line, juce::PathStrokeType(2.2f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
 
     // Actual output gain: the curve after depth, smoothing and phase offset, as the audio thread will apply it.
     // Only drawn when it differs from the curve itself.
@@ -515,7 +515,7 @@ void EnvelopeEditor::renderCurveLayer(juce::Graphics& g)
             auto p = toScreen((float) i / (N - 1), out[i]);
             if (i == 0) actual.startNewSubPath(p); else actual.lineTo(p);
         }
-        g.setColour(paper::text.withAlpha(0.3f));
+        g.setColour(theme::text.withAlpha(0.3f));
         g.strokePath(actual, juce::PathStrokeType(2.f));
         }
     }
@@ -523,7 +523,7 @@ void EnvelopeEditor::renderCurveLayer(juce::Graphics& g)
     // Bezier handles for every point, After Effects style: thin yellow line to the point, filled yellow dot
     if (bezierMode() && !controlsHidden)
     {
-        const juce::Colour yellow(0xffeab308);
+        const juce::Colour tangent = theme::handle;
         for (int pt = 0; pt < (int) env.points.size(); ++pt)
         {
             const auto origin = toScreen(env.points[(size_t) pt].x, env.points[(size_t) pt].y);
@@ -532,11 +532,11 @@ void EnvelopeEditor::renderCurveLayer(juce::Graphics& g)
                 if (!handleVisible(pt, kind)) continue;
                 const auto h = handleScreen(pt, kind);
                 const bool active = dragKind == kind && pt == selected;
-                g.setColour(yellow.withAlpha(0.95f));
+                g.setColour(tangent.withAlpha(0.95f));
                 g.drawLine(origin.x, origin.y, h.x, h.y, 1.4f);
-                g.setColour(active ? yellow.brighter(0.4f) : yellow);
+                g.setColour(active ? tangent.brighter(0.4f) : tangent);
                 g.fillEllipse(h.x - 4.5f, h.y - 4.5f, 9.f, 9.f);
-                g.setColour(yellow.darker(0.55f).withAlpha(0.9f));
+                g.setColour(tangent.darker(0.55f).withAlpha(0.9f));
                 g.drawEllipse(h.x - 4.5f, h.y - 4.5f, 9.f, 9.f, 1.f);
             }
         }
@@ -546,7 +546,7 @@ void EnvelopeEditor::renderCurveLayer(juce::Graphics& g)
     for (int i = 0; i < (int) env.points.size() && !controlsHidden; ++i)
     {
         auto p = toScreen(env.points[(size_t) i].x, env.points[(size_t) i].y);
-        g.setColour(i == selected ? mainColour() : paper::panel);
+        g.setColour(i == selected ? mainColour() : theme::panel);
         g.fillEllipse(p.x - 5.5f, p.y - 5.5f, 11.f, 11.f);
         g.setColour(mainColour());
         g.drawEllipse(p.x - 5.5f, p.y - 5.5f, 11.f, 11.f, 2.f);
@@ -561,9 +561,9 @@ void EnvelopeEditor::renderCurveLayer(juce::Graphics& g)
             const auto h = toScreen(m.first, m.second);
             juce::Path d;
             d.addQuadrilateral(h.x, h.y - 6, h.x + 6, h.y, h.x, h.y + 6, h.x - 6, h.y);
-            g.setColour(paper::panel);
+            g.setColour(theme::panel);
             g.fillPath(d);
-            g.setColour(paper::text.withAlpha(dragSeg == i ? 1.f : 0.7f));
+            g.setColour(theme::text.withAlpha(dragSeg == i ? 1.f : 0.7f));
             g.strokePath(d, juce::PathStrokeType(1.5f));
         }
     }
@@ -579,7 +579,7 @@ size_t EnvelopeEditor::computeKey() const
     mix(paramValue(2));
     mix((float) cycleSecs());
     mix(proc.apvts.getRawParameterValue("waveOpacity")->load());
-    mix((float) paper::version);
+    mix((float) theme::version);
     mix((float) selected); mix((float) dragKind); mix((float) dragSeg); mix(controlsHidden ? 1.f : 0.f);
     if (slot > 0)
     {
@@ -627,7 +627,7 @@ void EnvelopeEditor::animate()
     const bool audioMoving = blk != lastBlock || (now - proc.uiPhaseTimeMs.load(std::memory_order_relaxed)) < 60.0;
     lastBlock = blk;
     const bool noteExpired = noteDrawn && !isShowingNote(); // one more repaint to take the note away
-    if (noteExpired || audioMoving || positionLabels()[3] != cachedLabels || computeKey() != curveKey || cachedGrid != gridX() || cachedTheme != paper::version) repaint();
+    if (noteExpired || audioMoving || positionLabels()[3] != cachedLabels || computeKey() != curveKey || cachedGrid != gridX() || cachedTheme != theme::version) repaint();
 }
 
 void EnvelopeEditor::paint(juce::Graphics& g)
@@ -644,12 +644,12 @@ void EnvelopeEditor::paint(juce::Graphics& g)
 
     const bool sizeChanged = !gridImg.isValid() || gridImg.getWidth() != pw || gridImg.getHeight() != ph;
     const auto labelNow = positionLabels()[3]; // the end label changes with every rate, dotted, triplet or Hz change
-    if (sizeChanged || labelNow != cachedLabels || cachedGrid != gridX() || cachedTheme != paper::version) // the grid is cached too: redraw when its lines or the theme change
+    if (sizeChanged || labelNow != cachedLabels || cachedGrid != gridX() || cachedTheme != theme::version) // the grid is cached too: redraw when its lines or the theme change
     {
         rebuild(gridImg, [this](juce::Graphics& ig) { renderGrid(ig); });
         cachedGrid = gridX();
         cachedLabels = labelNow;
-        cachedTheme = paper::version;
+        cachedTheme = theme::version;
         curveKey = 0;
     }
 
@@ -665,7 +665,7 @@ void EnvelopeEditor::paint(juce::Graphics& g)
     // playhead: just a thin line (nothing else is redrawn per frame)
     const float phase = predictedPhase();
     auto top = toScreen(phase, 1.f), bottom = toScreen(phase, 0.f);
-    g.setColour(paper::text.withAlpha(0.7f));
+    g.setColour(theme::text.withAlpha(0.7f));
     g.drawLine(top.x, top.y, bottom.x, bottom.y, 1.f);
 
     noteDrawn = isShowingNote();
@@ -673,11 +673,11 @@ void EnvelopeEditor::paint(juce::Graphics& g)
     {
         const float width = juce::jmin(470.f, (float) getWidth() - 16.f);
         const auto note = juce::Rectangle<float>(width, 26.f).withCentre({ (float) getWidth() * 0.5f, 29.f });
-        g.setColour(paper::panel.withAlpha(0.96f));
+        g.setColour(theme::panel.withAlpha(0.96f));
         g.fillRoundedRectangle(note, 6.f);
-        g.setColour(paper::amber);
+        g.setColour(theme::amber);
         g.drawRoundedRectangle(note, 6.f, 1.2f);
-        g.setColour(paper::text);
+        g.setColour(theme::text);
         g.setFont(fonts::regular(12.f));
         g.drawFittedText(noteText, note.reduced(6.f, 0.f).toNearestInt(), juce::Justification::centred, 2, 0.85f);
     }

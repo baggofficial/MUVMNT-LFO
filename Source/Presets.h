@@ -67,53 +67,53 @@ namespace presets
         std::vector<CurvePreset> list;
         auto add = [&](const char* group, const char* name, Envelope e) { list.push_back({ group, name, std::move(e) }); };
 
-        // ---- Sidechain: ducked on the beat, then back up. ({ x, y, inDx, inDy, outDx, outDy })
+        // ---- Pumps: ducked on the beat, then back up. ({ x, y, inDx, inDy, outDx, outDy })
         Envelope pump;                                    // the classic house pump (also the plugin's default)
-        add("Sidechain", "House pump", pump);
+        add("Pumps", "House pump", pump);
 
         // Gentle: only dips to 35% and the dip is centred on the loop seam, so every edge is smooth.
-        add("Sidechain", "Soft duck", make({ { 0.00f, 0.35f, 0.f, 0.f, 0.10f, 0.f },
+        add("Pumps", "Soft duck", make({ { 0.00f, 0.35f, 0.f, 0.f, 0.10f, 0.f },
                                              { 0.30f, 1.00f, -0.10f, 0.f, 0.f, 0.f },
                                              { 0.70f, 1.00f, 0.f, 0.f, 0.10f, 0.f },
                                              { 1.00f, 0.35f, -0.10f, 0.f, 0.f, 0.f } }));
 
         // Hard: full duck, held solid for a moment, then a straight steep ramp back and a sharp drop at the end.
-        add("Sidechain", "Hard duck", make({ { 0.00f, 0.f }, { 0.08f, 0.f }, { 0.32f, 1.f }, { 0.97f, 1.f }, { 1.00f, 0.f } }));
+        add("Pumps", "Hard duck", make({ { 0.00f, 0.f }, { 0.08f, 0.f }, { 0.32f, 1.f }, { 0.97f, 1.f }, { 1.00f, 0.f } }));
 
         // Long release: drops, then climbs back slowly, easing into full level late in the cycle.
-        add("Sidechain", "Long release", make({ { 0.00f, 0.f, 0.f, 0.f, 0.12f, 0.60f },
+        add("Pumps", "Long release", make({ { 0.00f, 0.f, 0.f, 0.f, 0.12f, 0.60f },
                                                 { 0.90f, 1.f, -0.45f, 0.f, 0.f, 0.f },
                                                 { 0.97f, 1.f, 0.f, 0.f, 0.f, 0.f },
                                                 { 1.00f, 0.f, 0.f, 0.f, 0.f, 0.f } }));
 
-        add("Sidechain", "Pump x2", tile(pump, 2));
+        add("Pumps", "Pump x2", tile(pump, 2));
 
-        // ---- Kick shapes: the usual "rise, hold, drop" and "drop, hold, return" volume shapes of kick-sidechain tools.
-        add("Kick shapes", "Fast rise", make({ { 0.00f, 0.f, 0.f, 0.f, 0.08f, 0.f },
+        // ---- Duck shapes: the usual "rise, hold, drop" and "drop, hold, return" volume shapes of kick-sidechain tools.
+        add("Duck shapes", "Fast rise", make({ { 0.00f, 0.f, 0.f, 0.f, 0.08f, 0.f },
                                                { 0.22f, 1.f, -0.08f, 0.f, 0.f, 0.f },
                                                { 0.98f, 1.f }, { 1.00f, 0.f } }));
-        add("Kick shapes", "Smooth rise", make({ { 0.00f, 0.f, 0.f, 0.f, 0.14f, 0.f },
+        add("Duck shapes", "Smooth rise", make({ { 0.00f, 0.f, 0.f, 0.f, 0.14f, 0.f },
                                                  { 0.38f, 1.f, -0.14f, 0.f, 0.f, 0.f },
                                                  { 0.98f, 1.f }, { 1.00f, 0.f } }));
-        add("Kick shapes", "Slow rise", make({ { 0.00f, 0.f, 0.f, 0.f, 0.25f, 0.f },
+        add("Duck shapes", "Slow rise", make({ { 0.00f, 0.f, 0.f, 0.f, 0.25f, 0.f },
                                                { 0.65f, 1.f, -0.25f, 0.f, 0.f, 0.f },
                                                { 0.98f, 1.f }, { 1.00f, 0.f } }));
-        add("Kick shapes", "Rounded pump", make({ { 0.00f, 0.f, 0.f, 0.f, 0.10f, 0.f },
+        add("Duck shapes", "Rounded pump", make({ { 0.00f, 0.f, 0.f, 0.f, 0.10f, 0.f },
                                                   { 0.30f, 1.f, -0.10f, 0.f, 0.f, 0.f },
                                                   { 0.55f, 1.f, 0.f, 0.f, 0.20f, 0.f },
                                                   { 1.00f, 0.f, -0.20f, 0.f, 0.f, 0.f } }));
-        add("Kick shapes", "Hump", make({ { 0.00f, 0.f, 0.f, 0.f, 0.f, 0.f },
+        add("Duck shapes", "Hump", make({ { 0.00f, 0.f, 0.f, 0.f, 0.f, 0.f },
                                           { 0.25f, 0.f, 0.f, 0.f, 0.15f, 0.f },
                                           { 0.62f, 1.f, -0.15f, 0.f, 0.15f, 0.f },
                                           { 1.00f, 0.f, -0.22f, 0.f, 0.f, 0.f } }));
-        add("Kick shapes", "Late rise", make({ { 0.00f, 1.f }, { 0.03f, 0.f },
+        add("Duck shapes", "Late rise", make({ { 0.00f, 1.f }, { 0.03f, 0.f },
                                                { 0.55f, 0.f, 0.f, 0.f, 0.20f, 0.f },
                                                { 1.00f, 1.f, -0.20f, 0.f, 0.f, 0.f } }));
-        add("Kick shapes", "Dip & snap", make({ { 0.00f, 1.f, 0.f, 0.f, 0.15f, 0.f },
+        add("Duck shapes", "Dip & snap", make({ { 0.00f, 1.f, 0.f, 0.f, 0.15f, 0.f },
                                                 { 0.40f, 0.f, -0.15f, 0.f, 0.f, 0.f },
                                                 { 0.97f, 0.f }, { 1.00f, 1.f } }));
-        add("Kick shapes", "Ramp dip", make({ { 0.00f, 1.f }, { 0.45f, 0.f }, { 0.97f, 0.f }, { 1.00f, 1.f } }));
-        add("Kick shapes", "Double bump", make({ { 0.00f, 0.f, 0.f, 0.f, 0.06f, 0.f },
+        add("Duck shapes", "Ramp dip", make({ { 0.00f, 1.f }, { 0.45f, 0.f }, { 0.97f, 0.f }, { 1.00f, 1.f } }));
+        add("Duck shapes", "Double bump", make({ { 0.00f, 0.f, 0.f, 0.f, 0.06f, 0.f },
                                                  { 0.18f, 0.7f, -0.06f, 0.f, 0.06f, 0.f },
                                                  { 0.34f, 0.3f, -0.06f, 0.f, 0.20f, 0.f },
                                                  { 0.95f, 1.f, -0.30f, 0.f, 0.f, 0.f },

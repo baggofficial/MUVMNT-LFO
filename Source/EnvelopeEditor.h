@@ -91,7 +91,7 @@ private:
     bool rainbowFill(float alpha, juce::FillType& out) const;
     float outGain[FreeLfoProcessor::waveBins] = {}; // the gain actually applied at each cycle position (filled with the curve layer)
     // Single tab: the accent colour. Multiband tab: the band's own colour (red / green / blue).
-    juce::Colour mainColour() const { return slot == 0 ? paper::accent : paper::bandColour(slot - 1); }
+    juce::Colour mainColour() const { return slot == 0 ? theme::accent : theme::bandColour(slot - 1); }
 
     FreeLfoProcessor& proc;
     int cachedGrid = -1; // grid count the cached grid image was drawn with
@@ -150,14 +150,16 @@ public:
     {
         const auto b = getLocalBounds().toFloat();
         const float top = b.getY() + 10.f, h = b.getHeight() - 24.f;   // the same vertical scale as the graph
-        g.setColour(paper::bg);
+        g.setColour(theme::bg);
         g.fillRoundedRectangle(b, 5.f);
         auto yOf = [&](float v) { return top + (1.f - (0.5f + 0.5f * juce::jlimit(-1.f, 1.f, v))) * h; };
 
         // a quiet track with a zero line; only the arrows carry colour
-        g.setColour(paper::gridMajor());
+        g.setColour(theme::line);
+        g.drawRoundedRectangle(b.reduced(0.5f), theme::size::radius, theme::size::border);
+        g.setColour(theme::gridMajor());
         g.fillRoundedRectangle(juce::Rectangle<float>(b.getCentreX() - 1.f, top, 2.f, h), 1.f);
-        g.setColour(paper::sub.withAlpha(0.7f));
+        g.setColour(theme::sub.withAlpha(0.7f));
         g.drawHorizontalLine((int) yOf(0.f), b.getX() + 3.f, b.getRight() - 3.f);
         g.setFont(fonts::regular(8.5f));
         g.drawText("+1", b.withHeight(10.f), juce::Justification::centred);
@@ -165,7 +167,7 @@ public:
 
         // green at 0, through amber, to red at the peaks (+1 / -1)
         auto colourFor = [](float v) {
-            const auto green = juce::Colour(0xff39c46a), amber = juce::Colour(0xfff0b429), red = juce::Colour(0xffff4d4d);
+            const auto green = theme::meterGreen, amber = theme::meterYellow, red = theme::meterRed;
             const float a = juce::jlimit(0.f, 1.f, std::abs(v));
             return a < 0.44f ? green.interpolatedWith(amber, a / 0.44f) : amber.interpolatedWith(red, (a - 0.44f) / 0.56f);
         };

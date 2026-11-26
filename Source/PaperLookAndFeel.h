@@ -1,76 +1,7 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "Fonts.h"
-
-// Two themes: "light paper" (default) and a dark one inspired by After Effects' graph editor
-// (charcoal panels, near-black graph area, blue highlight, yellow keyframe handles).
-// The colours are plain variables that setDark() reassigns, so everything that draws with paper::xxx follows.
-namespace paper
-{
-    inline bool dark = false;
-    inline int version = 0; // bumps on every theme change, so cached drawings know to redraw
-    inline juce::Colour bg     { 0xffebe8e1 };   // curve area / outer frame
-    inline juce::Colour panel  { 0xfffbfaf7 };   // window panel, buttons, chips
-    inline juce::Colour line   { 0xffd8d4ca };
-    inline juce::Colour accent { 0xffe4572e };
-    inline juce::Colour text   { 0xff25231f };
-    inline juce::Colour sub    { 0xff7d786c };
-    inline juce::Colour track  { 0xffe2ded3 };
-    inline juce::Colour amber  { 0xffe0a21b };
-
-    inline void setDark(bool on)
-    {
-        dark = on;
-        if (on)
-        {
-            bg     = juce::Colour(0xff1b1b1b);  // like AE's graph background
-            panel  = juce::Colour(0xff2a2a2a);  // AE panel grey
-            line   = juce::Colour(0xff434343);
-            accent = juce::Colour(0xff4a9df8);  // AE selection blue
-            text   = juce::Colour(0xffd9d9d9);
-            sub    = juce::Colour(0xff8f8f8f);
-            track  = juce::Colour(0xff3d3d3d);
-            amber  = juce::Colour(0xfff0b429);
-        }
-        else
-        {
-            bg     = juce::Colour(0xffebe8e1);
-            panel  = juce::Colour(0xfffbfaf7);
-            line   = juce::Colour(0xffd8d4ca);
-            accent = juce::Colour(0xffe4572e);
-            text   = juce::Colour(0xff25231f);
-            sub    = juce::Colour(0xff7d786c);
-            track  = juce::Colour(0xffe2ded3);
-            amber  = juce::Colour(0xffe0a21b);
-        }
-        ++version;
-    }
-
-    // Same palette as the frequency-coloured waveform: red lows, green mids, blue highs
-    inline juce::Colour bandColour(int band)
-    {
-        if (dark)
-            return band == 0 ? juce::Colour::fromFloatRGBA(0.96f, 0.38f, 0.34f, 1.f)
-                 : band == 1 ? juce::Colour::fromFloatRGBA(0.36f, 0.82f, 0.45f, 1.f)
-                             : juce::Colour::fromFloatRGBA(0.33f, 0.60f, 1.00f, 1.f);
-        return band == 0 ? juce::Colour::fromFloatRGBA(0.90f, 0.20f, 0.20f, 1.f)
-             : band == 1 ? juce::Colour::fromFloatRGBA(0.20f, 0.70f, 0.30f, 1.f)
-                         : juce::Colour::fromFloatRGBA(0.15f, 0.45f, 0.95f, 1.f);
-    }
-
-    // Grid lines, guides: dark ink on the light theme, light ink on the dark one
-    inline juce::Colour ink(float alpha) { return dark ? juce::Colours::white.withAlpha(alpha * 0.7f) : juce::Colours::black.withAlpha(alpha); }
-
-    // Curve editor grid: clearly visible from a distance. Major lines (every quarter of the cycle, and the frame) are stronger.
-    inline juce::Colour gridMajor() { return dark ? juce::Colours::white.withAlpha(0.26f) : juce::Colours::black.withAlpha(0.24f); }
-    inline juce::Colour gridMinor() { return dark ? juce::Colours::white.withAlpha(0.13f) : juce::Colours::black.withAlpha(0.11f); }
-
-    // A colour for outlines of the band curves: a touch darker on light, a touch brighter on dark
-    inline juce::Colour strong(juce::Colour c) { return dark ? c.brighter(0.15f) : c.darker(0.2f); }
-
-    // Text colour for a band name
-    inline juce::Colour bandText(int band) { return dark ? bandColour(band).brighter(0.1f) : bandColour(band).darker(0.25f); }
-}
+#include "Theme.h"
 
 // The animation speed, shown as its number: click to switch between 60 and 30 frames a second
 class FrameRateButton : public juce::Button
@@ -88,14 +19,14 @@ public:
     void paintButton(juce::Graphics& g, bool over, bool down) override
     {
         auto b = getLocalBounds().toFloat().reduced(0.5f);
-        g.setColour(down ? paper::track : over ? paper::bg : paper::panel);
+        g.setColour(down ? theme::track : over ? theme::bg : theme::panel);
         g.fillRoundedRectangle(b, 5.f);
-        g.setColour(paper::line);
+        g.setColour(theme::line);
         g.drawRoundedRectangle(b, 5.f, 1.f);
-        g.setColour(paper::text.withAlpha(over ? 1.f : 0.75f));
+        g.setColour(theme::text.withAlpha(over ? 1.f : 0.75f));
         g.setFont(fonts::semibold(11.f));
         g.drawText(juce::String(fps), b.withTrimmedBottom(8.f).translated(0.f, 1.f), juce::Justification::centred);
-        g.setColour(paper::sub);
+        g.setColour(theme::sub);
         g.setFont(fonts::regular(8.f));
         g.drawText("fps", b.withTrimmedTop(13.f), juce::Justification::centred);
     }
@@ -113,7 +44,7 @@ public:
     void paintButton(juce::Graphics& g, bool over, bool) override
     {
         auto b = getLocalBounds().toFloat().reduced(4.f);
-        g.setColour(paper::text.withAlpha(over ? 1.f : 0.7f));
+        g.setColour(theme::text.withAlpha(over ? 1.f : 0.7f));
         g.drawEllipse(b, 1.6f);
         juce::Path half;
         half.addPieSegment(b, 0.f, juce::MathConstants<float>::pi, 0.f); // the right half
@@ -121,7 +52,8 @@ public:
     }
 };
 
-// "Curve from kick": two small chips in the sidechain's colour, beside the Waveform knob.
+// "Curve from kick": a two-part switch (Simple | Detailed on screen; "safe" and "precise" in the code) in its own group at
+// the end of the control strip. Gold (the kick) on hover.
 class KickButton : public juce::Button
 {
 public:
@@ -129,22 +61,100 @@ public:
 
     explicit KickButton(bool isPrecise) : juce::Button(isPrecise ? "precise curve from kick" : "safe curve from kick"), precise(isPrecise)
     {
-        setTooltip(isPrecise ? "Precise: ducks only as much as your kick and your sound need to fit together (looks at both; press while playing)"
-                             : "Safe: a simple curve that gives your kick plenty of room (looks at the kick only; press while playing)");
+        setTooltip(isPrecise ? "Detailed: more points. Uses your kick and your sound to keep more of your sound. Press while playing."
+                             : "Simple: a few points. Gives your kick plenty of room. Press while playing.");
         setMouseCursor(juce::MouseCursor::PointingHandCursor);
     }
 
+    // The two buttons sit edge to edge and read as one control: Safe is its left half, Precise its right half
     void paintButton(juce::Graphics& g, bool over, bool down) override
     {
-        const auto b = getLocalBounds().toFloat().reduced(0.75f);
-        g.setColour(paper::amber.withAlpha(down ? 0.35f : over ? 0.2f : 0.08f));
-        g.fillRoundedRectangle(b, 6.f);
-        g.setColour(paper::amber.withAlpha(over ? 1.f : 0.7f));
-        g.drawRoundedRectangle(b, 6.f, 1.2f);
-        g.setColour(paper::dark ? paper::amber.brighter(0.3f) : paper::amber.darker(0.5f));
-        g.setFont(fonts::semibold(10.f));
-        g.drawText(precise ? "PRECISE" : "SAFE", b, juce::Justification::centred);
+        auto b = getLocalBounds().toFloat().reduced(0.f, 0.5f);
+        if (precise) b.removeFromRight(0.5f); else b.removeFromLeft(0.5f);
+        juce::Path half;
+        half.addRoundedRectangle(b.getX(), b.getY(), b.getWidth(), b.getHeight(), theme::size::radius, theme::size::radius,
+                                 !precise, precise, !precise, precise);
+        g.setColour(down ? theme::amber.withAlpha(0.28f) : over ? theme::raised : theme::panel);
+        g.fillPath(half);
+        g.setColour(over || down ? theme::amber.withAlpha(0.85f) : theme::line.brighter(theme::dark ? 0.12f : 0.f));
+        g.strokePath(half, juce::PathStrokeType(theme::size::border));
+        g.setColour(over || down ? (theme::dark ? theme::amber : theme::amber.darker(0.6f)) : theme::text);
+        g.setFont(fonts::semibold(10.f).withExtraKerningFactor(0.05f));
+        g.drawText(precise ? "DETAILED" : "SIMPLE", b, juce::Justification::centred);
     }
+};
+
+// Sync / Hz as a small upright slider beside the Rate knob: a thumb that sits on a note (Sync, the top) or on "Hz" (the
+// bottom). Click either half, or drag the thumb. It is still a two-item ComboBox underneath, so the parameter attachments
+// (and therefore automation, undo in the DAW and project files) work exactly as they did with the dropdown.
+class SyncSwitch : public juce::ComboBox
+{
+public:
+    static constexpr int width = 26, height = 48;
+
+    SyncSwitch()
+    {
+        addItemList({ "Sync", "Hz" }, 1);
+        setScrollWheelEnabled(false);
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+        setTooltip("Follow the song's tempo, or set a speed in Hz.");
+        hideText();
+    }
+
+    void mouseDown(const juce::MouseEvent& e) override { choose(e); }   // never opens a menu
+    void mouseDrag(const juce::MouseEvent& e) override { choose(e); }
+    void mouseUp(const juce::MouseEvent&) override {}
+    void mouseEnter(const juce::MouseEvent&) override { repaint(); }
+    void mouseExit(const juce::MouseEvent&) override { repaint(); }
+    void lookAndFeelChanged() override { juce::ComboBox::lookAndFeelChanged(); hideText(); }
+
+    void paint(juce::Graphics& g) override
+    {
+        const auto b = getLocalBounds().toFloat().reduced(0.5f);
+        const bool hz = getSelectedItemIndex() == 1, over = isMouseOver(true);
+        g.setColour(theme::bg);
+        g.fillRoundedRectangle(b, 7.f);
+        g.setColour(over ? theme::sub.withAlpha(0.6f) : theme::line.brighter(theme::dark ? 0.12f : 0.f));
+        g.drawRoundedRectangle(b, 7.f, theme::size::border);
+
+        auto halves = b.reduced(2.f);
+        const auto top = halves.removeFromTop(halves.getHeight() * 0.5f);
+        const auto thumb = (hz ? halves : top).reduced(0.f, 0.5f);
+        g.setGradientFill(juce::ColourGradient(theme::dialTop.brighter(theme::dark ? 0.12f : 0.f), 0.f, thumb.getY(),
+                                               theme::dialBottom.brighter(theme::dark ? 0.08f : 0.f), 0.f, thumb.getBottom(), false));
+        g.fillRoundedRectangle(thumb, theme::size::radius);
+        g.setColour(theme::sub.withAlpha(0.55f));
+        g.drawRoundedRectangle(thumb, theme::size::radius, theme::size::border);
+
+        // Sync: two beamed notes
+        const auto lit = [&](bool on) { return on ? theme::text : theme::muted; };
+        g.setColour(lit(!hz));
+        {
+            const auto c = top.getCentre();
+            for (const float x : { -4.f, 3.5f })
+            {
+                juce::Path head;
+                head.addEllipse(-2.6f, -1.9f, 5.2f, 3.8f);
+                g.fillPath(head, juce::AffineTransform::rotation(-0.35f).translated(c.x + x - 0.6f, c.y + 4.2f));
+                g.fillRect(juce::Rectangle<float>(c.x + x + 0.6f, c.y - 5.6f, 1.2f, 9.8f)); // stem
+            }
+            juce::Path beam;
+            beam.addRectangle(c.x - 3.4f, c.y - 6.2f, 8.7f, 2.4f);
+            g.fillPath(beam);
+        }
+        g.setColour(lit(hz));
+        g.setFont(fonts::semibold(10.5f));
+        g.drawText("Hz", halves, juce::Justification::centred);
+    }
+
+private:
+    void choose(const juce::MouseEvent& e)
+    {
+        if (!isEnabled() || e.mods.isPopupMenu()) return;
+        setSelectedItemIndex(e.position.y < (float) getHeight() * 0.5f ? 0 : 1, juce::sendNotificationSync);
+        repaint();
+    }
+    void hideText() { for (auto* child : getChildren()) child->setVisible(false); } // the ComboBox's own text label
 };
 
 // Curved arrow: undo (points left) or redo (points right). Greyed out when there is nothing to undo / redo.
@@ -160,7 +170,7 @@ public:
     {
         auto b = getLocalBounds().toFloat().reduced(6.f, 7.f);
         const float a = !isEnabled() ? 0.28f : down ? 1.f : over ? 0.95f : 0.7f;
-        g.setColour(paper::text.withAlpha(a));
+        g.setColour(theme::text.withAlpha(a));
         juce::Path arc;
         const auto ctr = b.getCentre();
         const float r = juce::jmin(b.getWidth(), b.getHeight()) * 0.5f;
@@ -184,12 +194,22 @@ private:
 class BezierToggle : public juce::ToggleButton
 {
 public:
-    BezierToggle() { setClickingTogglesState(true); setTooltip("Bezier handles (off = simple one-diamond bends)"); setMouseCursor(juce::MouseCursor::PointingHandCursor); }
+    BezierToggle() { setClickingTogglesState(true); setTooltip("On: two handles for shaping curves. Off: one bend handle per section."); setMouseCursor(juce::MouseCursor::PointingHandCursor); }
     void paint(juce::Graphics& g) override
     {
         auto b = getLocalBounds().toFloat().reduced(4.f);
         const bool on = getToggleState();
-        const auto c = on ? paper::accent : paper::sub.withAlpha(isMouseOver() ? 0.9f : 0.6f);
+        // on: the icon in the yellow of the handles it switches on, in a lit chip
+        const auto yellow = theme::dark ? theme::handle : theme::handle.darker(0.25f);
+        if (on)
+        {
+            const auto chip = getLocalBounds().toFloat().reduced(0.5f);
+            g.setColour(theme::raised);
+            g.fillRoundedRectangle(chip, theme::size::radius);
+            g.setColour(yellow.withAlpha(0.55f));
+            g.drawRoundedRectangle(chip, theme::size::radius, theme::size::border);
+        }
+        const auto c = on ? yellow : theme::sub.withAlpha(isMouseOver() ? 1.f : 0.75f);
         g.setColour(c);
         const juce::Point<float> a(b.getX(), b.getBottom() - 2.f), z(b.getRight(), b.getY() + 2.f);
         const juce::Point<float> ha(b.getX() + b.getWidth() * 0.45f, b.getBottom() - 2.f), hz(b.getRight() - b.getWidth() * 0.45f, b.getY() + 2.f);
@@ -206,36 +226,82 @@ public:
     }
 };
 
-// The Single / Multiband switch: one button that shows the current mode as an icon (one wave = Single, three stacked waves =
-// Multiband) and flips to the other mode when clicked.
+// The Single / Multiband selector: both choices are always on screen, each with its icon (one wave / three stacked waves)
+// and its name, and the one in use is lit. Click the other to switch; clicking the lit one does nothing. While Multiband
+// is in use its three waves wear the band colours; otherwise they are as quiet as its name.
 class ModeSwitchButton : public juce::Button
 {
 public:
+    static constexpr int width = 210, singleWidth = 98;
+
     ModeSwitchButton() : juce::Button("mode") { setMouseCursor(juce::MouseCursor::PointingHandCursor); setMode(false); }
 
     void setMode(bool multiband)
     {
         multi = multiband;
-        setTooltip(multi ? "Multiband: a curve for each of the lows, mids and highs. Click for Single band."
-                         : "Single band: one curve for the whole signal. Click for Multiband.");
+        setTooltip("Full Band: one curve for the whole sound.  Multiband: a curve each for the lows, mids and highs.");
         repaint();
     }
+    bool isMultiband() const { return multi; }
 
-    void paintButton(juce::Graphics& g, bool hover, bool down) override
+    // onClick means "switch to the other mode", so only a click on the half that is not in use may reach it
+    void mouseDown(const juce::MouseEvent&) override { repaint(); }
+    void mouseUp(const juce::MouseEvent& e) override
     {
-        const auto b = getLocalBounds().toFloat().reduced(0.5f);
-        g.setColour(down ? paper::track : hover ? paper::bg : paper::panel);
-        g.fillRoundedRectangle(b, 6.f);
-        g.setColour(hover ? paper::accent.withAlpha(0.7f) : paper::line);
-        g.drawRoundedRectangle(b, 6.f, 1.f);
+        if (isEnabled() && !e.mods.isPopupMenu() && getLocalBounds().contains(e.getPosition()) && (e.x >= singleWidth) != multi
+            && onClick != nullptr)
+            onClick();
+        repaint();
+    }
+    void mouseMove(const juce::MouseEvent& e) override { setHoverHalf(e.x >= singleWidth ? 1 : 0); }
+    void mouseExit(const juce::MouseEvent& e) override { setHoverHalf(-1); juce::Button::mouseExit(e); }
 
-        g.setColour(paper::accent);
-        const int numWaves = multi ? 3 : 1;
-        const auto area = b.reduced(11.f, multi ? 7.f : 6.f);
-        const float amp = multi ? 2.1f : 4.2f;
+    void paintButton(juce::Graphics& g, bool, bool) override
+    {
+        auto b = getLocalBounds().toFloat().reduced(0.5f);
+        g.setColour(theme::bg);
+        g.fillRoundedRectangle(b, 7.f);
+        g.setColour(theme::line.brighter(theme::dark ? 0.12f : 0.f));
+        g.drawRoundedRectangle(b, 7.f, theme::size::border);
+
+        for (int half = 0; half < 2; ++half)
+        {
+            auto area = half == 0 ? b.withWidth((float) singleWidth - 0.5f) : b.withTrimmedLeft((float) singleWidth - 0.5f);
+            area = area.reduced(2.f);
+            const bool active = (half == 1) == multi, over = hoverHalf == half && !active;
+            if (active)
+            {
+                g.setGradientFill(juce::ColourGradient(theme::dialTop.brighter(theme::dark ? 0.14f : 0.f), 0.f, area.getY(),
+                                                       theme::dialBottom.brighter(theme::dark ? 0.10f : 0.f), 0.f, area.getBottom(), false));
+                g.fillRoundedRectangle(area, theme::size::radius);
+                g.setColour(theme::accent.withAlpha(0.75f));
+                g.drawRoundedRectangle(area, theme::size::radius, theme::size::border);
+            }
+            else if (over)
+            {
+                g.setColour(theme::raised);
+                g.fillRoundedRectangle(area, theme::size::radius);
+            }
+            const auto words = active ? theme::text : over ? theme::text.withAlpha(0.9f) : theme::sub;
+            area.removeFromLeft(7.f);
+            drawWaves(g, area.removeFromLeft(20.f), half == 1, words, half == 1 && active);
+            area.removeFromLeft(5.f);
+            g.setColour(words);
+            g.setFont(fonts::semibold(11.f).withExtraKerningFactor(0.02f));
+            g.drawText(half == 0 ? "Full Band" : "Multiband", area, juce::Justification::centredLeft, false);
+        }
+    }
+
+private:
+    // the icons as they have always been: one wave = Single, three stacked waves = Multiband (low at the bottom)
+    static void drawWaves(juce::Graphics& g, juce::Rectangle<float> box, bool stacked, juce::Colour plain, bool coloured)
+    {
+        const int numWaves = stacked ? 3 : 1;
+        const auto area = box.withSizeKeepingCentre(box.getWidth(), stacked ? 14.f : 10.f);
+        const float amp = stacked ? 1.7f : 3.8f;
         for (int k = 0; k < numWaves; ++k)
         {
-            const float cy = multi ? area.getY() + area.getHeight() * ((float) k + 0.5f) / 3.f : area.getCentreY();
+            const float cy = stacked ? area.getY() + area.getHeight() * ((float) k + 0.5f) / 3.f : area.getCentreY();
             juce::Path wave;
             for (float x = 0.f; x <= 1.001f; x += 0.04f)
             {
@@ -243,12 +309,14 @@ public:
                 if (x == 0.f) wave.startNewSubPath(area.getX() + x * area.getWidth(), y);
                 else wave.lineTo(area.getX() + x * area.getWidth(), y);
             }
-            g.strokePath(wave, juce::PathStrokeType(multi ? 1.4f : 2.f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            g.setColour(coloured ? theme::bandColour(2 - k) : plain);
+            g.strokePath(wave, juce::PathStrokeType(stacked ? 1.4f : 1.8f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         }
     }
+    void setHoverHalf(int half) { if (half != hoverHalf) { hoverHalf = half; repaint(); } }
 
-private:
     bool multi = false;
+    int hoverHalf = -1;
 };
 
 // Bypass: a power icon. Lit (accent) while the plugin is working; amber with a glow while it is bypassed.
@@ -266,13 +334,13 @@ public:
     {
         const auto b = getLocalBounds().toFloat().reduced(0.5f);
         const bool bypassed = getToggleState();
-        const auto amber = juce::Colour(0xfff0b429);
-        g.setColour(bypassed ? amber.withAlpha(0.22f) : hover ? paper::bg : paper::panel);
+        const auto amber = theme::amber;
+        g.setColour(bypassed ? amber.withAlpha(0.22f) : hover ? theme::bg : theme::panel);
         g.fillRoundedRectangle(b, 6.f);
-        g.setColour(bypassed ? amber : paper::line);
+        g.setColour(bypassed ? amber : theme::line);
         g.drawRoundedRectangle(b, 6.f, 1.f);
 
-        const auto c = bypassed ? amber : paper::accent.withAlpha(hover ? 1.f : 0.9f);
+        const auto c = bypassed ? amber : theme::accent.withAlpha(hover ? 1.f : 0.9f);
         const auto ctr = b.getCentre();
         const float r = 6.5f;
         if (bypassed)   // a soft glow
@@ -315,15 +383,18 @@ public:
     void paintButton(juce::Graphics& g, bool hover, bool) override
     {
         const auto b = getLocalBounds().toFloat().reduced(0.5f);
-        const auto amber = juce::Colour(0xfff0b429);
-        const auto c = state == 0 ? paper::sub.withAlpha(hover ? 0.9f : 0.6f) : state == 1 ? paper::accent : amber;
-        g.setColour(state == 0 ? (hover ? paper::bg : paper::panel) : c.withAlpha(0.2f));
+        const auto amber = theme::amber;
+        const auto c = state == 0 ? theme::sub.withAlpha(hover ? 0.9f : 0.6f) : state == 1 ? theme::accent : amber;
+        g.setColour(state == 0 ? (hover ? theme::bg : theme::panel) : c.withAlpha(0.2f));
         g.fillRoundedRectangle(b, 6.f);
-        g.setColour(state == 0 ? paper::line : c);
+        g.setColour(state == 0 ? theme::line : c);
         g.drawRoundedRectangle(b, 6.f, 1.f);
         g.setColour(c);
-        g.setFont(juce::Font(juce::FontOptions(10.5f, juce::Font::bold)));
-        g.drawText(state == 0 ? "CLIP" : state == 1 ? "SOFT" : "HARD", getLocalBounds(), juce::Justification::centred);
+        auto words = getLocalBounds().toFloat().reduced(1.f, 3.f);
+        g.setFont(fonts::regular(8.5f));
+        g.drawText("Clipper", words.removeFromTop(words.getHeight() * 0.45f), juce::Justification::centred, false);
+        g.setFont(fonts::semibold(11.f));
+        g.drawText(state == 0 ? "Off" : state == 1 ? "Soft" : "Hard", words, juce::Justification::centred, false);
     }
 
 private:
@@ -384,7 +455,7 @@ private:
         auto m = buildMenu();
         m.setLookAndFeel(&getLookAndFeel());   // the menu is its own native window, so give it our font and colours explicitly
         juce::Component::SafePointer<ResetClickSlider> safe(this);
-        m.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea(juce::Rectangle<int>(at, at).expanded(1)),
+        m.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea(juce::Rectangle<int>(at, at).expanded(1)).withDeletionCheck(*this),
                         [safe](int r) { // the DAW's items report -1 and have already run their own action
                             if (safe == nullptr) return;
                             if (r == 1) safe->showTypeBox();
@@ -425,23 +496,29 @@ public:
 
         juce::Path track, value;
         track.addCentredArc(c.x, c.y, r, r, 0.f, -sweep, sweep, true);
-        g.setColour(paper::line);
+        g.setColour(theme::dialTrack);
         g.strokePath(track, juce::PathStrokeType(2.f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         if (std::abs(angle) > 0.01f)   // lit from straight up (0 dB) to where the knob is
         {
             value.addCentredArc(c.x, c.y, r, r, 0.f, juce::jmin(0.f, angle), juce::jmax(0.f, angle), true);
-            g.setColour(paper::accent);
+            g.setColour(theme::accent);
             g.strokePath(value, juce::PathStrokeType(2.f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         }
-        g.setColour(paper::panel);
-        g.fillEllipse(juce::Rectangle<float>(2.f * (r - 2.5f), 2.f * (r - 2.5f)).withCentre(c));
-        g.setColour(hot ? paper::accent : paper::text.withAlpha(0.85f));
+        const float face = r - 2.5f; // the same face as the big knobs
+        {
+            const auto disc = juce::Rectangle<float>(face * 2.f, face * 2.f).withCentre(c);
+            g.setGradientFill(juce::ColourGradient(theme::dialTop, c.x, disc.getY(), theme::dialBottom, c.x, disc.getBottom(), false));
+            g.fillEllipse(disc);
+            g.setColour(hot ? theme::sub : theme::line.brighter(theme::dark ? 0.12f : 0.f));
+            g.drawEllipse(disc.reduced(0.5f), 1.f);
+        }
+        g.setColour(hot ? theme::accent : theme::text.withAlpha(0.9f));
         const juce::Point<float> dir(std::sin(angle), -std::cos(angle));
         g.drawLine({ c + dir * 1.f, c + dir * (r - 1.5f) }, 1.8f);
 
         const double v = getValue();
         const juce::String text = std::abs(v) < 0.05 ? juce::String("0.0") : (v > 0.0 ? "+" : "") + juce::String(v, 1);
-        g.setColour(hot ? paper::text : paper::sub);
+        g.setColour(hot ? theme::text : theme::sub);
         g.setFont(fonts::regular(9.f));
         g.drawFittedText(text, readout.toNearestInt(), juce::Justification::centred, 1, 0.8f);
     }
@@ -480,10 +557,6 @@ public:
         g.drawText(l.getText().toUpperCase(), l.getLocalBounds(), l.getJustificationType(), false);
     }
 
-    juce::Font getLabelFont(juce::Label&) override { return fonts::regular(13.f); }
-    juce::Font getTextButtonFont(juce::TextButton&, int) override { return fonts::semibold(13.f); }
-    juce::Font getPopupMenuFont() override { return fonts::regular(13.f); }
-
     // The value readout under a knob: when you type into it, the editor is a narrow, centred box in the caption font
     struct ValueLabel : public juce::Label
     {
@@ -503,6 +576,73 @@ public:
             return ed;
         }
     };
+    juce::Font getLabelFont(juce::Label& l) override
+    {
+        return dynamic_cast<ValueLabel*>(&l) != nullptr ? fonts::semibold(theme::type::value) : fonts::regular(theme::type::control);
+    }
+    juce::Font getTextButtonFont(juce::TextButton&, int) override { return fonts::semibold(13.f); }
+    juce::Font getPopupMenuFont() override { return fonts::regular(12.5f); }
+
+    // ---- menus (dropdowns, split slopes, knob right-clicks): a rounded dark card in the interface font, generous rows,
+    // a soft highlight under the mouse, and the current choice in bold
+    int getPopupMenuBorderSize() override { return 5; }
+
+    void getIdealPopupMenuItemSize(const juce::String& text, bool isSeparator, int, int& idealWidth, int& idealHeight) override
+    {
+        if (isSeparator) { idealWidth = 60; idealHeight = 9; return; }
+        juce::GlyphArrangement ga;
+        ga.addLineOfText(fonts::semibold(12.5f), text, 0.f, 0.f);
+        idealWidth = (int) std::ceil(ga.getBoundingBox(0, -1, true).getWidth()) + 26; // just the margins
+        idealHeight = 27;
+    }
+
+    void drawPopupMenuBackground(juce::Graphics& g, int width, int height) override
+    {
+        const auto b = juce::Rectangle<float>(0.f, 0.f, (float) width, (float) height);
+        g.setColour(theme::raised);
+        g.fillRoundedRectangle(b, 8.f);
+        g.setColour(theme::line.brighter(theme::dark ? 0.18f : 0.f));
+        g.drawRoundedRectangle(b.reduced(0.5f), 8.f, theme::size::border);
+    }
+
+    void drawPopupMenuItem(juce::Graphics& g, const juce::Rectangle<int>& area, bool isSeparator, bool isActive, bool isHighlighted,
+                           bool isTicked, bool hasSubMenu, const juce::String& text, const juce::String& shortcut,
+                           const juce::Drawable*, const juce::Colour*) override
+    {
+        if (isSeparator)
+        {
+            g.setColour(theme::line);
+            g.fillRect(area.reduced(8, 0).withSizeKeepingCentre(area.getWidth() - 16, 1));
+            return;
+        }
+        const auto row = area.toFloat().reduced(1.f, 1.f);
+        const bool hot = isHighlighted && isActive;
+        if (hot || isTicked)
+        {
+            g.setColour(theme::accent.withAlpha(hot ? 0.17f : 0.10f));
+            g.fillRoundedRectangle(row, theme::size::radius);
+        }
+        auto inner = area.reduced(12, 0);
+        const auto colour = !isActive ? theme::muted : hot || isTicked ? theme::text : theme::text.withAlpha(0.82f);
+        g.setColour(colour);
+        if (hasSubMenu)
+        {
+            juce::Path arrow;
+            const auto c = inner.removeFromRight(10).toFloat().getCentre();
+            arrow.startNewSubPath(c.x - 1.5f, c.y - 3.5f);
+            arrow.lineTo(c.x + 2.f, c.y);
+            arrow.lineTo(c.x - 1.5f, c.y + 3.5f);
+            g.strokePath(arrow, juce::PathStrokeType(1.4f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        }
+        g.setFont(isTicked ? fonts::semibold(12.5f) : fonts::regular(12.5f));
+        g.drawFittedText(text, inner, juce::Justification::centredLeft, 1, 0.9f);
+        if (shortcut.isNotEmpty())
+        {
+            g.setColour(theme::sub);
+            g.drawText(shortcut, inner, juce::Justification::centredRight, false);
+        }
+    }
+
     juce::Label* createSliderTextBox(juce::Slider& s) override
     {
         if (s.getSliderStyle() == juce::Slider::RotaryHorizontalVerticalDrag)
@@ -512,64 +652,108 @@ public:
             l->setKeyboardType(juce::TextInputTarget::decimalKeyboard);
             l->setColour(juce::Label::textColourId, s.findColour(juce::Slider::textBoxTextColourId));
             l->setColour(juce::Label::textWhenEditingColourId, s.findColour(juce::Slider::textBoxTextColourId));
-            l->setColour(juce::Label::outlineWhenEditingColourId, paper::accent);
+            l->setColour(juce::Label::outlineWhenEditingColourId, theme::accent);
             return l;
         }
         return LookAndFeel_V4::createSliderTextBox(s);
     }
 
-    // (re)load the theme colours; call after paper::setDark(), then sendLookAndFeelChange() on the editor
+    // (re)load the theme colours; call after theme::setDark(), then sendLookAndFeelChange() on the editor
     void applyColours()
     {
         using namespace juce;
-        setColour(Slider::textBoxTextColourId, paper::text);
+        setColour(Slider::textBoxTextColourId, theme::text);
         setColour(Slider::textBoxOutlineColourId, Colours::transparentBlack);
-        setColour(Label::textColourId, paper::sub);
-        setColour(ComboBox::textColourId, paper::text);
-        setColour(ComboBox::outlineColourId, paper::line);
-        setColour(ComboBox::backgroundColourId, paper::panel);
-        setColour(ComboBox::arrowColourId, paper::sub);
-        setColour(PopupMenu::backgroundColourId, paper::panel);
-        setColour(PopupMenu::textColourId, paper::text);
-        setColour(PopupMenu::highlightedBackgroundColourId, paper::accent);
-        setColour(PopupMenu::highlightedTextColourId, Colours::white);
-        setColour(TextButton::textColourOffId, paper::text);
-        setColour(TextButton::textColourOnId, Colours::white);
-        setColour(ToggleButton::textColourId, paper::sub);
+        setColour(Label::textColourId, theme::sub);
+        setColour(ComboBox::textColourId, theme::text);
+        setColour(ComboBox::outlineColourId, theme::line);
+        setColour(ComboBox::backgroundColourId, theme::panel);
+        setColour(ComboBox::arrowColourId, theme::sub);
+        setColour(PopupMenu::backgroundColourId, theme::raised.withAlpha(0.996f)); // not quite opaque: lets the corners be round
+        setColour(PopupMenu::textColourId, theme::text);
+        setColour(PopupMenu::highlightedBackgroundColourId, theme::accent.withAlpha(0.16f));
+        setColour(PopupMenu::highlightedTextColourId, theme::text);
+        setColour(TextButton::textColourOffId, theme::text);
+        setColour(TextButton::textColourOnId, theme::onAccent);
+        setColour(ToggleButton::textColourId, theme::sub);
     }
 
-    void drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, float pos,
-                          float startAngle, float endAngle, juce::Slider&) override
+    // What colour a knob's value is drawn in: a band's own colour when it edits that band, otherwise the neutral accent
+    // (a single curve, a linked "all bands" control, a view setting)
+    static void setKnobBand(juce::Slider& knob, int band)
     {
-        auto b = juce::Rectangle<float>((float) x, (float) y, (float) w, (float) h).reduced(6.f);
-        const float r = juce::jmin(b.getWidth(), b.getHeight()) * 0.5f - 3.f;
-        const auto c = b.getCentre();
+        if ((int) knob.getProperties().getWithDefault("band", -1) == band) return;
+        knob.getProperties().set("band", band);
+        knob.repaint();
+    }
+    static juce::Colour knobTint(const juce::Slider& knob)
+    {
+        const int band = knob.getProperties().getWithDefault("band", -1);
+        return band >= 0 ? theme::bandColour(band) : theme::accent;
+    }
+
+    // The face of a knob: a dark disc lit from above, with a rim that answers to the mouse
+    static void drawDialFace(juce::Graphics& g, juce::Point<float> c, float radius, juce::Colour tint, bool hover, bool dragging)
+    {
+        const auto disc = juce::Rectangle<float>(radius * 2.f, radius * 2.f).withCentre(c);
+        g.setGradientFill(juce::ColourGradient(theme::dialTop, c.x, disc.getY(), theme::dialBottom, c.x, disc.getBottom(), false));
+        g.fillEllipse(disc);
+        g.setColour(dragging ? tint.withAlpha(0.8f) : hover ? theme::sub.withAlpha(0.75f) : theme::line.brighter(theme::dark ? 0.12f : 0.f));
+        g.drawEllipse(disc.reduced(0.5f), theme::size::border);
+        juce::Path shine; // 1 px along the top edge
+        shine.addCentredArc(c.x, c.y, radius - 1.5f, radius - 1.5f, 0.f, -1.1f, 1.1f, true);
+        g.setColour(juce::Colours::white.withAlpha(theme::dark ? (hover || dragging ? 0.17f : 0.10f) : 0.8f));
+        g.strokePath(shine, juce::PathStrokeType(1.f));
+    }
+
+    // Three layers: a thin track for the whole range, a slim arc up to the value, and the face with its indicator
+    void drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, float pos,
+                          float startAngle, float endAngle, juce::Slider& slider) override
+    {
+        const auto area = juce::Rectangle<float>((float) x, (float) y, (float) w, (float) h);
+        const float room = juce::jmin(area.getWidth(), area.getHeight()) - 2.f;
+        const float diameter = juce::jmin(room, (float) slider.getProperties().getWithDefault("dial", room));
+        const float r = diameter * 0.5f;
+        const auto c = area.getCentre();
         const float angle = startAngle + pos * (endAngle - startAngle);
+        const auto tint = knobTint(slider);
+        const bool dragging = slider.isMouseButtonDown(), hover = slider.isMouseOverOrDragging();
 
+        const float arcRadius = r - 1.5f;
+        const juce::PathStrokeType thin(2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
         juce::Path track, value;
-        track.addCentredArc(c.x, c.y, r, r, 0.f, startAngle, endAngle, true);
-        value.addCentredArc(c.x, c.y, r, r, 0.f, startAngle, angle, true);
-        g.setColour(paper::track);
-        g.strokePath(track, juce::PathStrokeType(4.f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
-        g.setColour(paper::accent);
-        g.strokePath(value, juce::PathStrokeType(4.f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        track.addCentredArc(c.x, c.y, arcRadius, arcRadius, 0.f, startAngle, endAngle, true);
+        g.setColour(theme::dialTrack);
+        g.strokePath(track, thin);
+        if (angle - startAngle > 0.01f)
+        {
+            value.addCentredArc(c.x, c.y, arcRadius, arcRadius, 0.f, startAngle, angle, true);
+            if (dragging) // a little light around the arc, only while the knob is held
+            {
+                g.setColour(tint.withAlpha(0.18f));
+                g.strokePath(value, juce::PathStrokeType(5.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+            }
+            g.setColour(dragging ? tint.brighter(0.2f) : tint.withAlpha(hover ? 1.f : 0.9f));
+            g.strokePath(value, thin);
+        }
 
-        const float a = angle - juce::MathConstants<float>::halfPi;
-        g.setColour(paper::text);
-        g.drawLine(c.x + std::cos(a) * r * 0.35f, c.y + std::sin(a) * r * 0.35f,
-                   c.x + std::cos(a) * (r - 4.f), c.y + std::sin(a) * (r - 4.f), 2.f);
+        const float face = r - 5.5f;
+        drawDialFace(g, c, face, tint, hover, dragging);
+        const juce::Point<float> dir(std::sin(angle), -std::cos(angle));
+        g.setColour(dragging ? tint.brighter(0.25f) : theme::text);
+        g.drawLine({ c + dir * (face * 0.42f), c + dir * (face - 2.f) }, 2.f);
     }
 
     void drawToggleButton(juce::Graphics& g, juce::ToggleButton& bt, bool, bool) override
     {
         auto b = bt.getLocalBounds().toFloat();
         auto sw = b.removeFromRight(30.f).withSizeKeepingCentre(28.f, 14.f);
-        g.setColour(bt.getToggleState() ? paper::accent : paper::track);
+        g.setColour(bt.getToggleState() ? theme::accent : theme::track);
         g.fillRoundedRectangle(sw, 7.f);
         const float knobX = bt.getToggleState() ? sw.getRight() - 12.f : sw.getX() + 2.f;
-        g.setColour(juce::Colours::white);
+        g.setColour(bt.getToggleState() ? theme::onAccent : theme::text);
         g.fillEllipse(knobX, sw.getY() + 2.f, 10.f, 10.f);
-        g.setColour(paper::sub);
+        g.setColour(theme::sub);
         g.setFont(fonts::regular(13.f));
         g.drawText(bt.getButtonText(), b.withTrimmedRight(6.f), juce::Justification::centredRight);
     }
@@ -578,23 +762,31 @@ public:
     {
         auto b = bt.getLocalBounds().toFloat().reduced(0.5f);
         const bool on = bt.getToggleState();
-        g.setColour(on ? paper::accent : down ? paper::track : hover ? paper::bg : paper::panel);
-        g.fillRoundedRectangle(b, 6.f);
-        g.setColour(on ? paper::accent : paper::line);
-        g.drawRoundedRectangle(b, 6.f, 1.f);
+        if (bt.getProperties().contains("quiet") && !hover && !down)
+        {
+            g.setColour(theme::line);
+            g.drawRoundedRectangle(b, theme::size::radius, theme::size::border);
+            return;
+        }
+        g.setColour(on ? theme::accent : down ? theme::track : hover ? theme::raised : theme::panel);
+        g.fillRoundedRectangle(b, theme::size::radius);
+        g.setColour(on ? theme::accent : theme::line);
+        g.drawRoundedRectangle(b, theme::size::radius, theme::size::border);
     }
 
     void drawComboBox(juce::Graphics& g, int w, int h, bool, int, int, int, int, juce::ComboBox&) override
     {
         auto b = juce::Rectangle<float>(0.f, 0.f, (float) w, (float) h).reduced(0.5f);
-        g.setColour(paper::panel);
-        g.fillRoundedRectangle(b, 6.f);
-        g.setColour(paper::line);
-        g.drawRoundedRectangle(b, 6.f, 1.f);
+        g.setColour(theme::panel);
+        g.fillRoundedRectangle(b, theme::size::radius);
+        g.setColour(theme::line);
+        g.drawRoundedRectangle(b, theme::size::radius, theme::size::border);
+        g.setColour(theme::ink(0.06f)); // a 1 px top highlight: just enough depth
+        g.fillRect(b.reduced(theme::size::radius, 0.f).withHeight(1.f).translated(0.f, 1.f));
         juce::Path p;
         const float cx = (float) w - 14.f, cy = (float) h * 0.5f;
         p.startNewSubPath(cx - 4.f, cy - 2.f); p.lineTo(cx, cy + 2.f); p.lineTo(cx + 4.f, cy - 2.f);
-        g.setColour(paper::sub);
+        g.setColour(theme::sub);
         g.strokePath(p, juce::PathStrokeType(1.5f));
     }
 
@@ -610,9 +802,9 @@ public:
             return;
         }
         auto b = juce::Rectangle<float>((float) x, (float) y, (float) w, (float) h).reduced(0.5f);
-        g.setColour(s.isMouseOverOrDragging() ? paper::bg : paper::panel);
+        g.setColour(s.isMouseOverOrDragging() ? theme::bg : theme::panel);
         g.fillRoundedRectangle(b, 6.f);
-        g.setColour(s.isMouseButtonDown() ? paper::accent : paper::line);
+        g.setColour(s.isMouseButtonDown() ? theme::accent : theme::line);
         g.drawRoundedRectangle(b, 6.f, 1.f);
     }
 };

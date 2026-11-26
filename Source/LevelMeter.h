@@ -4,10 +4,10 @@
 #include "PaperLookAndFeel.h"
 #include "Fonts.h"
 
-// An analog-style peak meter: a stack of small squares that light up from the bottom. Mostly green, then five yellow ones,
-// and a single red square at the very top (lit at about 0 dBFS). Loud material lives in the top third, so the squares there are
-// only 1.5 dB apart. Every square, the red one too, follows the signal: lit while the level is above it, dark as soon as it falls
-// below (the fall, 80 dB/s, is done on the audio thread). This just reads the value and redraws when a square changes.
+// A studio-style peak meter: one narrow bar in a thin frame, cut into fine segments, with a clip lamp above it. The colour
+// belongs to the level, not to the bar: muted green, turning yellow and then orange near the top; the lamp is red and lights
+// at about 0 dBFS. Everything follows the signal (the 80 dB/s fall is done on the audio thread; there is no peak hold).
+// This just reads the value and redraws when the bar moves by half a decibel.
 class LevelMeter : public juce::Component
 {
 public:
@@ -15,55 +15,67 @@ public:
     {
         setInterceptsMouseClicks(false, false);
     }
-    static constexpr int segments = 26;       // 20 green, 5 yellow, 1 red
-    static constexpr float stepDb = 1.5f;
-    static constexpr float redDb = -0.5f;     // the top (red) square lights from here; every square below is stepDb lower
-    static float thresholdDb(int i) { return redDb - stepDb * (float) (segments - 1 - i); }
+    static constexpr float bottomDb = -38.f;  // an empty bar
+    static constexpr float redDb = -0.5f;     // the clip lamp lights from here, and the bar is full
+    static constexpr float stepDb = 0.5f;
+    static constexpr int steps = 75;          // (redDb - bottomDb) / stepDb
 
     void paint(juce::Graphics& g) override
     {
-        const auto b = getLocalBounds().toFloat();
-        g.setColour(paper::bg);
-        g.fillRoundedRectangle(b, 5.f);
+        auto b = getLocalBounds().toFloat();
+        g.setColour(theme::sub);
+        g.setFont(fonts::semibold(8.5f).withExtraKerningFactor(0.04f));
+        g.drawText(label, b.removeFromTop(13.f), juce::Justification::centred);
+        b.removeFromTop(1.f);
 
-        g.setColour(paper::sub.withAlpha(0.8f));
-        g.setFont(fonts::semibold(8.5f));
-        g.drawText(label, b.withHeight(12.f).translated(0.f, 2.f), juce::Justification::centred);
+        const auto frame = b.withSizeKeepingCentre(12.f, b.getHeight());
+        g.setColour(theme::bg);
+        g.fillRoundedRectangle(frame, 2.5f);
+        g.setColour(theme::line);
+        g.drawRoundedRectangle(frame.reduced(0.5f), 2.5f, 1.f);
 
-        const auto area = b.withTrimmedTop(17.f).reduced(3.f, 5.f);
-        const float gap = 1.5f, cell = (area.getHeight() - gap * (segments - 1)) / (float) segments;
-        const float w = juce::jmin(area.getWidth(), 10.f);
-        const float x = area.getCentreX() - w * 0.5f;
-        for (int i = 0; i < segments; ++i)
+        auto inside = frame.reduced(2.5f);
+        const auto lamp = inside.removeFromTop(4.f);
+        inside.removeFromTop(2.f);
+        g.setColour(lit >= steps ? theme::levelOver : theme::levelOver.withAlpha(theme::dark ? 0.2f : 0.18f));
+        g.fillRect(lamp);
+
+        // the scale beside the bar: quiet ticks at -6, -12, -24 and -36 dB
+        g.setColour(theme::muted.withAlpha(0.8f));
+        for (const float db : { -6.f, -12.f, -24.f, -36.f })
         {
-            const bool red = i == segments - 1, yellow = i >= segments - 6 && !red;
-            const auto on = red ? juce::Colour(0xffff4d4d) : yellow ? juce::Colour(0xfff0b429) : juce::Colour(0xff39c46a);
-            const bool lit = i < litSegments;
-            const float y = area.getBottom() - (float) (i + 1) * cell - (float) i * gap;
-            const auto r = juce::Rectangle<float>(x, y, w, cell);
-            if (lit)   // a soft glow: a few wider, fainter squares underneath
-                for (const auto glow : { std::pair<float, float> { 3.5f, 0.07f }, { 2.4f, 0.12f }, { 1.3f, 0.2f } })
-                {
-                    g.setColour(on.withAlpha(glow.second * (paper::dark ? 1.4f : 0.9f)));
-                    g.fillRoundedRectangle(r.expanded(glow.first, glow.first * 0.7f), 1.5f + glow.first);
-                }
-            g.setColour(lit ? on.brighter(0.1f) : on.withAlpha(paper::dark ? 0.13f : 0.16f));
-            g.fillRoundedRectangle(r, 1.5f);
+            const float y = std::floor(inside.getBottom() - inside.getHeight() * (db - bottomDb) / (redDb - bottomDb));
+            g.fillRect(juce::Rectangle<float>(frame.getX() - 3.f, y, 2.f, 1.f));
+            g.fillRect(juce::Rectangle<float>(frame.getRight() + 1.f, y, 2.f, 1.f));
         }
+
+        if (lit <= 0) return;
+        auto at = [](float db) { return (double) juce::jlimit(0.f, 1.f, (db - bottomDb) / (redDb - bottomDb)); };
+        juce::ColourGradient fill(theme::levelLow, 0.f, inside.getBottom(), theme::levelNear, 0.f, inside.getY(), false);
+        fill.addColour(at(-18.f), theme::levelNormal);
+        fill.addColour(at(-9.f), theme::levelNormal);
+        fill.addColour(at(-6.f), theme::levelHigh);
+        fill.addColour(at(-2.5f), theme::levelNear);
+        const float height = inside.getHeight() * (float) juce::jmin(lit, steps) / (float) steps;
+        g.setGradientFill(fill);
+        g.fillRect(inside.withTop(inside.getBottom() - height));
+
+        g.setColour(theme::bg.withAlpha(0.85f)); // fine segments: a 1 px cut every 3 px
+        for (float y = inside.getBottom() - 3.f; y > inside.getBottom() - height; y -= 3.f)
+            g.fillRect(juce::Rectangle<float>(inside.getX(), y, inside.getWidth(), 1.f));
     }
 
     void animate() // one step of the editor's animation clock
     {
         const float lin = (output ? proc.meterOut : proc.meterIn).load(std::memory_order_relaxed);
         const float db = lin > 1e-5f ? 20.f * std::log10(lin) : -120.f;
-        int lit = 0;
-        for (int i = 0; i < segments; ++i) if (db >= thresholdDb(i)) lit = i + 1;
-        if (lit != litSegments) { litSegments = lit; repaint(); }
+        const int now = db >= redDb ? steps : db <= bottomDb ? 0 : juce::jmin(steps - 1, (int) ((db - bottomDb) / stepDb) + 1);
+        if (now != lit) { lit = now; repaint(); }
     }
 
 private:
     FreeLfoProcessor& proc;
     const bool output;
     const juce::String label;
-    int litSegments = 0;
+    int lit = 0; // how much of the bar is on, in steps of half a decibel; "steps" also lights the clip lamp
 };

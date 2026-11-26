@@ -1,5 +1,6 @@
 #include "Fonts.h"
 #include "MultibandPanel.h"
+#include "ControlStrip.h"
 
 namespace
 {
@@ -36,7 +37,7 @@ int BandStrip::signature() const
     const auto v = [this](const char* id) { return proc.apvts.getRawParameterValue(id)->load(); };
     return (int) (v("xLow") * 3.f + v("xHigh") * 7.f + v("mbBands") * 100003.f
                   + (v("soloL") + v("soloM") * 2.f + v("soloH") * 4.f) * 7919.f
-                  + v("mbEngine") * 500009.f + v("slopeLow") * 1009.f + v("slopeHigh") * 2003.f + (float) paper::version * 31337.f);
+                  + v("mbEngine") * 500009.f + v("slopeLow") * 1009.f + v("slopeHigh") * 2003.f + (float) theme::version * 31337.f);
 }
 
 void BandStrip::animate()
@@ -128,21 +129,23 @@ void BandStrip::drawSpectrum(juce::Graphics& g, float plotTop, float plotBottom)
     if (!specLive || specDb.empty()) return;
     juce::Path fill;
     const auto inLine = spectrumPath(specDb, plotTop, plotBottom, &fill);
-    g.setColour(paper::ink(0.15f));
+    g.setColour(theme::ink(0.15f));
     g.fillPath(fill);
-    g.setColour(paper::ink(0.42f));
+    g.setColour(theme::ink(0.42f));
     g.strokePath(inLine, juce::PathStrokeType(1.f));
 
     // after the plugin: a bright line, so you can see what the ducking does to the balance
-    g.setColour(paper::accent.withAlpha(0.9f));
+    g.setColour(theme::accent.withAlpha(0.9f));
     g.strokePath(spectrumPath(specDbOut, plotTop, plotBottom, nullptr), juce::PathStrokeType(1.4f));
 
     // tiny legend
     const float xr = freqToX(maxHz) - 6.f, y = plotBottom - 12.f;
+    g.setColour(theme::bg.withAlpha(0.88f)); // so the spectrum lines don't run through the words
+    g.fillRoundedRectangle({ xr - 56.f, y - 1.f, 60.f, 12.f }, theme::size::radiusSmall);
     g.setFont(fonts::regular(9.5f));
-    g.setColour(paper::accent);
+    g.setColour(theme::accent);
     g.drawText("OUT", juce::Rectangle<float>(xr - 30.f, y, 30.f, 10.f), juce::Justification::centredRight);
-    g.setColour(paper::ink(0.55f));
+    g.setColour(theme::ink(0.55f));
     g.drawText("IN", juce::Rectangle<float>(xr - 62.f, y, 24.f, 10.f), juce::Justification::centredRight);
 }
 
@@ -178,7 +181,7 @@ juce::Rectangle<float> BandStrip::soloChip(float regionRight) const
 // The small pill in the middle of a split line: shows that split's slope, click it to change it
 juce::Rectangle<float> BandStrip::slopeChip(float splitX) const
 {
-    return { splitX - 27.f, (float) getHeight() * 0.5f - 9.f, 54.f, 18.f };
+    return { splitX - 31.f, (float) getHeight() * 0.5f - 10.f, 62.f, 20.f };
 }
 
 void BandStrip::plotArea(float& top, float& bottom) const
@@ -187,27 +190,33 @@ void BandStrip::plotArea(float& top, float& bottom) const
     bottom = (float) getHeight() - 3.f; // the curves use the whole strip
 }
 
+juce::PopupMenu BandStrip::slopeMenu(int current)
+{
+    const char* names[numSlopes] = { "6 dB/oct", "12 dB/oct", "24 dB/oct", "48 dB/oct", "72 dB/oct", "96 dB/oct" };
+    juce::PopupMenu menu;
+    for (int i = 0; i < numSlopes; ++i) menu.addItem(i + 1, names[i], true, i == current);
+    return menu;
+}
+
 void BandStrip::openSlopeMenu(int split)
 {
     const char* id = split == 0 ? "slopeLow" : "slopeHigh";
-    const int current = juce::roundToInt(proc.apvts.getRawParameterValue(id)->load());
-    const char* names[numSlopes] = { "6 dB/oct", "12 dB/oct", "24 dB/oct", "48 dB/oct", "72 dB/oct", "96 dB/oct" };
-
-    juce::PopupMenu menu;
-    for (int i = 0; i < numSlopes; ++i) menu.addItem(i + 1, names[i], true, i == current);
+    auto menu = slopeMenu(juce::roundToInt(proc.apvts.getRawParameterValue(id)->load()));
+    menu.setLookAndFeel(&getLookAndFeel()); // a menu is its own window: without this it gets JUCE's stock grey one
 
     const double hz = splitHz(split);
     const auto area = localAreaToGlobal(slopeChip(freqToX(hz)).toNearestInt());
     juce::Component::SafePointer<BandStrip> safe(this);
-    menu.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea(area), [safe, id](int result) {
+    menu.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea(area.expanded(0, 3)).withDeletionCheck(*this),
+                       [safe, id](int result) {
         if (safe != nullptr && result > 0) { setParam(safe->proc.apvts, id, (float) (result - 1)); safe->repaint(); }
     });
 }
 
 void BandStrip::paint(juce::Graphics& g)
 {
-    g.setColour(paper::bg);
-    g.fillRoundedRectangle(getLocalBounds().toFloat(), 6.f);
+    g.setColour(theme::bg);
+    g.fillRoundedRectangle(getLocalBounds().toFloat(), theme::size::radius);
 
     int count = 0;
     const auto regs = regions(count);
@@ -223,26 +232,32 @@ void BandStrip::paint(juce::Graphics& g)
         const auto& r = regs[(size_t) i];
         const auto area = juce::Rectangle<float>(r.x0, 1.f, r.x1 - r.x0, h - 2.f);
         const bool sel = r.band == selected;
-        g.setColour(paper::bandColour(r.band).withAlpha(sel ? 0.16f : 0.07f));
+        g.setColour(theme::bandColour(r.band).withAlpha(sel ? 0.17f : 0.05f));
         g.fillRect(area);
-        if (sel) { g.setColour(paper::bandColour(r.band).withAlpha(0.7f)); g.drawRect(area, 1.5f); }
+        if (sel) // a solid bar along the top and a fine frame: which band is being edited is never in doubt
+        {
+            g.setColour(theme::bandColour(r.band).withAlpha(0.55f));
+            g.drawRect(area, theme::size::border);
+            g.setColour(theme::bandColour(r.band));
+            g.fillRect(area.withHeight(3.f));
+        }
     }
 
     // octave guides + the -6 dB line where Linkwitz-Riley bands cross
     for (double f : { 50.0, 100.0, 200.0, 500.0, 1000.0, 2000.0, 5000.0, 10000.0 })
     {
-        g.setColour(paper::ink(0.05f));
+        g.setColour(theme::ink(0.05f));
         g.drawVerticalLine((int) freqToX(f), 0.f, h);
     }
     const bool dyn = dynamicEq();
     if (! dyn)
     {
         const float y6 = plotTop + (plotBottom - plotTop) * (6.f / 36.f);
-        g.setColour(paper::ink(0.10f));
+        g.setColour(theme::ink(0.10f));
         g.drawHorizontalLine((int) y6, freqToX(minHz), freqToX(maxHz));
-        g.setColour(paper::sub.withAlpha(0.8f));
+        g.setColour(theme::sub.withAlpha(0.8f));
         g.setFont(fonts::regular(10.f));
-        g.drawText("-6 dB", juce::Rectangle<float>(freqToX(minHz) + 4.f, y6 - 12.f, 40.f, 11.f), juce::Justification::centredLeft);
+        g.drawText("-6 dB", juce::Rectangle<float>(freqToX(minHz) + 4.f, y6 + 3.f, 40.f, 11.f), juce::Justification::centredLeft);
     }
 
     drawSpectrum(g, plotTop, plotBottom);
@@ -287,10 +302,10 @@ void BandStrip::paint(juce::Graphics& g)
                 fill.lineTo(xb, plotBottom);
                 fill.closeSubPath();
                 const bool sel = band == selected;
-                g.setColour(paper::bandColour(band).withAlpha(sel ? 0.26f : 0.16f));
+                g.setColour(theme::bandColour(band).withAlpha(sel ? 0.24f : 0.10f));
                 g.fillPath(fill);
-                g.setColour(paper::strong(paper::bandColour(band)).withAlpha(sel ? 1.f : 0.75f));
-                g.strokePath(line, juce::PathStrokeType(sel ? 2.f : 1.3f));
+                g.setColour(theme::strong(theme::bandColour(band)).withAlpha(sel ? 1.f : 0.6f));
+                g.strokePath(line, juce::PathStrokeType(sel ? 2.f : 1.2f));
             }
     }
 
@@ -299,15 +314,15 @@ void BandStrip::paint(juce::Graphics& g)
         const auto& r = regs[(size_t) i];
         const auto area = juce::Rectangle<float>(r.x0, 1.f, r.x1 - r.x0, h - 2.f);
         const bool sel = r.band == selected;
-        g.setColour(paper::text.withAlpha(sel ? 0.9f : 0.55f));
-        g.setFont(fonts::semibold(13.f));
-        g.drawText(names[r.band], area.withTrimmedLeft(8.f).withHeight(24.f), juce::Justification::centredLeft);
+        g.setColour(sel ? theme::bandText(r.band) : theme::bandColour(r.band).withAlpha(0.75f));
+        g.setFont(fonts::semibold(theme::type::label).withExtraKerningFactor(0.09f));
+        g.drawText(juce::String(names[r.band]).toUpperCase(), area.withTrimmedLeft(8.f).withTrimmedTop(2.f).withHeight(22.f), juce::Justification::centredLeft);
 
         const auto chip = soloChip(r.x1);
         const bool on = v((juce::String("solo") + FreeLfoProcessor::bandSuffix(r.band)).toRawUTF8()) > 0.5f;
-        g.setColour(on ? paper::accent : paper::panel);
+        g.setColour(on ? theme::accent : theme::panel);
         g.fillRoundedRectangle(chip, 4.f);
-        g.setColour(on ? juce::Colours::white : paper::sub);
+        g.setColour(on ? theme::onAccent : theme::sub);
         g.setFont(fonts::semibold(11.f));
         g.drawText("S", chip, juce::Justification::centred);
     }
@@ -318,27 +333,35 @@ void BandStrip::paint(juce::Graphics& g)
     {
         const double hz = splitHz(i);
         const float x = freqToX(hz);
-        g.setColour(paper::text.withAlpha(0.6f));
+        g.setColour(theme::text.withAlpha(0.6f));
         g.drawVerticalLine((int) x, 0.f, h);
 
         const auto chip = slopeChip(x);
         if (! dynamicEq())   // the Dynamic EQ has one fixed slope, so there is nothing to choose
         {
-            g.setColour(paper::panel);
-            g.fillRoundedRectangle(chip, 9.f);
-            g.setColour(paper::text.withAlpha(0.7f));
-            g.drawRoundedRectangle(chip, 9.f, 1.f);
-            g.setColour(paper::text);
+            g.setColour(theme::raised);
+            g.fillRoundedRectangle(chip, theme::size::radiusSmall);
+            g.setColour(theme::sub.withAlpha(0.6f));
+            g.drawRoundedRectangle(chip, theme::size::radiusSmall, theme::size::border);
+            g.setColour(theme::text);
             g.setFont(fonts::semibold(11.f));
-            g.drawText(slopeText[juce::jlimit(0, numSlopes - 1, juce::roundToInt(v(i == 0 ? "slopeLow" : "slopeHigh")))], chip, juce::Justification::centred);
+            g.drawText(slopeText[juce::jlimit(0, numSlopes - 1, juce::roundToInt(v(i == 0 ? "slopeLow" : "slopeHigh")))],
+                       chip.withTrimmedRight(11.f), juce::Justification::centred);
+            juce::Path chevron;
+            const juce::Point<float> c(chip.getRight() - 9.f, chip.getCentreY());
+            chevron.startNewSubPath(c.x - 3.f, c.y - 1.4f);
+            chevron.lineTo(c.x, c.y + 1.6f);
+            chevron.lineTo(c.x + 3.f, c.y - 1.4f);
+            g.setColour(theme::sub);
+            g.strokePath(chevron, juce::PathStrokeType(1.3f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
         }
 
         // No drag knob: the split line itself is the handle. The frequency chip sits at its foot.
         const auto label = juce::Rectangle<float>(x - 28.f, h - 22.f, 56.f, 15.f);
-        g.setColour(paper::bg.withAlpha(0.92f)); // keeps the split line from running through the text
+        g.setColour(theme::bg.withAlpha(0.92f)); // keeps the split line from running through the text
         g.fillRoundedRectangle(label, 4.f);
         g.setFont(fonts::semibold(11.f));
-        g.setColour(paper::sub);
+        g.setColour(theme::sub);
         g.drawText(hzText(hz), label, juce::Justification::centred);
     }
 }
@@ -439,11 +462,12 @@ MultibandPanel::MultibandPanel(FreeLfoProcessor& p) : proc(p), strip(p), curve(p
     addAndMakeVisible(outMeter);
     strip.onSelect = [this](int b) { selectBand(b); };
 
-    modeBox.addItemList({ "Sync", "Hz" }, 1);
+    addAndMakeVisible(modeBox);
     bandsBox.addItemList({ "2 bands", "3 bands" }, 1);
     engineBox.addItemList({ "Crossover", "Dynamic EQ" }, 1);
     engineBox.setTooltip("Crossover: splits the audio into bands. Steep, selectable slopes.\n"
-                         "Dynamic EQ: moving shelves, zero latency. No phase shift while the curves are open; gentle 12 dB slopes.");
+                         "Dynamic EQ: keeps the audio unchanged when the curves are fully open (gain knobs at 0 dB, clipper off),\n"
+                         "but separates the bands more gently.");
     for (auto* b : { &dotBtn, &tripBtn }) { b->setClickingTogglesState(true); b->onStateChange = [this] { rate.updateText(); }; addAndMakeVisible(*b); }
     dotBtn.onClick = [this] { if (dotBtn.getToggleState()) tripBtn.setToggleState(false, juce::sendNotificationSync); rate.updateText(); };
     tripBtn.onClick = [this] { if (tripBtn.getToggleState()) dotBtn.setToggleState(false, juce::sendNotificationSync); rate.updateText(); };
@@ -462,23 +486,23 @@ MultibandPanel::MultibandPanel(FreeLfoProcessor& p) : proc(p), strip(p), curve(p
     setup(offset, offsetL, "Offset");
     // the grey gain line follows these knobs: redraw as soon as one moves, even when no audio is running
     for (auto* k : { &depth, &smooth, &offset }) k->onValueChange = [this] { curve.repaint(); };
-    setup(wave, waveL, "Waveform");
+    setup(wave, waveL, "Audio view");
     smooth.setTextValueSuffix(" ms");
 
 
     struct { LinkButton* b; const char* what; const char* base; const char* id; std::unique_ptr<BA>* a; } links[] = {
-        { &linkDepthBtn, "depth", "depth", "linkDepth", &linkDepthA }, { &linkSmoothBtn, "smoothing", "smooth", "linkSmooth", &linkSmoothA },
-        { &linkOffsetBtn, "phase offset", "offset", "linkOffset", &linkOffsetA } };
+        { &linkDepthBtn, "Depth", "depth", "linkDepth", &linkDepthA }, { &linkSmoothBtn, "Smooth", "smooth", "linkSmooth", &linkSmoothA },
+        { &linkOffsetBtn, "Offset", "offset", "linkOffset", &linkOffsetA } };
     for (auto& l : links)
     {
-        l.b->setTooltip(juce::String("Link ") + l.what + ": every band follows one value");
+        l.b->setTooltip(juce::String("Use the same ") + l.what + " for all bands");
         addAndMakeVisible(*l.b);
         *l.a = std::make_unique<BA>(proc.apvts, l.id, *l.b);
         l.b->onClick = [this, b = l.b, base = l.base, id = l.id] { if (b->getToggleState()) copyToLinkSource(base, id); };
     }
     bandsA = std::make_unique<CA>(proc.apvts, "mbBands", bandsBox);
     engineA = std::make_unique<CA>(proc.apvts, "mbEngine", engineBox);
-    linkBtn.setTooltip("Link rates: every band shares one rate");
+    linkBtn.setTooltip("Use the same Rate for all bands");
     addAndMakeVisible(linkBtn);
     linkA = std::make_unique<BA>(proc.apvts, "mbLink", linkBtn);
     waveA = std::make_unique<SA>(proc.apvts, "waveOpacity", wave);
@@ -508,7 +532,7 @@ int MultibandPanel::signature() const
     const int eff = link ? (three ? 1 : 0) : selected;
     const juce::String es = FreeLfoProcessor::bandSuffix(eff);
     const int links = (v("linkDepth") > 0.5f ? 1 : 0) | (v("linkSmooth") > 0.5f ? 2 : 0) | (v("linkOffset") > 0.5f ? 4 : 0);
-    return (three ? 1 : 0) | (link ? 2 : 0) | (((int) v(("mode" + es).toRawUTF8())) << 2) | (selected << 3) | (links << 5) | (paper::version << 8);
+    return (three ? 1 : 0) | (link ? 2 : 0) | (((int) v(("mode" + es).toRawUTF8())) << 2) | (selected << 3) | (links << 5) | (theme::version << 8);
 }
 
 void MultibandPanel::timerCallback()
@@ -575,7 +599,14 @@ void MultibandPanel::rebind()
     curve.setSlot(selected + 1);
     strip.setSelected(selected);
 
+    // in the band's own colour while a knob edits that band, neutral while it drives all of them
+    PaperLookAndFeel::setKnobBand(rate, link ? -1 : selected);
+    PaperLookAndFeel::setKnobBand(depth, ld ? -1 : selected);
+    PaperLookAndFeel::setKnobBand(smooth, ls ? -1 : selected);
+    PaperLookAndFeel::setKnobBand(offset, lo ? -1 : selected);
+
     rateL.setText(link ? "Rate (all bands)" : "Rate", juce::dontSendNotification);
+    placeChains();
 
     lastSig = signature();
 }
@@ -585,38 +616,35 @@ void MultibandPanel::resized()
     auto r = getLocalBounds();
     strip.setBounds(r.removeFromTop(84));
     r.removeFromTop(8);
-    auto knobs = r.removeFromBottom(92);   // compact knobs: more room for the curve
+    auto knobs = r.removeFromBottom(controls::height);
+    knobs.removeFromRight(controls::meterColumn + controls::meterGap); // the gains and the clipper live there
     {
-        auto area = r.withTrimmedBottom(8);
-        outMeter.setBounds(area.removeFromRight(18));
-        area.removeFromRight(4);
-        inMeter.setBounds(area.removeFromRight(18));
-        area.removeFromRight(6);
+        auto area = r.withTrimmedBottom(6);
+        auto meters = area.removeFromRight(controls::meterColumn);
+        inMeter.setBounds(meters.removeFromLeft(22));
+        outMeter.setBounds(meters.removeFromRight(22));
+        area.removeFromRight(controls::meterGap);
         curveMeter.setBounds(area.removeFromRight(curveMeter.preferredWidth()));
-        area.removeFromRight(6);
+        area.removeFromRight(controls::meterGap);
         curve.setBounds(area);
     }
 
-    // same five knob columns as the single tab; the dropdowns and the link chain live in the editor's header
-    const int w = knobs.getWidth() / 5;
-    auto place = [&](juce::Label& l, juce::Slider& s) {
-        auto c = knobs.removeFromLeft(w);
-        l.setBounds(c.removeFromTop(16));
-        s.setBounds(c);
-    };
-    const auto rateColumn = knobs.withWidth(w);
-    place(rateL, rate);
-    linkBtn.setBounds(rate.getBounds().getCentreX() + 36, rate.getBounds().getY() + 14, 22, 22);
-    dotBtn.setBounds(rateColumn.getCentreX() - 56, rateColumn.getBottom() - 22, 24, 20);
-    tripBtn.setBounds(rateColumn.getCentreX() + 32, rateColumn.getBottom() - 22, 24, 20);
-    auto chain = [&](LinkButton& b, const juce::Slider& s) {   // beside the knob, like dotted / triplet beside the rate
-        b.setBounds(s.getBounds().getCentreX() + 36, s.getBounds().getY() + 14, 22, 22);
-    };
-    place(depthL, depth);
-    chain(linkDepthBtn, depth);
-    place(smoothL, smooth);
-    chain(linkSmoothBtn, smooth);
-    place(offsetL, offset);
-    chain(linkOffsetBtn, offset);
-    place(waveL, wave);
+    // the same strip as the single tab; the dropdowns live in the editor's second bar
+    const auto column = controls::columns(knobs);
+    controls::place(rateL, rate, column.knob[0], controls::leadDial);
+    controls::placeRateExtras(modeBox, dotBtn, tripBtn, column.knob[0]);
+    controls::place(depthL, depth, column.knob[1], controls::leadDial);
+    controls::place(smoothL, smooth, column.knob[2], controls::dial);
+    controls::place(offsetL, offset, column.knob[3], controls::dial);
+    controls::place(waveL, wave, column.knob[4], controls::viewDial);
+    placeChains();
+}
+
+// the chains follow their captions, whose text changes when a link is switched
+void MultibandPanel::placeChains()
+{
+    controls::placeChain(linkBtn, rateL);
+    controls::placeChain(linkDepthBtn, depthL);
+    controls::placeChain(linkSmoothBtn, smoothL);
+    controls::placeChain(linkOffsetBtn, offsetL);
 }

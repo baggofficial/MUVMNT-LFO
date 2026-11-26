@@ -1075,7 +1075,7 @@ static void testCurveFromKick()
         check(curves(k.r.p) == before, fmt("offset %.2f: one undo brings the old curve back", offset));
     }
 
-    // Safe and Precise at full depth (the usual setting) and at low depth, heard through the plugin
+    // Simple and Detailed at full depth (the usual setting) and at low depth, heard through the plugin
     for (float depth : { 1.f, 0.25f })
         for (bool plucks : { false, true })
         {
@@ -1104,14 +1104,14 @@ static void testCurveFromKick()
                 kept[style] = 100.0 * energy / full;
                 // on the kick's loudest moment the gain is 1 - depth
                 const float expected = 0.5f * (1.f - depth);
-                const char* name = style == 0 ? "Safe" : "Precise";
+                const char* name = style == 0 ? "Simple" : "Detailed";
                 check(res.status == Status::ok && onHit < expected + 0.04f && (plucks || onHit > expected - 0.01f),
                       fmt("%s, depth %.2f, %s: ducked by the depth on the hit", name, depth, plucks ? "plucked bass" : "steady signal"),
                       fmt("%d points, peak on the hit %.3f (expected about %.3f), %.0f%% of the energy kept", (int) res.curve.points.size(), onHit, expected, kept[style]));
             }
             check(plucks ? kept[1] > kept[0] + (depth > 0.5f ? 5.0 : 1.0) : kept[1] > kept[0] - 3.0,
-                  fmt("depth %.2f, %s: Precise keeps %s", depth, plucks ? "plucked bass" : "steady signal", plucks ? "more of the sound than Safe" : "about as much as Safe or more"),
-                  fmt("Safe %.0f%%, Precise %.0f%%", kept[0], kept[1]));
+                  fmt("depth %.2f, %s: Detailed keeps %s", depth, plucks ? "plucked bass" : "steady signal", plucks ? "more of the sound than Simple" : "about as much as Simple or more"),
+                  fmt("Simple %.0f%%, Detailed %.0f%%", kept[0], kept[1]));
         }
 
     {
@@ -1384,7 +1384,9 @@ static void testCpu()
         { "multiband Dynamic EQ, editor open", [](Rig& r) { r.param("mb", 1.f); r.param("mbEngine", 1.f); }, true },
         { "multiband 96 dB/oct, editor open", [](Rig& r) { r.param("mb", 1.f); r.param("slopeLow", 5.f); r.param("slopeHigh", 5.f); }, true },
     };
+    const double limit = kLenientTiming ? 20.0 : 5.0;
     double worst = 0.0;
+    int remeasured = 0;
     for (int block : { 32, 512 })
     {
         std::printf("    blocks of %d samples\n", block);
@@ -1394,14 +1396,20 @@ static void testCpu()
             for (double sr : { 44100.0, 48000.0, 96000.0, 192000.0 })
             {
                 Rig r(sr, block); m.setup(r); r.p.editorOpen.store(m.editor);
-                const double pct = timeBlocks(r, block, noise((size_t) block, 17), block == 32 ? 20000 : 4000);
+                const auto source = noise((size_t) block, 17);
+                const int count = block == 32 ? 20000 : 4000;
+                double pct = timeBlocks(r, block, source, count);
+                // This is wall-clock time, so a pause of the whole machine (busy CI runners do that) reads as CPU load.
+                // A suspicious figure is measured again, keeping the lowest: real cost shows up every time.
+                for (int again = 0; again < 2 && pct > limit * 0.25; ++again, ++remeasured)
+                    pct = std::min(pct, timeBlocks(r, block, source, count));
                 worst = std::max(worst, pct);
                 std::printf(" %8.3f%%", pct);
             }
             std::printf("\n");
         }
     }
-    check(worst < (kLenientTiming ? 20.0 : 5.0), "worst case across all of the above stays under 5% of one core", fmt("worst %.3f%%", worst));
+    check(worst < limit, fmt("worst case across all of the above stays under %.0f%% of one core", limit), fmt("worst %.3f%%, %d suspicious readings measured again", worst, remeasured));
 
     // Denormals: a signal that decays into denormal numbers must not make the CPU spike
     Rig n; n.param("mb", 1.f); n.param("slopeLow", 5.f); n.param("slopeHigh", 5.f);

@@ -410,11 +410,11 @@ static bool themeRegression()
     auto check = [&](bool cond, const char* what) { std::printf("  %-64s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
     auto luma = [&] { auto c = ed.createComponentSnapshot(ed.getLocalBounds(), true, 1.0f).getPixelAt(318, 130); return c.getBrightness(); };
     std::printf("theme switch:\n");
-    paper::setDark(false);
+    theme::setDark(false);
     const float light = luma();
-    paper::setDark(true);
+    theme::setDark(true);
     const float dark = luma();
-    paper::setDark(false);
+    theme::setDark(false);
     const float lightAgain = luma();
     std::printf("  background brightness: light %.2f, dark %.2f, light again %.2f\n", light, dark, lightAgain);
     check(light > 0.7f, "light theme: bright curve area");
@@ -468,36 +468,52 @@ static bool headerRegression()
     FreeLfoProcessor p;
     p.setRateAndBufferSizeDetails(48000.0, 512);
     p.prepareToPlay(48000.0, 512);
-    FreeLfoEditor ed(p);
-    ed.setSize(960, 610);
     bool ok = true;
-    auto check = [&](bool cond, const char* what) { std::printf("  %-64s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
-    std::printf("header:\n");
-    check(paper::dark, "dark mode is the default");
+    auto check = [&](bool cond, const juce::String& what) { std::printf("  %-64s %s\n", what.toRawUTF8(), cond ? "ok" : "FAILED"); ok = ok && cond; };
+    std::printf("header (two bars):\n");
+    { FreeLfoEditor first(p); check(theme::dark, "dark mode is the default"); }
 
-    juce::Component *theme = nullptr, *reset = nullptr, *grid = nullptr;
-    std::vector<juce::Component*> row;
-    for (int i = 0; i < ed.getNumChildComponents(); ++i)
+    struct Case { const char* name; float mb, hz; };
+    for (const Case c : { Case { "single, Sync", 0.f, 0.f }, Case { "single, Hz", 0.f, 1.f }, Case { "multiband", 1.f, 0.f } })
     {
-        auto* c = ed.getChildComponent(i);
-        if (!c->isVisible() || c->getY() > 44 || c->getHeight() > 40) continue;
-        row.push_back(c);
-        if (dynamic_cast<ThemeToggle*>(c)) theme = c;
-        if (auto* b = dynamic_cast<juce::TextButton*>(c)) if (b->getButtonText() == "Reset") reset = c;
-        if (auto* s = dynamic_cast<juce::Slider*>(c)) if (s->isBar()) grid = c;
+        setParam(p, "mb", c.mb);
+        setParam(p, "mode", c.hz);
+        FreeLfoEditor ed(p);
+        bool allClear = true, ordered = true, found = true;
+        for (const auto size : { juce::Point<int> { 880, 500 }, juce::Point<int> { 960, 610 }, juce::Point<int> { 2000, 1300 } })
+        {
+            ed.setSize(size.x, size.y);
+            BrandMark* brand = nullptr;
+            juce::Component *theme = nullptr, *preset = nullptr, *bypass = nullptr, *reset = nullptr, *grid = nullptr;
+            std::vector<juce::Component*> bars;
+            for (auto* child : ed.getChildren())
+            {
+                if (!child->isVisible() || child->getBottom() > theme::size::top + theme::size::brandBar + theme::size::barGap + theme::size::toolBar) continue;
+                bars.push_back(child);
+                if (auto* mark = dynamic_cast<BrandMark*>(child)) brand = mark;
+                if (dynamic_cast<ThemeToggle*>(child)) theme = child;
+                if (dynamic_cast<PresetButton*>(child)) preset = child;
+                if (dynamic_cast<BypassButton*>(child)) bypass = child;
+                if (auto* t = dynamic_cast<juce::TextButton*>(child)) if (t->getButtonText() == "Reset Curve") reset = child;
+                if (auto* slider = dynamic_cast<juce::Slider*>(child)) if (slider->isBar()) grid = child;
+            }
+            if (!(brand && theme && preset && bypass && reset && grid)) { found = false; continue; }
+            for (size_t i = 0; i < bars.size(); ++i)
+            {
+                allClear = allClear && ed.getLocalBounds().contains(bars[i]->getBounds());
+                for (size_t j = i + 1; j < bars.size(); ++j)
+                    if (bars[i]->getBounds().intersects(bars[j]->getBounds())) allClear = false;
+            }
+            const int topBarBottom = theme::size::top + theme::size::brandBar;
+            ordered = ordered && brand->getBottom() <= topBarBottom && theme->getBottom() <= topBarBottom && bypass->getBottom() <= topBarBottom
+                      && preset->getY() >= topBarBottom && reset->getY() >= topBarBottom && grid->getY() >= topBarBottom // the LFO's own bar
+                      && brand->getRight() < theme->getX() && theme->getRight() < bypass->getX()
+                      && grid->getRight() < preset->getX() && preset->getRight() < reset->getX() && reset->getX() - preset->getRight() <= 8; // presets beside Reset
+        }
+        check(found, juce::String(c.name) + ": brand, presets, theme, bypass, Reset and grid are there");
+        check(allClear, juce::String(c.name) + ": nothing in either bar overlaps, at three window sizes");
+        check(ordered, juce::String(c.name) + ": global controls on top, presets beside Reset in the bar below");
     }
-    check(theme && reset && grid, "found the theme button, Reset and the grid number");
-    if (!(theme && reset && grid)) return false;
-    bool overlap = false;
-    for (size_t i = 0; i < row.size(); ++i)
-        for (size_t j = i + 1; j < row.size(); ++j)
-            if (row[i]->getBounds().intersects(row[j]->getBounds())) overlap = true;
-    check(!overlap, "no header items overlap");
-    const int gapToReset = reset->getX() - theme->getRight();
-    const int gapToGrid = theme->getX() - grid->getRight();
-    std::printf("  gaps: theme -> Reset %d px, grid -> theme %d px\n", gapToReset, gapToGrid);
-    check(gapToReset > 4 && gapToReset <= 14, "the light/dark button sits right next to Reset, on its left");
-    check(gapToGrid >= 12, "...with room between it and the grid number");
     return ok;
 }
 
@@ -521,7 +537,7 @@ static bool frameRateRegression(const juce::File& dir)
         for (auto* c : ed.getChildren())
         {
             if (auto* b = dynamic_cast<FrameRateButton*>(c)) button = b;
-            if (c->isVisible() && c->getY() < 40 && c->getHeight() <= 40) row.push_back(c);
+            if (c->isVisible() && c->getBottom() <= 76) row.push_back(c);
         }
         check(button != nullptr && button->isVisible(), multiband ? "multiband: the switch is in the header" : "single: the switch is in the header");
         if (button == nullptr) return false;
@@ -542,6 +558,177 @@ static bool frameRateRegression(const juce::File& dir)
     return ok;
 }
 
+// The controls around the Rate knob: Sync / Hz on its left, dotted over triplet on its right. All can really be clicked
+// (nothing lies on top), none touches the dial or each other, and the switch changes the right parameter.
+static bool rateControlsRegression(const juce::File& dir)
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    bool ok = true;
+    auto check = [&](bool cond, const juce::String& what) { std::printf("  %-64s %s\n", what.toRawUTF8(), cond ? "ok" : "FAILED"); ok = ok && cond; };
+    std::printf("rate controls:\n");
+    for (const bool multiband : { false, true })
+    {
+        setParam(p, "mb", multiband ? 1.f : 0.f);
+        const juce::String name = multiband ? "multiband" : "single";
+        const char* modeId = multiband ? "modeM" : "mode"; // multiband starts with the rates linked to Mid
+        setParam(p, modeId, 0.f);
+        FreeLfoEditor ed(p);
+        ed.setVisible(true); // asking what is under a point only works on a visible window
+        bool placed = true;
+        SyncSwitch* sw = nullptr;
+        for (const auto size : { juce::Point<int> { 880, 500 }, juce::Point<int> { 2000, 1300 }, juce::Point<int> { 960, 610 } })
+        {
+            ed.setSize(size.x, size.y);
+            std::vector<juce::Component*> around;
+            Knob* rateKnob = nullptr;
+            std::function<void(juce::Component&)> walk = [&](juce::Component& c) {
+                for (auto* child : c.getChildren())
+                {
+                    if (!child->isVisible()) continue;
+                    if (auto* s = dynamic_cast<SyncSwitch*>(child)) { sw = s; around.push_back(s); }
+                    if (auto* b = dynamic_cast<juce::TextButton*>(child))
+                        if (b->getButtonText() == "3" || b->getButtonText() == juce::String::fromUTF8("\xE2\x80\xA2")) around.push_back(b);
+                    walk(*child);
+                }
+            };
+            walk(ed);
+            if (around.size() != 3) { placed = false; continue; }
+            for (auto* k : around[0]->getParentComponent()->getChildren())
+                if (auto* knob = dynamic_cast<Knob*>(k)) if (knob->isVisible() && (rateKnob == nullptr || knob->getX() < rateKnob->getX())) rateKnob = knob;
+            const auto dial = juce::Rectangle<int>(54, 54).withCentre({ rateKnob->getBounds().getCentreX(), rateKnob->getY() + (rateKnob->getHeight() - 16) / 2 });
+            for (size_t i = 0; i < around.size(); ++i)
+            {
+                auto* c = around[i];
+                const auto centre = ed.getLocalPoint(c->getParentComponent(), c->getBounds().getCentre());
+                auto* hit = ed.getComponentAt(centre);
+                placed = placed && hit != nullptr && (hit == c || c->isParentOf(hit)) && !c->getBounds().intersects(dial);
+                for (size_t j = i + 1; j < around.size(); ++j) placed = placed && !c->getBounds().intersects(around[j]->getBounds());
+            }
+        }
+        check(placed, name + ": all three are clickable and clear of the dial, at three window sizes");
+        if (sw == nullptr) return false;
+        auto click = [sw](float y) {
+            const auto now = juce::Time::getCurrentTime();
+            const juce::Point<float> at(13.f, y);
+            sw->mouseDown(juce::MouseEvent(juce::Desktop::getInstance().getMainMouseSource(), at, juce::ModifierKeys::leftButtonModifier,
+                                           1.f, 0.f, 0.f, 0.f, 0.f, sw, sw, now, at, now, 1, false));
+        };
+        auto isHz = [&] { return p.apvts.getRawParameterValue(modeId)->load() > 0.5f; };
+        click(36.f);
+        const bool toHz = isHz();
+        click(36.f);
+        const bool stays = isHz();
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(250); // the multiband tab rebinds on its timer
+        save(ed.createComponentSnapshot(ed.getLocalBounds(), true, 2.0f), dir.getChildFile("rate_hz_" + name + ".png"));
+        click(10.f);
+        check(toHz && stays && !isHz(), name + ": the lower half selects Hz, the upper half Sync");
+    }
+    return ok;
+}
+
+// The Single / Multiband selector: both halves are there, only the other half switches, and the lit half does nothing.
+static bool modeSelectorRegression()
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    setParam(p, "mb", 0.f);
+    FreeLfoEditor ed(p);
+    ed.setSize(880, 500);
+    bool ok = true;
+    auto check = [&](bool cond, const char* what) { std::printf("  %-64s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
+    std::printf("single / multiband selector:\n");
+    ModeSwitchButton* sel = nullptr;
+    for (auto* c : ed.getChildren()) if (auto* m = dynamic_cast<ModeSwitchButton*>(c)) sel = m;
+    check(sel != nullptr && sel->isVisible() && sel->getWidth() == ModeSwitchButton::width, "it is there with both halves");
+    if (sel == nullptr) return false;
+    auto click = [sel](int x) {
+        const auto now = juce::Time::getCurrentTime();
+        const juce::Point<float> at((float) x, 14.f);
+        const juce::MouseEvent e(juce::Desktop::getInstance().getMainMouseSource(), at, juce::ModifierKeys::leftButtonModifier,
+                                 1.f, 0.f, 0.f, 0.f, 0.f, sel, sel, now, at, now, 1, false);
+        sel->mouseDown(e);
+        sel->mouseUp(e);
+    };
+    auto multi = [&] { return p.apvts.getRawParameterValue("mb")->load() > 0.5f; };
+    click(40);
+    check(!multi() && !sel->isMultiband(), "clicking Single while in Single changes nothing");
+    click(150);
+    check(multi() && sel->isMultiband(), "clicking Multiband switches to it");
+    click(150);
+    check(multi(), "clicking Multiband again stays there");
+    click(40);
+    check(!multi() && !sel->isMultiband(), "clicking Single switches back");
+    return ok;
+}
+
+// The menu style, shown on screen as the plugin shows it, for both the slope menu and a knob's right-click menu.
+static void menuShots(const juce::File& dir)
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    for (const bool dark : { true, false })
+    {
+        FreeLfoEditor ed(p);
+        ed.setDarkMode(dark, false);
+        auto menu = BandStrip::slopeMenu(2);
+        menu.setLookAndFeel(&ed.getLookAndFeel());
+        menu.showMenuAsync(juce::PopupMenu::Options().withTargetScreenArea({ 300, 300, 62, 20 }));
+        bool saved = false;
+        for (int i = 0; i < juce::Desktop::getInstance().getNumComponents() && !saved; ++i)
+            if (auto* window = juce::Desktop::getInstance().getComponent(i))
+                if (window->getWidth() < 200 && window->getHeight() > 100)
+                {
+                    save(window->createComponentSnapshot(window->getLocalBounds(), true, 2.0f), dir.getChildFile(dark ? "menu_dark.png" : "menu_light.png"));
+                    std::printf("slope menu, %s: drawn %dx%d, see-through corners %s\n", dark ? "dark" : "light", window->getWidth(), window->getHeight(),
+                                window->isOpaque() ? "FAILED" : "ok");
+                    saved = true;
+                }
+        if (!saved) std::printf("slope menu: no window to capture\n");
+        juce::PopupMenu::dismissAllActiveMenus();
+        juce::MessageManager::getInstance()->runDispatchLoopUntil(200);
+        ed.setDarkMode(true, false);
+    }
+}
+
+// Design review screenshots (2x): a point being dragged, the mid band active with its own (unlinked) controls, a held knob.
+static void designShots(const juce::File& dir)
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    auto find = [](juce::Component& root, auto&& wanted) {
+        juce::Component* found = nullptr;
+        std::function<void(juce::Component&)> walk = [&](juce::Component& c) {
+            for (auto* child : c.getChildren()) { if (found == nullptr && child->isVisible() && wanted(*child)) found = child; walk(*child); }
+        };
+        walk(root);
+        return found;
+    };
+    {
+        FreeLfoEditor ed(p);
+        ed.setSize(960, 610);
+        auto* graph = dynamic_cast<EnvelopeEditor*>(find(ed, [](juce::Component& c) { return dynamic_cast<EnvelopeEditor*>(&c) != nullptr; }));
+        MouseDriver mouse { *graph };
+        const auto pt = p.getEnvelope(0).points[1];
+        const juce::Point<float> at(10.f + pt.x * (float) (graph->getWidth() - 20), 10.f + (1.f - pt.y) * (float) (graph->getHeight() - 24));
+        mouse.down(at);
+        mouse.drag(at.translated(26.f, 18.f));
+        save(ed.createComponentSnapshot(ed.getLocalBounds(), true, 2.0f), dir.getChildFile("design_node_drag.png"));
+        mouse.up(at.translated(26.f, 18.f));
+    }
+    setParam(p, "mb", 1.f); setParam(p, "mbLink", 0.f); setParam(p, "depthM", 0.7f); setParam(p, "smoothM", 24.f); setParam(p, "offsetM", 0.3f);
+    {
+        FreeLfoEditor ed(p);
+        ed.setSize(960, 610);
+        ed.selectBandForSnapshot(1);
+        save(ed.createComponentSnapshot(ed.getLocalBounds(), true, 2.0f), dir.getChildFile("design_mid_band.png"));
+    }
+}
+
 // The grid is easy to see: a line is clearly different from the background between lines, in both themes.
 static bool gridContrastRegression()
 {
@@ -555,10 +742,10 @@ static bool gridContrastRegression()
     bool ok = true;
     auto check = [&](bool cond, const char* what) { std::printf("  %-64s %s\n", what, cond ? "ok" : "FAILED"); ok = ok && cond; };
     std::printf("grid visibility:\n");
-    const bool wasDark = paper::dark;
+    const bool wasDark = theme::dark;
     for (bool dark : { true, false })
     {
-        paper::setDark(dark);
+        theme::setDark(dark);
         auto img = ed.createComponentSnapshot(ed.getLocalBounds(), true, 1.0f);
         const int y = 120;                                // lines at 10/16 (minor) and 12/16 (major): clear of the playhead trail
         const int majorX = (int) std::round(10.f + 0.75f * 580.f), minorX = (int) std::round(10.f + (10.f / 16.f) * 580.f), emptyX = majorX + 14;
@@ -574,7 +761,7 @@ static bool gridContrastRegression()
         check(minor > 0.045f, dark ? "dark theme: minor grid lines are visible" : "light theme: minor grid lines are visible");
         check(major > minor, "major lines are stronger than minor ones");
     }
-    paper::setDark(wasDark);
+    theme::setDark(wasDark);
     return ok;
 }
 
@@ -888,7 +1075,7 @@ static bool resizeRegression()
                 auto* c = ed.getChildComponent(i);
                 if (!c->isVisible()) continue;
                 inside = inside && b.contains(c->getBounds());
-                if (dynamic_cast<juce::Slider*>(c) || dynamic_cast<juce::ComboBox*>(c) || c->getBounds().getBottom() <= 56) r.push_back(c->getBounds()); // knobs, dropdowns and every header control
+                if (dynamic_cast<SyncSwitch*>(c) == nullptr && (dynamic_cast<juce::Slider*>(c) || dynamic_cast<juce::ComboBox*>(c) || c->getBounds().getBottom() <= 56)) r.push_back(c->getBounds()); // knobs, dropdowns and every header control
             }
             for (size_t i = 0; i < r.size(); ++i)
                 for (size_t j = i + 1; j < r.size(); ++j)
@@ -1293,16 +1480,27 @@ int main(int argc, char** argv)
                 {
                     const auto beforeFit = q.getEnvelope(slot).serialize();
                     chip->onClick();
-                    const bool made = q.getEnvelope(slot).serialize() != beforeFit && window->currentNote().startsWith(chip->precise ? "Precise" : "Safe");
-                    const auto note = window->currentNote();
+                    const bool made = q.getEnvelope(slot).serialize() != beforeFit && window->currentNote().isEmpty();
                     feed(300); // so the scope shows what the new curve does to the sound
                     settle(*qe, 300);
                     const juce::String name = juce::String("kickfit_") + (mbOn ? "multiband_" : "single_") + (chip->precise ? "precise" : "safe") + ".png";
                     save(qe->createComponentSnapshot(qe->getLocalBounds(), true, 1.0f), dir.getChildFile(name));
-                    std::printf("%s button, %s: clear of other controls %s, makes a curve and says so %s  (%d points: %s)\n", chip->precise ? "Precise" : "Safe",
-                                mbOn ? "multiband" : "single", clear ? "ok" : "FAILED", made ? "ok" : "FAILED", (int) q.getEnvelope(slot).points.size(), note.toRawUTF8());
+                    std::printf("%s button, %s: clear of other controls %s, makes a curve without a popup %s  (%d points)\n", chip->precise ? "Detailed" : "Simple",
+                                mbOn ? "multiband" : "single", clear ? "ok" : "FAILED", made ? "ok" : "FAILED", (int) q.getEnvelope(slot).points.size());
                     kickButtonOk = kickButtonOk && clear && made;
                 }
+                // when it cannot make a curve it still says why, or the button would seem dead; the next success clears that
+                setParam(q, "division", 3.f); setParam(q, "divL", 3.f); setParam(q, "divM", 3.f);   // a bar: four kicks
+                feed(1000);
+                chips[0]->onClick();
+                const bool explains = window->currentNote().contains("hits in one cycle");
+                setParam(q, "division", 5.f); setParam(q, "divL", 5.f); setParam(q, "divM", 5.f);
+                feed(300);
+                chips[0]->onClick();
+                const bool cleared = window->currentNote().isEmpty();
+                std::printf("kick buttons, %s: a refusal says why %s, the next success clears it %s\n", mbOn ? "multiband" : "single",
+                            explains ? "ok" : "FAILED", cleared ? "ok" : "FAILED");
+                kickButtonOk = kickButtonOk && explains && cleared;
                 q.setPlayHead(nullptr);
             }
         }
@@ -1466,12 +1664,12 @@ int main(int argc, char** argv)
         FreeLfoProcessor pp;
         for (int dark = 0; dark < 2; ++dark)
         {
-            paper::setDark(dark == 1);
+            theme::setDark(dark == 1);
             laf.applyColours();
             auto panel = PresetMenu::createPanel(pp, 0, nullptr, laf);
             save(panel->createComponentSnapshot(panel->getLocalBounds(), true, 2.0f), dir.getChildFile(dark ? "preset_popup_dark.png" : "preset_popup_light.png"));
         }
-        paper::setDark(true);
+        theme::setDark(true);
     }
     {   // the popup open inside the editor: it must drop down from the button
         FreeLfoProcessor pp;
@@ -1499,5 +1697,7 @@ int main(int argc, char** argv)
     }
     const bool rz = resizeRegression() && labelRegression() && resetClickRegression() && hostMenuRegression() && pointLimitRegression() && loudScopeRegression();
     const bool un = undoRegression() && presetRegression() && handleSnapRegression() && deletePointRegression();
-    return kickButtonOk && frameRateRegression(dir) && un && a && b && c && d && f && g && h && k && m && n && o && q && rz ? 0 : 1;
+    designShots(dir);
+    menuShots(dir);
+    return modeSelectorRegression() && rateControlsRegression(dir) && kickButtonOk && frameRateRegression(dir) && un && a && b && c && d && f && g && h && k && m && n && o && q && rz ? 0 : 1;
 }

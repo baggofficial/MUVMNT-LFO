@@ -6,6 +6,7 @@
 #include "LevelMeter.h"
 #include "MultibandPanel.h"
 #include "PresetMenu.h"
+#include "BrandMark.h"
 
 class FreeLfoEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
@@ -41,14 +42,14 @@ private:
     LevelMeter inMeter { proc, false, "IN" }, outMeter { proc, true, "OUT" };
     MultibandPanel mbPanel;
 
-    juce::ComboBox mode;
+    SyncSwitch mode;               // beside the Rate knob
     Knob rate, depth, smooth, offset, wave;
     juce::ToggleButton retrigger { "MIDI retrigger" }, snap { "Snap" };
     BezierToggle bezier;
     PresetButton presetBtn;
     std::unique_ptr<juce::Component> presetPopup; // the open preset popup (a layer inside this window), if any
     juce::TooltipWindow tooltipWindow { this, 500 }; // the icon buttons explain themselves on hover
-    juce::TextButton reset { "Reset" };
+    juce::TextButton reset { "Reset Curve" };
     ModeSwitchButton modeSwitch;   // Single <-> Multiband
     TrimKnob inTrim, outTrim;      // input / output gain, right under the meters
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> inTrimA, outTrimA;
@@ -56,6 +57,8 @@ private:
     std::unique_ptr<juce::ParameterAttachment> clipA;
     BypassButton bypassBtn;        // top right, beside Reset
     juce::TextButton dotBtn { juce::String::fromUTF8("\xE2\x80\xA2") }, tripBtn { "3" }; // dotted / triplet, like Xfer's LFO Tool
+    BrandMark brand;               // top left
+    std::vector<juce::Rectangle<int>> separators; // thin lines between the groups of the two bars (set by resized())
     ThemeToggle themeBtn;
     FrameRateButton fpsBtn;        // left of the light / dark button
     bool thirtyFps = false;
