@@ -536,6 +536,7 @@ void FreeLfoProcessor::processActive(juce::AudioBuffer<float>& buffer, juce::Mid
         float pk = 0.f;
         for (int ch = 0; ch < numChannels; ++ch) pk = juce::jmax(pk, mainBuf.getMagnitude(ch, 0, numSamples));
         meterUpdate(meterIn, pk);
+        if (pk > overLevel) oversIn.fetch_add(1, std::memory_order_relaxed);
     }
 
     // live spectrum (multiband strip): keep the newest input samples, before any processing
@@ -659,6 +660,7 @@ void FreeLfoProcessor::processActive(juce::AudioBuffer<float>& buffer, juce::Mid
         float pk = 0.f;
         for (int ch = 0; ch < numChannels; ++ch) pk = juce::jmax(pk, mainBuf.getMagnitude(ch, 0, numSamples));
         meterUpdate(meterOut, pk);
+        if (pk > overLevel) oversOut.fetch_add(1, std::memory_order_relaxed);
         if (specStart >= 0) // the same stretch of samples, after the plugin (for the before / after spectrum)
             for (int i = 0; i < numSamples; ++i)
             {

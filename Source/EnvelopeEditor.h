@@ -13,6 +13,7 @@ public:
     void setSlot(int newSlot);
     int getSlot() const { return slot; }
     void resetCurve();
+    juce::Rectangle<float> plotBounds() const { return getLocalBounds().toFloat().reduced(10.f).withTrimmedBottom(4.f); } // room below for the labels
 
     void paint(juce::Graphics&) override;
     void mouseDown(const juce::MouseEvent&) override;
@@ -53,7 +54,6 @@ public:
 
 private:
     void renderGrid(juce::Graphics&);
-    juce::Rectangle<float> plotBounds() const { return getLocalBounds().toFloat().reduced(10.f).withTrimmedBottom(4.f); } // room below for the labels
     juce::String cachedLabels; // the labels the cached grid image was drawn with
     void drawWaveforms(juce::Graphics&);
     void drawOverlap(juce::Graphics&, const std::array<std::atomic<float>, FreeLfoProcessor::waveBins>& mn,

@@ -3,6 +3,7 @@
 // Run:   build/LfoSnap_artefacts/Release/LfoSnap <output-dir>
 #include "../Source/PluginProcessor.h"
 #include "../Source/PluginEditor.h"
+#include "../Source/LevelMeter.h"
 #include "../Source/Presets.h"
 #include "fake_host.h"
 #include <cstdio>
@@ -1138,6 +1139,106 @@ static bool bandVolumeRegression(const juce::File& dir)
     return ok;
 }
 
+// The level meters reach +6 dB, and the clip lamp holds a short over long enough to be seen.
+static bool levelMeterRegression(const juce::File& dir)
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    bool ok = true;
+    auto check = [&](bool good, const char* what) { std::printf("  %-64s %s\n", what, good ? "ok" : "FAILED"); ok = ok && good; };
+    std::printf("level meters:\n");
+    LevelMeter meter(p, true, "OUT", LevelMeter::multibandTopDb);
+    meter.setBounds(0, 0, 22, 240);
+    juce::Image sheet(juce::Image::ARGB, 5 * 60, 520, true);
+    {
+        juce::Graphics g(sheet);
+        g.fillAll(theme::window);
+        int column = 0;
+        for (const float db : { -12.f, -1.f, 0.f, 3.f, 6.f })
+        {
+            p.meterOut = juce::Decibels::decibelsToGain(db);
+            meter.animate();
+            check(std::abs(meter.litSteps() - (int) ((db - LevelMeter::bottomDb) / LevelMeter::stepDb)) <= 1, "the bar's height follows the level up to +6 dB");
+            g.drawImageAt(meter.createComponentSnapshot(meter.getLocalBounds(), true, 2.0f), 8 + 60 * column++, 20);
+        }
+    }
+    save(sheet, dir.getChildFile("level_meter.png"));
+    const int zeroSteps = (int) (-LevelMeter::bottomDb / LevelMeter::stepDb);
+    p.meterOut = 1.f; meter.animate();
+    check(meter.litSteps() == zeroSteps, "exactly 0 dB ends on the 0 dB line, with nothing above it");
+    p.meterOut = 0.97f; meter.animate();
+    check(meter.litSteps() <= zeroSteps, "just under 0 dB shows nothing above the line");
+    p.meterOut = 1.03f; meter.animate();
+    check(meter.litSteps() > zeroSteps, "just over 0 dB reaches into the red");
+    check(!meter.isClipLampLit(), "no lamp without a counted over");
+    p.oversOut++;
+    p.meterOut = 0.1f; // already fallen again by the time the window looks
+    meter.animate();
+    check(meter.isClipLampLit(), "a short over lights the lamp although the bar has fallen");
+    save(meter.createComponentSnapshot(meter.getLocalBounds(), true, 3.0f), dir.getChildFile("level_meter_lamp.png"));
+    juce::Thread::sleep(1500);
+    meter.animate();
+    check(meter.isClipLampLit(), "it is still lit after 1.5 s");
+    juce::Thread::sleep(700);
+    meter.animate();
+    check(!meter.isClipLampLit(), "and off after 2 s");
+    {   // Full Band: the scale ends at 0 dB
+        LevelMeter single(p, true, "OUT", LevelMeter::fullBandTopDb);
+        single.setBounds(0, 0, 22, 240);
+        const int full = (int) (-LevelMeter::bottomDb / LevelMeter::stepDb);
+        juce::Image pair(juce::Image::ARGB, 120, 520, true);
+        juce::Graphics g(pair);
+        g.fillAll(theme::window);
+        p.meterOut = 1.f; single.animate();
+        check(single.litSteps() == full, "Full Band: 0 dB fills the whole bar");
+        g.drawImageAt(single.createComponentSnapshot(single.getLocalBounds(), true, 2.0f), 8, 20);
+        p.meterOut = 2.f; single.animate();
+        check(single.litSteps() == full, "Full Band: above 0 dB the bar stays full");
+        p.meterOut = juce::Decibels::decibelsToGain(-18.f); single.animate();
+        check(std::abs(single.litSteps() - full / 2) <= 1, "Full Band: -18 dB is half way up");
+        g.drawImageAt(single.createComponentSnapshot(single.getLocalBounds(), true, 2.0f), 68, 20);
+        p.oversOut++; single.animate();
+        check(single.isClipLampLit(), "Full Band: an over still lights the lamp");
+        save(pair, dir.getChildFile("level_meter_fullband.png"));
+    }
+    for (int multi : { 0, 1 }) // in the plugin, a full bar starts and ends level with the curve's 100% and 0%
+        for (int height : { 500, 610, 900 })
+        {
+            setParam(p, "mb", (float) multi);
+            FreeLfoEditor ed(p);
+            ed.setSize(960, height);
+            std::vector<LevelMeter*> meters;
+            EnvelopeEditor* graph = nullptr;
+            std::function<void(juce::Component&)> walk = [&](juce::Component& c) {
+                for (auto* child : c.getChildren())
+                {
+                    if (! child->isVisible()) continue;
+                    if (auto* m = dynamic_cast<LevelMeter*>(child)) meters.push_back(m);
+                    if (auto* e = dynamic_cast<EnvelopeEditor*>(child)) graph = e;
+                    walk(*child);
+                }
+            };
+            walk(ed);
+            bool aligned = graph != nullptr && meters.size() == 2;
+            if (aligned)
+            {
+                const auto plot = ed.getLocalArea(graph, graph->plotBounds());
+                for (auto* m : meters)
+                {
+                    const auto bar = ed.getLocalArea(m, m->barArea());
+                    aligned = aligned && std::abs(bar.getY() - plot.getY()) < 0.5f && std::abs(bar.getBottom() - plot.getBottom()) < 0.5f;
+                }
+            }
+            check(aligned, multi ? "Multiband: the meter bars line up with the curve" : "Full Band: the meter bars line up with the curve");
+        }
+    setParam(p, "mb", 0.f);
+    LevelMeter later(p, true, "OUT", LevelMeter::multibandTopDb);
+    later.animate();
+    check(!later.isClipLampLit(), "a newly opened window does not show old overs");
+    return ok;
+}
+
 // Double-clicking at the 64-point limit adds nothing and says why; older curves with more points stay editable.
 static bool pointLimitRegression()
 {
@@ -1882,5 +1983,6 @@ int main(int argc, char** argv)
     designShots(dir);
     menuShots(dir);
     const bool volumesOk = bandVolumeRegression(dir);
-    return volumesOk && modeSelectorRegression() && rateControlsRegression(dir) && kickButtonOk && frameRateRegression(dir) && un && a && b && c && d && f && g && h && k && m && n && o && q && rz ? 0 : 1;
+    const bool metersOk = levelMeterRegression(dir);
+    return metersOk && volumesOk && modeSelectorRegression() && rateControlsRegression(dir) && kickButtonOk && frameRateRegression(dir) && un && a && b && c && d && f && g && h && k && m && n && o && q && rz ? 0 : 1;
 }

@@ -125,6 +125,10 @@ public:
     std::array<std::atomic<float>, specSize> specFifoOut {};   // the same samples after the plugin: the output spectrum
     // Peak meters (linear, 0..1+): input and output, with a fast fall (80 dB/s) applied here so the UI can just read them.
     std::atomic<float> meterIn { 0.f }, meterOut { 0.f };
+    // Counts the blocks with a peak above 0 dBFS. The window may look too rarely to catch a short one in the falling
+    // meter value, but it cannot miss a count that went up.
+    std::atomic<unsigned> oversIn { 0 }, oversOut { 0 };
+    static constexpr float overLevel = 1.00001f; // above 0 dBFS (the Hard clipper's exact 1.0 is not over)
     std::atomic<bool> showEndZone { false };   // the end-zone bar beside the end-of-cycle arrow (click the arrow meter to toggle); saved with the project
 
     // Multiband tab: each band's own input signal folded onto that band's own LFO cycle.

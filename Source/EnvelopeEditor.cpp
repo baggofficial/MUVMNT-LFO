@@ -553,6 +553,14 @@ void EnvelopeEditor::renderCurveLayer(juce::Graphics& g)
     for (int i = 0; i < (int) env.points.size() && !controlsHidden; ++i)
     {
         auto p = toScreen(env.points[(size_t) i].x, env.points[(size_t) i].y);
+        {   // a soft shadow: where two points nearly cover each other, the top one's falls on the one beneath and shows both
+            const juce::Point<float> c(p.x, p.y + 0.75f);
+            juce::ColourGradient shade(juce::Colours::black.withAlpha(theme::dark ? 0.75f : 0.35f), c.x, c.y,
+                                       juce::Colours::transparentBlack, c.x + 10.f, c.y, true);
+            shade.addColour(0.6, juce::Colours::black.withAlpha(theme::dark ? 0.6f : 0.28f));
+            g.setGradientFill(shade);
+            g.fillEllipse(c.x - 10.f, c.y - 10.f, 20.f, 20.f);
+        }
         g.setColour(i == selected ? mainColour() : theme::panel);
         g.fillEllipse(p.x - 5.5f, p.y - 5.5f, 11.f, 11.f);
         g.setColour(mainColour());

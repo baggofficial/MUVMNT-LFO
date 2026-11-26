@@ -434,7 +434,7 @@ int main()
             for (double decay : { 0.05, 0.09, 0.18 })
             {
                 const auto kickPeaks = slices([&](double t) { return kick(t, 50.0, decay, 0.9); }, beat);
-                const auto alone = kickfit::analyse(kickPeaks, beat, Style::precise);
+                const auto alone = kickfit::analyse(kickPeaks, beat, kickfit::Style::precise);
                 assert(usablePrecise(alone) && !alone.soundHeard);
                 for (const auto& sound : sounds)
                 {
@@ -457,6 +457,30 @@ int main()
             for (const auto& f : { std::function<double(double)>([](double) { return 0.0; }), std::function<double(double)>(bass),
                                    std::function<double(double)>([&](double t) { return kick(t, 40.0, 1.5, 0.9); }) })
                 assert(kickfit::analyse(slices(f, beat), beat, Style::precise).status == run(f, beat).status);
+        }
+        // a sharp hit right on the beat can seem a few milliseconds early (the loudness outline blurs it): safe then holds
+        // silence up to the loop point, precise just ends its drop there; a hit that really is early is ducked by both
+        {
+            auto hit = [&](double earlyBy) { // a click-like burst that starts this long before the loop point
+                return slices([&, earlyBy](double t) {
+                    const double since = std::fmod(t + earlyBy, beat);
+                    return 0.9 * std::sin(twoPi * 900.0 * since) * std::exp(-since / 0.03);
+                }, beat);
+            };
+            auto pointsNearEnd = [](const Envelope& e) { int n = 0; for (const auto& pt : e.points) if (pt.y < 0.01f && pt.x > 0.9f) ++n; return n; };
+            for (double earlyBy : { 0.0, 0.001, 0.003 })
+            {
+                const auto safe = kickfit::analyse(hit(earlyBy), beat, kickfit::Style::safe);
+                const auto fine = kickfit::analyse(hit(earlyBy), beat, kickfit::Style::precise);
+                assert(safe.status == Status::ok && fine.status == Status::ok);
+                assert(pointsNearEnd(safe.curve) == 2);                       // as before: silent until the loop point
+                assert(pointsNearEnd(fine.curve) == 1);                       // one point, at the end
+                assert(fine.curve.points.back().y == 0.f && fine.curve.evaluate(0.001f) < 0.1f); // still ducked on the beat
+                assert(fine.curve.evaluate(0.95f) > 0.95f);
+            }
+            const auto reallyEarly = kickfit::analyse(hit(0.025), beat, kickfit::Style::precise);
+            assert(reallyEarly.status == Status::ok && pointsNearEnd(reallyEarly.curve) == 2);
+            assert(reallyEarly.curve.evaluate((float) (1.0 - 0.015 / beat)) < 0.05f);
         }
         // random junk must give either a refusal or a usable curve
         unsigned seed = 12345;

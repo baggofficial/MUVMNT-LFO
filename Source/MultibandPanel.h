@@ -151,7 +151,7 @@ private:
     BandStrip strip;
     EnvelopeEditor curve;
     WrapMeter curveMeter { proc, curve };
-    LevelMeter inMeter { proc, false, "IN" }, outMeter { proc, true, "OUT" };
+    LevelMeter inMeter { proc, false, "IN", LevelMeter::multibandTopDb }, outMeter { proc, true, "OUT", LevelMeter::multibandTopDb };
 
     juce::TextButton dotBtn { juce::String::fromUTF8("\xE2\x80\xA2") }, tripBtn { "3" };
     Knob rate, depth, smooth, offset, wave;

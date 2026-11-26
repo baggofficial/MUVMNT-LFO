@@ -369,6 +369,21 @@ static void testMeters()
         }
         check(worst <= 1e-6, "single band: OUT is never above IN, after any of 2000 blocks", fmt("largest OUT minus IN %.6f", worst));
     }
+    {   // peaks above 0 dBFS are counted, even a single sample
+        Rig q; q.p.editorOpen.store(true); q.allCurves(flatCurve(1.f));
+        auto overs = [&] { return std::pair<unsigned, unsigned> { q.p.oversIn.load(), q.p.oversOut.load() }; };
+        q.render(dc(4800, 1.f), { 480 });
+        check(overs() == std::pair<unsigned, unsigned> { 0u, 0u }, "exactly 0 dBFS does not count as over");
+        auto spike = dc(4800, 0.2f); spike[1][1000] = -1.05f;
+        const auto out = q.render(spike, { 480 });
+        check(overs() == std::pair<unsigned, unsigned> { 1u, 1u } && std::fabs(out[1][1000]) > 1.f, "one sample over 0 dBFS counts on IN and OUT",
+              fmt("IN %u, OUT %u", q.p.oversIn.load(), q.p.oversOut.load()));
+        q.param("outGain", 6.f); q.render(dc(4800, 0.9f), { 480 });
+        check(q.p.oversIn.load() == 1u && q.p.oversOut.load() > 1u, "a boost by the OUT knob counts on OUT only");
+        Rig c; c.p.editorOpen.store(true); c.param("mb", 1.f); c.param("clip", 2.f); c.param("outGain", 12.f); c.allCurves(flatCurve(1.f));
+        c.render(noise(48000, 91, 0.9f), { 480 });
+        check(c.p.oversOut.load() == 0u, "with the Hard clipper the output is never over");
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

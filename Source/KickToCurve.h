@@ -52,6 +52,7 @@ namespace kickfit
     constexpr float preciseClose = 0.015f;    // ... and it stops adding once the curve is this close everywhere
     constexpr float onBeatEarly = 0.08f;      // a hit this close to the loop point (before it) ...
     constexpr float onBeatLate = 0.06f;       // ... or this close after it counts as "on the beat"
+    constexpr double preciseBlur = 0.008;     // precise: a hit that seems this many seconds early is really on the beat
 
     namespace detail
     {
@@ -232,8 +233,12 @@ namespace kickfit
         int start = rise; // walk back to where the hit begins
         for (int k = 0; k < n && outline[(size_t) ((start - 1 + n) % n)] > 0.15f; ++k) start = (start - 1 + n) % n;
         const float onset = (float) start / (float) n;
-        const bool early = onset >= 1.f - onBeatEarly;
+        bool early = onset >= 1.f - onBeatEarly;
         const bool onBeat = early || onset <= onBeatLate;
+        // The outline's smoothing makes a sharp attack (clicks, so mostly the mid and high bands) seem to start a few
+        // milliseconds before it does: a kick right on the beat then looks early. safe plays it safe and holds silence from
+        // there to the loop point; precise takes it as on the beat, so its drop simply ends at the loop point.
+        if (style == Style::precise && early && (double) (1.f - onset) * cycleSeconds <= preciseBlur) early = false;
 
         std::vector<float> duck((size_t) n);
         for (int i = 0; i < n; ++i) duck[(size_t) i] = std::clamp((outline[(size_t) i] - duckFrom) / (duckFully - duckFrom), 0.f, 1.f);

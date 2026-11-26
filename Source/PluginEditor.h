@@ -39,7 +39,7 @@ private:
     PaperLookAndFeel laf;
     EnvelopeEditor curve;
     WrapMeter curveMeter { proc, curve };
-    LevelMeter inMeter { proc, false, "IN" }, outMeter { proc, true, "OUT" };
+    LevelMeter inMeter { proc, false, "IN", LevelMeter::fullBandTopDb }, outMeter { proc, true, "OUT", LevelMeter::fullBandTopDb };
     MultibandPanel mbPanel;
 
     SyncSwitch mode;               // beside the Rate knob
