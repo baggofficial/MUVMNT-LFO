@@ -92,16 +92,14 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     addAndMakeVisible(mbPanel);
     addAndMakeVisible(inTrim);
     addAndMakeVisible(outTrim);
+    addAndMakeVisible(polarityBtn);
     addAndMakeVisible(clipBtn);
     addAndMakeVisible(bypassBtn);   // after the panel, so it sits on top of it
     addAndMakeVisible(kickSafeBtn);
     addAndMakeVisible(kickPreciseBtn);
-    kickSafeBtn.onClick = [this] { curveFromKick(kickfit::Style::safe); };
-    kickPreciseBtn.onClick = [this] { curveFromKick(kickfit::Style::precise); };
-    kickL.setText("Curve from kick", juce::dontSendNotification);
-    kickL.setJustificationType(juce::Justification::centred);
-    kickL.setInterceptsMouseClicks(false, false);
-    addAndMakeVisible(kickL);
+    kickSafeBtn.onClick = [this] { kickSafeBtn.flash(); kickPreciseBtn.clearFlash(); curveFromKick(kickfit::Style::safe); };
+    kickPreciseBtn.onClick = [this] { kickPreciseBtn.flash(); kickSafeBtn.clearFlash(); curveFromKick(kickfit::Style::precise); };
+    addAndMakeVisible(kickHeading);
     // the multiband tab's band-count and type dropdowns sit in this header
     addChildComponent(mbPanel.bandsBox);
     addChildComponent(mbPanel.engineBox);
@@ -171,6 +169,7 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
 
     // Tabs: Single = the original one-curve LFO (bit-exact pass-through), Multiband = per-band curves
     bypassA = std::make_unique<BA>(proc.apvts, "bypass", bypassBtn);
+    polarityA = std::make_unique<BA>(proc.apvts, "polarity", polarityBtn);
     for (auto* k : { &inTrim, &outTrim })
     {
         const bool in = k == &inTrim;
@@ -210,7 +209,6 @@ FreeLfoEditor::FreeLfoEditor(FreeLfoProcessor& p)
     updateTab();
     startTimerHz(10); // follows the "mb" parameter if the host or a project load changes it
     reset.setColour(juce::TextButton::textColourOffId, theme::sub);
-    kickL.setColour(juce::Label::textColourId, theme::dark ? theme::amber : theme::amber.darker(0.5f)); // the kick's gold names the group
     sendLookAndFeelChange(); // make every child (slider text boxes included) pick up the theme colours
 }
 
@@ -226,7 +224,6 @@ void FreeLfoEditor::setDarkMode(bool dark, bool persist)
     theme::setDark(dark);
     laf.applyColours();
     reset.setColour(juce::TextButton::textColourOffId, theme::sub);
-    kickL.setColour(juce::Label::textColourId, theme::dark ? theme::amber : theme::amber.darker(0.5f)); // the kick's gold names the group
     if (persist) saveDarkPreference(dark);
     sendLookAndFeelChange(); // every child re-reads the theme colours
     repaint();
@@ -400,21 +397,24 @@ void FreeLfoEditor::resized()
     auto strip = body.removeFromBottom(controls::height);
     const auto side = strip.removeFromRight(controls::meterColumn);
     strip.removeFromRight(controls::meterGap);
-    inTrim.setBounds(side.getX(), side.getY() + 6, 22, 33);
-    outTrim.setBounds(side.getX() + 24, side.getY() + 6, 22, 33);
+    inTrim.setBounds(side.getX(), side.getY() + 2, 22, 33);
+    outTrim.setBounds(side.getX() + 24, side.getY() + 2, 22, 33);
     inTrim.toFront(false);
     outTrim.toFront(false);
-    clipBtn.setBounds(side.getX() + 1, side.getY() + 47, 44, 30);
+    polarityBtn.setBounds(side.getX() + 1, side.getY() + 37, 44, 14);
+    polarityBtn.toFront(false);
+    clipBtn.setBounds(side.getX() + 1, side.getY() + 53, 44, 25); // ends above the resize corner
 
-    // the kick analyser: its own group, a caption in line with the knob captions and a two-part switch level with the dials
+    // the kick tool: its own group, a heading in line with the knob captions and two push buttons, one above the other, level with the dials
     const auto column = controls::columns(strip);
     {
         auto k = column.kick;
         separators.push_back({ k.getX(), k.getY() + 18, 1, 48 });
-        kickL.setBounds(k.removeFromTop(controls::captionH));
-        auto both = k.withTrimmedBottom(16).withSizeKeepingCentre(124, 26);
-        kickSafeBtn.setBounds(both.removeFromLeft(60));
-        kickPreciseBtn.setBounds(both);
+        kickHeading.setBounds(k.removeFromTop(controls::captionH));
+        // centred on the dials' middle, a pixel low: that leaves clear air under the heading
+        auto both = k.withTrimmedBottom(16).withSizeKeepingCentre(kicktool::buttonWidth, 2 * kicktool::buttonHeight + kicktool::buttonGap).translated(0, 1);
+        kickSafeBtn.setBounds(both.removeFromTop(kicktool::buttonHeight));
+        kickPreciseBtn.setBounds(both.removeFromBottom(kicktool::buttonHeight));
     }
 
     if (mb) { mbPanel.setBounds(r); repaint(); return; }

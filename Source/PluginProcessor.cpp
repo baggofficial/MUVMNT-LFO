@@ -121,6 +121,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout FreeLfoProcessor::createLayo
     l.add(std::make_unique<AudioParameterBool>(ParameterID { "linkDepth", 1 }, "Link Depth", false));
     l.add(std::make_unique<AudioParameterBool>(ParameterID { "linkSmooth", 1 }, "Link Smooth", false));
     l.add(std::make_unique<AudioParameterBool>(ParameterID { "linkOffset", 1 }, "Link Offset", false));
+    l.add(std::make_unique<AudioParameterBool>(ParameterID { "polarity", 1 }, "Reverse Input Polarity", false));
     // Each band's own level, after its ducking (never linked: these set the balance between the bands)
     for (int b = 0; b < 3; ++b)
         l.add(std::make_unique<AudioParameterFloat>(ParameterID { "gain" + String(bandSuffix(b)), 1 }, String(names[b]) + " Volume",
@@ -162,6 +163,7 @@ FreeLfoProcessor::FreeLfoProcessor()
     pBypass = apvts.getRawParameterValue("bypass");
     pClip = apvts.getRawParameterValue("clip");
     pInGain = apvts.getRawParameterValue("inGain");
+    pPolarity = apvts.getRawParameterValue("polarity");
     pOutGain = apvts.getRawParameterValue("outGain");
     pEngine = apvts.getRawParameterValue("mbEngine");
     bypassParam = dynamic_cast<juce::RangedAudioParameter*>(apvts.getParameter("bypass"));
@@ -237,7 +239,7 @@ static inline float readParam(const std::atomic<float>* p, float fallback) noexc
 void FreeLfoProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
     for (auto* g : { &inGain, &outGain }) g->reset(sampleRate, 0.020);
-    inGain.setCurrentAndTargetValue(juce::Decibels::decibelsToGain(readParam(pInGain, 0.f)));
+    inGain.setCurrentAndTargetValue(inputGain());
     outGain.setCurrentAndTargetValue(juce::Decibels::decibelsToGain(readParam(pOutGain, 0.f)));
     for (int b = 0; b < 3; ++b)
     {
@@ -493,6 +495,13 @@ void FreeLfoProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::Midi
     bypassMix = m;
 }
 
+// The input stage's gain: the IN knob, negative when the polarity is reversed
+float FreeLfoProcessor::inputGain() const
+{
+    const float gain = juce::Decibels::decibelsToGain(readParam(pInGain, 0.f));
+    return pPolarity != nullptr && pPolarity->load() > 0.5f ? -gain : gain;
+}
+
 void FreeLfoProcessor::processActive(juce::AudioBuffer<float>& buffer, juce::MidiBuffer& midi)
 {
     juce::ScopedNoDenormals noDenormals;
@@ -505,9 +514,10 @@ void FreeLfoProcessor::processActive(juce::AudioBuffer<float>& buffer, juce::Mid
     const double sr = getSampleRate();
     const int clipMode = pClip != nullptr ? juce::roundToInt(readParam(pClip, 0.f)) : 0;
 
-    // IN trim first, so the meters, the displays and the processing all see the trimmed signal.
+    // IN trim (and polarity: simply a negative gain, so switching it glides through zero instead of clicking) first, so
+    // the meters, the displays and the processing all see the trimmed signal. No delay and no memory either way.
     // At 0 dB (and settled) the audio is not touched at all, which keeps the null bit-exact.
-    inGain.setTargetValue(juce::Decibels::decibelsToGain(readParam(pInGain, 0.f)));
+    inGain.setTargetValue(inputGain());
     outGain.setTargetValue(juce::Decibels::decibelsToGain(readParam(pOutGain, 0.f)));
     if (inGain.isSmoothing() || inGain.getTargetValue() != 1.f) inGain.applyGain(mainBuf, numSamples);
 
@@ -1079,14 +1089,14 @@ void FreeLfoProcessor::setStateInformation(const void* data, int size)
         auto state = juce::ValueTree::fromXml(*xml);
         if (state.isValid())
         {
-            // projects saved before the band volumes existed have no value for them: they mean 0 dB, not "leave as it is"
-            bool hasVolume[3];
-            for (int b = 0; b < 3; ++b) hasVolume[b] = state.getChildWithProperty("id", juce::String("gain") + bandSuffix(b)).isValid();
+            // settings added after a project was saved are missing from it: they mean their default, not "leave as it is"
+            juce::StringArray missing;
+            for (const char* id : { "gainL", "gainM", "gainH", "polarity" })
+                if (! state.getChildWithProperty("id", id).isValid()) missing.add(id);
             apvts.replaceState(state);
-            for (int b = 0; b < 3; ++b)
-                if (! hasVolume[b])
-                    if (auto* prm = apvts.getParameter(juce::String("gain") + bandSuffix(b)))
-                        prm->setValueNotifyingHost(prm->getDefaultValue());
+            for (const auto& id : missing)
+                if (auto* prm = apvts.getParameter(id))
+                    prm->setValueNotifyingHost(prm->getDefaultValue());
             for (auto* prm : getParameters()) // a damaged project must not leave "not a number" settings behind
                 if (auto* ranged = dynamic_cast<juce::RangedAudioParameter*>(prm))
                     if (! std::isfinite(apvts.getRawParameterValue(ranged->paramID)->load()))

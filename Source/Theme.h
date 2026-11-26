@@ -56,8 +56,8 @@ namespace theme
         onAccent   = c(0xff0b0d10, 0xffffffff);
         amber      = c(0xfff2c94c, 0xffc99700);
         handle     = c(0xffeab308, 0xffd49d00); // the yellow tangent handles of After Effects' graph editor
-        dialTop    = c(0xff252c36, 0xffffffff); // the face of a knob, lit from above
-        dialBottom = c(0xff13171d, 0xffe4e7eb);
+        dialTop    = c(0xff21272f, 0xffffffff); // the face of a knob, lit from above
+        dialBottom = c(0xff171b22, 0xffeceef1);
         dialTrack  = c(0xff333b46, 0xffc6ccd4);
         gridStrong = c(0xff414955, 0xffb4bac3);
         gridFine   = c(0xff29303a, 0xffd6dae0);

@@ -1,6 +1,7 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "Fonts.h"
+#include "ControlStrip.h"
 #include "Theme.h"
 
 // The animation speed, shown as its number: click to switch between 60 and 30 frames a second
@@ -52,8 +53,37 @@ public:
     }
 };
 
-// "Curve from kick": a two-part switch (Simple | Detailed on screen; "safe" and "precise" in the code) in its own group at
-// the end of the control strip. Gold (the kick) on hover.
+// The kick tool at the end of the control strip: "Auto Curve" turns the sidechain kick into a curve.
+namespace kicktool
+{
+    inline juce::Colour gold() { return theme::dark ? theme::amber : theme::amber.darker(0.35f); }
+    constexpr int buttonWidth = 78, buttonHeight = 21, buttonGap = 4;  // Simple above Detailed
+    constexpr double holdMs = 200.0, fadeMs = 1000.0;                  // the glow after a press: held, then fading out
+}
+
+// Its heading: the name in the same quiet capitals as the knob captions. Hovering it explains the tool.
+class KickHeading : public juce::Component, public juce::SettableTooltipClient
+{
+public:
+    KickHeading()
+    {
+        setTooltip("Draws a new curve from the last cycle of your sidechain kick. Press Simple or Detailed while the song plays. "
+                   "Simple listens to the kick only; Detailed to the kick and your sound.");
+    }
+    static juce::String title() { return "AUTO CURVE"; }
+
+    void paint(juce::Graphics& g) override
+    {
+        g.setColour(theme::sub);
+        g.setFont(fonts::semibold(theme::type::label).withExtraKerningFactor(0.09f));
+        g.drawText(title(), getLocalBounds(), juce::Justification::centred, false);
+    }
+};
+
+// Simple / Detailed ("safe" and "precise" in the code). Each press is a one-off action, not a setting, so they are two
+// separate push buttons, quiet at rest and under the mouse. A press lights one in the kick's gold, which then fades away
+// in just over a second: it shows which was pressed last without ever looking switched on. Their icons show what you get:
+// a plain curve, or one with more points.
 class KickButton : public juce::Button
 {
 public:
@@ -66,23 +96,92 @@ public:
         setMouseCursor(juce::MouseCursor::PointingHandCursor);
     }
 
-    // The two buttons sit edge to edge and read as one control: Safe is its left half, Precise its right half
+    void flash() { pressedAt = juce::Time::getMillisecondCounterHiRes(); glow = 1.f; repaint(); }
+    void clearFlash() { pressedAt = -1.0; if (glow > 0.f) { glow = 0.f; repaint(); } }
+    float glowAmount() const { return glow; }
+
+    void animate() // one step of the editor's animation clock: the glow after a press fades away
+    {
+        if (glow <= 0.f) return;
+        const double since = juce::Time::getMillisecondCounterHiRes() - pressedAt;
+        const float left = (float) juce::jlimit(0.0, 1.0, 1.0 - (since - kicktool::holdMs) / kicktool::fadeMs);
+        const float next = left * left * (3.f - 2.f * left); // eases out of the hold and into nothing
+        if (std::abs(next - glow) > 0.004f || next <= 0.f) { glow = next <= 0.004f ? 0.f : next; repaint(); }
+    }
+
     void paintButton(juce::Graphics& g, bool over, bool down) override
     {
-        auto b = getLocalBounds().toFloat().reduced(0.f, 0.5f);
-        if (precise) b.removeFromRight(0.5f); else b.removeFromLeft(0.5f);
-        juce::Path half;
-        half.addRoundedRectangle(b.getX(), b.getY(), b.getWidth(), b.getHeight(), theme::size::radius, theme::size::radius,
-                                 !precise, precise, !precise, precise);
-        g.setColour(down ? theme::amber.withAlpha(0.28f) : over ? theme::raised : theme::panel);
-        g.fillPath(half);
-        g.setColour(over || down ? theme::amber.withAlpha(0.85f) : theme::line.brighter(theme::dark ? 0.12f : 0.f));
-        g.strokePath(half, juce::PathStrokeType(theme::size::border));
-        g.setColour(over || down ? (theme::dark ? theme::amber : theme::amber.darker(0.6f)) : theme::text);
-        g.setFont(fonts::semibold(10.f).withExtraKerningFactor(0.05f));
-        g.drawText(precise ? "DETAILED" : "SIMPLE", b, juce::Justification::centred);
+        const auto b = getLocalBounds().toFloat().reduced(0.5f);
+        const auto gold = kicktool::gold();
+        const float lit = down ? 1.f : glow;
+        g.setColour(over || down ? theme::raised : theme::panel);
+        g.fillRoundedRectangle(b, theme::size::radius);
+        if (lit > 0.f)
+        {
+            g.setColour(gold.withAlpha(0.24f * lit));
+            g.fillRoundedRectangle(b, theme::size::radius);
+        }
+        const auto rim = over ? theme::sub.withAlpha(0.7f) : theme::line.brighter(theme::dark ? 0.12f : 0.f);
+        g.setColour(rim.interpolatedWith(gold, lit));
+        g.drawRoundedRectangle(b, theme::size::radius, theme::size::border);
+
+        const auto font = fonts::semibold(11.f);
+        constexpr float iconWidth = 13.f, space = 6.f;
+        const float widest = juce::GlyphArrangement::getStringWidth(font, "Detailed"); // so the two icons and names line up
+        const float left = std::floor(((float) getWidth() - (iconWidth + space + widest)) * 0.5f);
+        const float top = (float) getHeight() * 0.5f - 4.5f + (down ? 0.75f : 0.f); // sinks a little when pressed
+
+        auto at = [&](float x, float y) { return juce::Point<float>(left + x, top + y); }; // inside a 13 x 9 box
+        juce::Path curve;
+        std::vector<juce::Point<float>> points;
+        if (precise)
+        {
+            points = { at(0.f, 9.f), at(4.f, 3.f), at(7.5f, 5.5f), at(13.f, 0.f) };
+            curve.startNewSubPath(points[0]);
+            curve.quadraticTo(at(1.5f, 3.5f), points[1]);
+            curve.quadraticTo(at(6.f, 3.f), points[2]);
+            curve.quadraticTo(at(9.f, 0.f), points[3]);
+        }
+        else
+        {
+            points = { at(0.f, 9.f), at(13.f, 0.f) };
+            curve.startNewSubPath(points[0]);
+            curve.cubicTo(at(7.f, 9.f), at(6.f, 0.f), points[1]);
+        }
+        g.setColour((over ? theme::text : theme::sub).interpolatedWith(gold, lit));
+        g.strokePath(curve, juce::PathStrokeType(1.3f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+        for (const auto& p : points) g.fillEllipse(juce::Rectangle<float>(3.2f, 3.2f).withCentre(p));
+
+        g.setColour(theme::text.withAlpha(over || down ? 1.f : 0.9f));
+        g.setFont(font);
+        g.drawText(precise ? "Detailed" : "Simple", juce::Rectangle<float>(left + iconWidth + space, down ? 0.75f : 0.f, widest + 4.f, (float) getHeight()),
+                   juce::Justification::centredLeft, false);
     }
+
+private:
+    double pressedAt = -1.0;
+    float glow = 0.f; // 1 just after a press, 0 at rest
 };
+
+// The two small capsules that flank the Rate knob: one outline, and a raised chip on the half that is chosen
+namespace capsule
+{
+    inline void drawShell(juce::Graphics& g, juce::Rectangle<float> whole, bool over)
+    {
+        g.setColour(theme::bg);
+        g.fillRoundedRectangle(whole, 7.f);
+        g.setColour(over ? theme::sub.withAlpha(0.6f) : theme::line.brighter(theme::dark ? 0.12f : 0.f));
+        g.drawRoundedRectangle(whole, 7.f, theme::size::border);
+    }
+    inline void drawChip(juce::Graphics& g, juce::Rectangle<float> chip)
+    {
+        g.setGradientFill(juce::ColourGradient(theme::dialTop.brighter(theme::dark ? 0.14f : 0.f), 0.f, chip.getY(),
+                                               theme::dialBottom.brighter(theme::dark ? 0.12f : 0.f), 0.f, chip.getBottom(), false));
+        g.fillRoundedRectangle(chip, theme::size::radius);
+        g.setColour(theme::sub.withAlpha(0.55f));
+        g.drawRoundedRectangle(chip, theme::size::radius, theme::size::border);
+    }
+}
 
 // Sync / Hz as a small upright slider beside the Rate knob: a thumb that sits on a note (Sync, the top) or on "Hz" (the
 // bottom). Click either half, or drag the thumb. It is still a two-item ComboBox underneath, so the parameter attachments
@@ -90,7 +189,7 @@ public:
 class SyncSwitch : public juce::ComboBox
 {
 public:
-    static constexpr int width = 26, height = 48;
+    static constexpr int width = controls::capsuleWidth, height = 2 * controls::capsuleHalf;
 
     SyncSwitch()
     {
@@ -112,25 +211,19 @@ public:
     {
         const auto b = getLocalBounds().toFloat().reduced(0.5f);
         const bool hz = getSelectedItemIndex() == 1, over = isMouseOver(true);
-        g.setColour(theme::bg);
-        g.fillRoundedRectangle(b, 7.f);
-        g.setColour(over ? theme::sub.withAlpha(0.6f) : theme::line.brighter(theme::dark ? 0.12f : 0.f));
-        g.drawRoundedRectangle(b, 7.f, theme::size::border);
+        capsule::drawShell(g, b, over);
 
         auto halves = b.reduced(2.f);
         const auto top = halves.removeFromTop(halves.getHeight() * 0.5f);
-        const auto thumb = (hz ? halves : top).reduced(0.f, 0.5f);
-        g.setGradientFill(juce::ColourGradient(theme::dialTop.brighter(theme::dark ? 0.12f : 0.f), 0.f, thumb.getY(),
-                                               theme::dialBottom.brighter(theme::dark ? 0.08f : 0.f), 0.f, thumb.getBottom(), false));
-        g.fillRoundedRectangle(thumb, theme::size::radius);
-        g.setColour(theme::sub.withAlpha(0.55f));
-        g.drawRoundedRectangle(thumb, theme::size::radius, theme::size::border);
+        capsule::drawChip(g, (hz ? halves : top).reduced(0.f, 0.5f));
 
         // Sync: two beamed notes
         const auto lit = [&](bool on) { return on ? theme::text : theme::muted; };
         g.setColour(lit(!hz));
         {
             const auto c = top.getCentre();
+            juce::Graphics::ScopedSaveState state(g);
+            g.addTransform(juce::AffineTransform::scale(0.88f, 0.88f, c.x, c.y));
             for (const float x : { -4.f, 3.5f })
             {
                 juce::Path head;
@@ -361,6 +454,38 @@ public:
 };
 
 // Output clipper: one button cycling Off / Soft / Hard. Dim while off, accent for soft, amber for hard.
+class PolarityButton : public juce::Button
+{
+public:
+    PolarityButton() : juce::Button("polarity")
+    {
+        setClickingTogglesState(true);
+        setMouseCursor(juce::MouseCursor::PointingHandCursor);
+        setTooltip("Reverse the polarity of the input (flips the waveform upside down). On its own it sounds the same: "
+                   "it matters when this sound plays together with another, like a bass under a kick. No added delay.");
+    }
+
+    // a real switch: filled while the input is reversed, so it is not forgotten
+    void paintButton(juce::Graphics& g, bool hover, bool) override
+    {
+        const auto b = getLocalBounds().toFloat().reduced(0.5f);
+        const bool on = getToggleState();
+        g.setColour(on ? theme::accent : hover ? theme::raised : theme::panel);
+        g.fillRoundedRectangle(b, theme::size::radiusSmall);
+        g.setColour(on ? theme::accent : hover ? theme::sub.withAlpha(0.7f) : theme::line);
+        g.drawRoundedRectangle(b, theme::size::radiusSmall, theme::size::border);
+
+        // the engineers' polarity sign, drawn so it looks the same in every font, and the input it belongs to
+        const auto ink = on ? theme::onAccent : hover ? theme::text : theme::sub;
+        const float cx = b.getCentreX() - 8.f, cy = b.getCentreY();
+        g.setColour(ink);
+        g.drawEllipse(cx - 3.5f, cy - 3.5f, 7.f, 7.f, 1.2f);
+        g.drawLine(cx - 4.f, cy + 4.5f, cx + 4.f, cy - 4.5f, 1.2f);
+        g.setFont(fonts::semibold(9.5f).withExtraKerningFactor(0.05f));
+        g.drawText("IN", juce::Rectangle<float>(cx + 7.f, b.getY(), 16.f, b.getHeight()), juce::Justification::centredLeft, false);
+    }
+};
+
 class ClipButton : public juce::Button
 {
 public:
@@ -390,7 +515,7 @@ public:
         g.setColour(state == 0 ? theme::line : c);
         g.drawRoundedRectangle(b, 6.f, 1.f);
         g.setColour(c);
-        auto words = getLocalBounds().toFloat().reduced(1.f, 3.f);
+        auto words = getLocalBounds().toFloat().reduced(1.f, 2.f);
         g.setFont(fonts::regular(8.5f));
         g.drawText("Clipper", words.removeFromTop(words.getHeight() * 0.45f), juce::Justification::centred, false);
         g.setFont(fonts::semibold(11.f));
@@ -706,13 +831,15 @@ public:
         g.strokePath(shine, juce::PathStrokeType(1.f));
     }
 
-    // Three layers: a thin track for the whole range, a slim arc up to the value, and the face with its indicator
+    // Three layers: a fine track for the whole range, an arc up to the value, and the face with a short marker near its rim.
+    // The lead knobs (Rate, Depth) get a slightly heavier arc and a brighter marker than the ones that follow.
     void drawRotarySlider(juce::Graphics& g, int x, int y, int w, int h, float pos,
                           float startAngle, float endAngle, juce::Slider& slider) override
     {
         const auto area = juce::Rectangle<float>((float) x, (float) y, (float) w, (float) h);
         const float room = juce::jmin(area.getWidth(), area.getHeight()) - 2.f;
         const float diameter = juce::jmin(room, (float) slider.getProperties().getWithDefault("dial", room));
+        const bool lead = diameter >= controls::leadDial - 0.5f;
         const float r = diameter * 0.5f;
         const auto c = area.getCentre();
         const float angle = startAngle + pos * (endAngle - startAngle);
@@ -720,28 +847,32 @@ public:
         const bool dragging = slider.isMouseButtonDown(), hover = slider.isMouseOverOrDragging();
 
         const float arcRadius = r - 1.5f;
-        const juce::PathStrokeType thin(2.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded);
+        auto round = [](float width) { return juce::PathStrokeType(width, juce::PathStrokeType::curved, juce::PathStrokeType::rounded); };
         juce::Path track, value;
         track.addCentredArc(c.x, c.y, arcRadius, arcRadius, 0.f, startAngle, endAngle, true);
         g.setColour(theme::dialTrack);
-        g.strokePath(track, thin);
+        g.strokePath(track, round(1.75f)); // the track is finer than the value on it, so the value reads first
+        const float weight = lead ? 3.f : 2.25f;
         if (angle - startAngle > 0.01f)
         {
             value.addCentredArc(c.x, c.y, arcRadius, arcRadius, 0.f, startAngle, angle, true);
             if (dragging) // a little light around the arc, only while the knob is held
             {
                 g.setColour(tint.withAlpha(0.18f));
-                g.strokePath(value, juce::PathStrokeType(5.5f, juce::PathStrokeType::curved, juce::PathStrokeType::rounded));
+                g.strokePath(value, round(weight + 3.f));
             }
-            g.setColour(dragging ? tint.brighter(0.2f) : tint.withAlpha(hover ? 1.f : 0.9f));
-            g.strokePath(value, thin);
+            g.setColour(dragging ? tint.brighter(0.2f) : tint.withAlpha(hover || lead ? 1.f : 0.85f));
+            g.strokePath(value, round(weight));
         }
 
-        const float face = r - 5.5f;
+        const float face = r - 5.f;
         drawDialFace(g, c, face, tint, hover, dragging);
         const juce::Point<float> dir(std::sin(angle), -std::cos(angle));
-        g.setColour(dragging ? tint.brighter(0.25f) : theme::text);
-        g.drawLine({ c + dir * (face * 0.42f), c + dir * (face - 2.f) }, 2.f);
+        juce::Path marker;
+        marker.startNewSubPath(c + dir * (face * 0.48f));
+        marker.lineTo(c + dir * (face - 3.f));
+        g.setColour(dragging ? tint.brighter(0.25f) : theme::text.withAlpha(hover || lead ? 1.f : 0.82f));
+        g.strokePath(marker, round(lead ? 2.25f : 2.f));
     }
 
     void drawToggleButton(juce::Graphics& g, juce::ToggleButton& bt, bool, bool) override
@@ -762,6 +893,16 @@ public:
     {
         auto b = bt.getLocalBounds().toFloat().reduced(0.5f);
         const bool on = bt.getToggleState();
+        if (const int part = bt.getProperties().getWithDefault("capsule", 0); part != 0)
+        {   // each button paints its half of the shared outline (the other half falls outside its bounds)
+            const auto own = bt.getLocalBounds().toFloat();
+            const auto whole = own.withHeight(own.getHeight() * 2.f).translated(0.f, part == 2 ? -own.getHeight() : 0.f).reduced(0.5f);
+            capsule::drawShell(g, whole, hover);
+            auto inner = whole.reduced(2.f);
+            const auto upper = inner.removeFromTop(inner.getHeight() * 0.5f);
+            if (on) capsule::drawChip(g, (part == 1 ? upper : inner).reduced(0.f, 0.5f));
+            return;
+        }
         if (bt.getProperties().contains("quiet") && !hover && !down)
         {
             g.setColour(theme::line);
@@ -772,6 +913,22 @@ public:
         g.fillRoundedRectangle(b, theme::size::radius);
         g.setColour(on ? theme::accent : theme::line);
         g.drawRoundedRectangle(b, theme::size::radius, theme::size::border);
+    }
+
+    void drawButtonText(juce::Graphics& g, juce::TextButton& bt, bool hover, bool down) override
+    {
+        const int part = bt.getProperties().getWithDefault("capsule", 0);
+        if (part == 0) { juce::LookAndFeel_V4::drawButtonText(g, bt, hover, down); return; }
+        // like the Sync / Hz switch: the chosen half is bright, the others quiet (but still easy to read)
+        g.setColour(bt.getToggleState() || hover ? theme::text : theme::sub);
+        const auto centre = bt.getLocalBounds().toFloat().getCentre().translated(0.f, part == 1 ? 0.75f : -0.75f);
+        if (part == 1) // dotted: a drawn dot, so its size and position do not depend on the font
+            g.fillEllipse(juce::Rectangle<float>(5.f, 5.f).withCentre(centre));
+        else
+        {
+            g.setFont(fonts::semibold(11.5f));
+            g.drawText(bt.getButtonText(), juce::Rectangle<float>(20.f, 14.f).withCentre(centre), juce::Justification::centred, false);
+        }
     }
 
     void drawComboBox(juce::Graphics& g, int w, int h, bool, int, int, int, int, juce::ComboBox&) override

@@ -227,6 +227,8 @@ private:
     std::atomic<float>* pBypass = nullptr;
     std::atomic<float>* pClip = nullptr;
     std::atomic<float>* pInGain = nullptr;
+    std::atomic<float>* pPolarity = nullptr;
+    float inputGain() const;
     std::atomic<float>* pOutGain = nullptr;
     juce::SmoothedValue<float> inGain { 1.f }, outGain { 1.f };   // the IN / OUT trims, glided so turning them never clicks
     std::atomic<float>* pBandGain[3] = { nullptr, nullptr, nullptr };

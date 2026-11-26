@@ -27,6 +27,8 @@ public:
     // One step of everything that moves in the window. Normally driven by the display; public for the screenless tests.
     void animate()
     {
+        kickSafeBtn.animate();    // the fading glow after a press (idle: one comparison)
+        kickPreciseBtn.animate();
         if (shownMb) { mbPanel.animate(thirtyFps ? 1 : 2); return; }
         curve.animate();
         curveMeter.animate();
@@ -53,7 +55,9 @@ private:
     ModeSwitchButton modeSwitch;   // Single <-> Multiband
     TrimKnob inTrim, outTrim;      // input / output gain, right under the meters
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment> inTrimA, outTrimA;
-    ClipButton clipBtn;            // multiband only, under the trims
+    PolarityButton polarityBtn;    // under the trims, in both tabs
+    std::unique_ptr<juce::AudioProcessorValueTreeState::ButtonAttachment> polarityA;
+    ClipButton clipBtn;            // multiband only, under that
     std::unique_ptr<juce::ParameterAttachment> clipA;
     BypassButton bypassBtn;        // top right, beside Reset
     juce::TextButton dotBtn { juce::String::fromUTF8("\xE2\x80\xA2") }, tripBtn { "3" }; // dotted / triplet, like Xfer's LFO Tool
@@ -63,7 +67,7 @@ private:
     FrameRateButton fpsBtn;        // left of the light / dark button
     bool thirtyFps = false;
     KickButton kickSafeBtn { false }, kickPreciseBtn { true };   // beside the Waveform knob, in both tabs
-    juce::Label kickL;
+    KickHeading kickHeading;
     HistoryButton undoBtn { false }, redoBtn { true };
     juce::Slider gridBox;                                                                   // draggable number: grid lines + snap
     juce::Label rateL, depthL, smoothL, offsetL, waveL;

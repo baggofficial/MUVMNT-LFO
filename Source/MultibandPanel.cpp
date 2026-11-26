@@ -840,9 +840,6 @@ void MultibandPanel::rebind()
     depth.hostParam = proc.apvts.getParameter("depth" + (ld ? src : ss));
     smooth.hostParam = proc.apvts.getParameter("smooth" + (ls ? src : ss));
     offset.hostParam = proc.apvts.getParameter("offset" + (lo ? src : ss));
-    depthL.setText(ld ? "Depth (all bands)" : "Depth", juce::dontSendNotification);
-    smoothL.setText(ls ? "Smooth (all bands)" : "Smooth", juce::dontSendNotification);
-    offsetL.setText(lo ? "Offset (all bands)" : "Offset", juce::dontSendNotification);
 
     curve.setSlot(selected + 1);
     strip.setSelected(selected);
@@ -853,7 +850,6 @@ void MultibandPanel::rebind()
     PaperLookAndFeel::setKnobBand(smooth, ls ? -1 : selected);
     PaperLookAndFeel::setKnobBand(offset, lo ? -1 : selected);
 
-    rateL.setText(link ? "Rate (all bands)" : "Rate", juce::dontSendNotification);
     placeChains();
 
     lastSig = signature();

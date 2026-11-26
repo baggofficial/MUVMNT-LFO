@@ -582,6 +582,59 @@ static void testTrims()
 // ---------------------------------------------------------------------------------------------
 // 4. Block-size independence
 // ---------------------------------------------------------------------------------------------
+static void testPolarity()
+{
+    section("3i. Reverse input polarity");
+    const auto in = noise(48000, 51, 0.4f);
+    struct Mode { const char* name; float mb, engine, clip; };
+    for (const Mode m : { Mode { "Full Band", 0.f, 0.f, 0.f }, Mode { "Crossover", 1.f, 0.f, 0.f }, Mode { "Dynamic EQ", 1.f, 1.f, 0.f },
+                          Mode { "Crossover with the Soft clipper", 1.f, 0.f, 1.f } })
+    {
+        auto run = [&](float flipped) { // the default curves, ducking; set before playing starts, so nothing has to glide
+            Rig r; r.param("mb", m.mb); r.param("mbEngine", m.engine); r.param("clip", m.clip); r.param("polarity", flipped);
+            r.p.prepareToPlay(r.sr, 512);
+            return r.render(in);
+        };
+        const auto normal = run(0.f), flipped = run(1.f);
+        float worst = 0.f;
+        for (int ch = 0; ch < 2; ++ch)
+            for (size_t i = 0; i < in[0].size(); ++i) worst = std::max(worst, std::fabs(flipped[(size_t) ch][i] + normal[(size_t) ch][i]));
+        check(worst == 0.f && maxAbs(normal[0]) > 0.05f, fmt("%s: reversed is exactly the normal output upside down", m.name), fmt("worst difference %.1e", worst));
+    }
+    {
+        Rig r; r.param("depth", 0.f); r.param("polarity", 1.f); r.p.prepareToPlay(r.sr, 512);
+        const auto o = r.render(in);
+        bool exact = true;
+        for (size_t i = 0; i < in[0].size(); ++i) exact = exact && o[0][i] == -in[0][i] && o[1][i] == -in[1][i];
+        check(exact, "nothing ducked: the output is the input times -1, bit for bit, with no delay");
+        r.param("polarity", 0.f); r.render(in);
+        check(maxDiff(r.render(in)[0], in[0]) == 0.f, "switched off again: bit-exact null");
+    }
+    {
+        const auto steady = dc(9600, 0.5f);
+        Rig r; r.param("depth", 0.f); r.render(steady);
+        const auto o = r.render(steady, 256, [&](int block) { if (block == 4) r.param("polarity", 1.f); if (block == 20) r.param("polarity", 0.f); });
+        check(maxStep(o[0], 1, o[0].size()) < 0.0015f, "switching while playing glides through zero without a click", fmt("largest step %.5f", maxStep(o[0], 1, o[0].size())));
+    }
+    {
+        Rig r; r.param("polarity", 1.f); r.param("bypass", 1.f);
+        check(maxDiff(r.render(in)[0], in[0], 1000) == 0.f, "bypass passes the original polarity");
+    }
+    {
+        Rig a; a.param("polarity", 1.f);
+        juce::MemoryBlock saved; a.p.getStateInformation(saved);
+        Rig b; b.p.setStateInformation(saved.getData(), (int) saved.getSize());
+        auto isOn = [](Rig& r) { return r.p.apvts.getRawParameterValue("polarity")->load() > 0.5f; };
+        check(isOn(b), "saved with the project");
+        auto old = a.p.apvts.copyState();
+        old.removeChild(old.getChildWithProperty("id", "polarity"), nullptr);
+        juce::MemoryBlock oldBlock;
+        juce::AudioProcessor::copyXmlToBinary(*old.createXml(), oldBlock);
+        b.p.setStateInformation(oldBlock.getData(), (int) oldBlock.getSize());
+        check(! isOn(b), "an older project loads with the polarity not reversed");
+    }
+}
+
 static void testBandVolumes()
 {
     section("3h. Multiband band volumes");
@@ -1523,6 +1576,7 @@ int main()
     testClipper();
     testDynamicEqMode();
     testTrims();
+    testPolarity();
     testBandVolumes();
     testBlockSizes();
     testSmoothingSlew();

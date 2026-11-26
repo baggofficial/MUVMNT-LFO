@@ -1239,6 +1239,120 @@ static bool levelMeterRegression(const juce::File& dir)
     return ok;
 }
 
+// Linking a Multiband control keeps its caption short; the lit chain beside it says (on hover) what linking does.
+static bool linkCaptionRegression()
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    setParam(p, "mb", 1.f);
+    bool ok = true;
+    for (float linked : { 0.f, 1.f })
+    {
+        for (const char* id : { "mbLink", "linkDepth", "linkSmooth", "linkOffset" }) setParam(p, id, linked);
+        FreeLfoEditor ed(p);
+        ed.setSize(880, 500);
+        juce::StringArray captions;
+        int chains = 0;
+        std::function<void(juce::Component&)> walk = [&](juce::Component& c) {
+            for (auto* child : c.getChildren())
+            {
+                if (! child->isVisible()) continue;
+                if (auto* l = dynamic_cast<juce::Label*>(child); l != nullptr && dynamic_cast<juce::Slider*>(l->getParentComponent()) == nullptr)
+                    captions.add(l->getText());
+                if (auto* chain = dynamic_cast<LinkButton*>(child)) chains += chain->getTooltip().startsWith("Use the same ") ? 1 : 0;
+                walk(*child);
+            }
+        };
+        walk(ed);
+        bool good = chains == 4;
+        for (const char* name : { "Rate", "Depth", "Smooth", "Offset" }) good = good && captions.contains(name);
+        std::printf("  %-64s %s\n", linked > 0.5f ? "linked knobs: short captions, chains explain on hover" : "unlinked knobs: the same short captions",
+                    good ? "ok" : "FAILED");
+        ok = ok && good;
+    }
+    return ok;
+}
+
+// A press lights the kick button that was pressed, the light fades out in just over a second, and only the last one glows.
+static bool kickGlowRegression(const juce::File& dir)
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    FreeLfoEditor ed(p);
+    ed.setSize(880, 500);
+    std::vector<KickButton*> b;
+    for (auto* c : ed.getChildren()) if (auto* k = dynamic_cast<KickButton*>(c)) b.push_back(k);
+    bool ok = true;
+    auto check = [&](bool good, const char* what) { std::printf("  %-64s %s\n", what, good ? "ok" : "FAILED"); ok = ok && good; };
+    std::printf("kick button glow:\n");
+    check(b.size() == 2 && b[0]->getBottom() <= b[1]->getY() && b[0]->getX() == b[1]->getX(), "Simple sits above Detailed");
+    if (b.size() != 2) return false;
+    check(b[0]->glowAmount() == 0.f && b[1]->glowAmount() == 0.f, "both are quiet at rest");
+    auto wait = [&](int ms) { juce::Thread::sleep(ms); ed.animate(); };
+    auto shot = [&](const char* name) { save(ed.createComponentSnapshot({ 560, 400, 320, 100 }, true, 3.0f), dir.getChildFile(name)); };
+    shot("kick_glow_0_rest.png");
+    b[0]->onClick(); ed.animate();
+    check(b[0]->glowAmount() > 0.95f && b[1]->glowAmount() == 0.f, "a press lights that button");
+    shot("kick_glow_1_pressed.png");
+    wait(700);
+    const float half = b[0]->glowAmount();
+    check(half > 0.15f && half < 0.85f, "part of the way through it is fading");
+    shot("kick_glow_2_fading.png");
+    b[1]->onClick(); ed.animate();
+    check(b[0]->glowAmount() == 0.f && b[1]->glowAmount() > 0.95f, "only the last one pressed glows");
+    wait(1300);
+    check(b[1]->glowAmount() == 0.f && ! b[1]->getToggleState(), "after 1.3 seconds it is quiet again, and not switched on");
+    return ok;
+}
+
+// The polarity switch sits under the gain knobs in both tabs, switches its setting, and covers nothing.
+static bool polarityButtonRegression()
+{
+    FreeLfoProcessor p;
+    p.setRateAndBufferSizeDetails(48000.0, 512);
+    p.prepareToPlay(48000.0, 512);
+    bool ok = true;
+    for (float mb : { 0.f, 1.f })
+    {
+        setParam(p, "mb", mb); setParam(p, "polarity", 0.f);
+        FreeLfoEditor ed(p);
+        ed.setVisible(true);
+        bool good = true;
+        for (const auto size : { juce::Point<int> { 880, 500 }, juce::Point<int> { 960, 610 }, juce::Point<int> { 2000, 1300 } })
+        {
+            ed.setSize(size.x, size.y);
+            PolarityButton* button = nullptr;
+            std::vector<juce::Component*> others;
+            for (auto* c : ed.getChildren())
+            {
+                if (auto* b = dynamic_cast<PolarityButton*>(c)) button = b;
+                else if (c->isVisible() && (dynamic_cast<TrimKnob*>(c) != nullptr || dynamic_cast<ClipButton*>(c) != nullptr)) others.push_back(c);
+            }
+            good = good && button != nullptr && button->isVisible() && ed.getLocalBounds().contains(button->getBounds())
+                   && ed.getComponentAt(button->getBounds().getCentre()) == button && others.size() == (mb > 0.5f ? 3u : 2u);
+            for (auto* o : others) good = good && ! o->getBounds().intersects(button->getBounds());
+            // the corner you drag to resize the window stays free
+            const juce::Rectangle<int> corner(size.x - 16, size.y - 16, 16, 16);
+            good = good && ! button->getBounds().intersects(corner);
+            for (auto* o : others) good = good && ed.getLocalBounds().contains(o->getBounds()) && ! o->getBounds().intersects(corner);
+        }
+        for (auto* c : ed.getChildren())
+            if (auto* b = dynamic_cast<PolarityButton*>(c))
+            {
+                b->setToggleState(true, juce::sendNotificationSync);
+                good = good && p.apvts.getRawParameterValue("polarity")->load() > 0.5f;
+                setParam(p, "polarity", 0.f);
+                juce::MessageManager::getInstance()->runDispatchLoopUntil(50);
+                good = good && ! b->getToggleState();
+            }
+        std::printf("  %-64s %s\n", mb > 0.5f ? "polarity switch, multiband: placed, clear and connected" : "polarity switch, full band: placed, clear and connected", good ? "ok" : "FAILED");
+        ok = ok && good;
+    }
+    return ok;
+}
+
 // Double-clicking at the 64-point limit adds nothing and says why; older curves with more points stay editable.
 static bool pointLimitRegression()
 {
@@ -1714,6 +1828,8 @@ int main(int argc, char** argv)
                 std::vector<KickButton*> chips;
                 for (auto* child : window->getChildren()) if (auto* b = dynamic_cast<KickButton*>(child)) chips.push_back(b);
                 bool clear = chips.size() == 2;
+                for (auto* chip : chips) // one-off actions: never a button that stays switched on
+                    clear = clear && ! chip->getClickingTogglesState() && ! chip->getToggleState();
                 for (const auto size : { juce::Point<int> { 880, 500 }, juce::Point<int> { 2000, 1300 }, juce::Point<int> { 960, 610 } })
                 {
                     window->setSize(size.x, size.y);
@@ -1984,5 +2100,8 @@ int main(int argc, char** argv)
     menuShots(dir);
     const bool volumesOk = bandVolumeRegression(dir);
     const bool metersOk = levelMeterRegression(dir);
-    return metersOk && volumesOk && modeSelectorRegression() && rateControlsRegression(dir) && kickButtonOk && frameRateRegression(dir) && un && a && b && c && d && f && g && h && k && m && n && o && q && rz ? 0 : 1;
+    const bool captionsOk = linkCaptionRegression();
+    const bool glowOk = kickGlowRegression(dir);
+    const bool polarityOk = polarityButtonRegression();
+    return polarityOk && glowOk && captionsOk && metersOk && volumesOk && modeSelectorRegression() && rateControlsRegression(dir) && kickButtonOk && frameRateRegression(dir) && un && a && b && c && d && f && g && h && k && m && n && o && q && rz ? 0 : 1;
 }
