@@ -2,6 +2,8 @@
 
 A free VST3 volume-shaper effect: draw a curve, and the plugin ducks your sound along it, locked to the tempo of your DAW. It is made for sidechain-style pumping, gating, tremolo and rhythmic volume patterns, and it has a **multiband mode** that gives the lows, mids and highs their own curves.
 
+Made by [**BAGG**](https://thebaggpack.com/bio), a Danish electronic music producer. [Hear the music](#about-bagg).
+
 It is an independent, from-scratch implementation inspired by the workflow of Xfer Records' LFOTool and the volume shaper in Cableguys' ShaperBox. It contains no code from either.
 
 ![Full Band: the curve over the incoming audio (grey) and what the plugin lets through (coloured by pitch)](docs/images/single-dark.png)
@@ -20,6 +22,7 @@ It is an independent, from-scratch implementation inspired by the workflow of Xf
 - [Building from source](#building-from-source)
 - [Project layout](#project-layout)
 - [Known limitations and roadmap](#known-limitations-and-roadmap)
+- [About BAGG](#about-bagg)
 - [License and credits](#license-and-credits)
 
 ## Features
@@ -315,6 +318,12 @@ docs/images/            screenshots used in this README
 - **Structural switches dip the audio** for about 8 ms (the tab, the multiband type, the band count and the crossover slopes). It is click-free but not seamless; change them when the plugin is not playing a critical passage.
 - **Bypass stops the LFO.** While bypassed nothing is processed, so the free-running phase (Hz mode) pauses; in Sync mode the LFO follows the host position and stays on the beat.
 - **Not built yet:** a full preset browser (folders, rename), copy/paste of whole multiband setups, audio or envelope triggering, other formats (AU, AAX, CLAP).
+
+## About BAGG
+
+BAGG is a Danish electronic music producer making bass-heavy music across bass house, dubstep, hybrid trap, drum & bass, hardstyle and hard techno. If you enjoy the plugin, have a listen.
+
+[Website](https://thebaggpack.com/music) · [Spotify](https://open.spotify.com/artist/6TKPGIjpbGko3z9jzdQwCH) · [Apple Music](https://music.apple.com/us/artist/bagg/1552540536) · [SoundCloud](https://soundcloud.com/bagggggg) · [YouTube](https://www.youtube.com/channel/UCci5FR_zW4qKQq0wezdbmMg) · [Instagram](https://www.instagram.com/bagg.beats/)
 
 ## License and credits
 
