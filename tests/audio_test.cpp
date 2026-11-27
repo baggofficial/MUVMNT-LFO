@@ -1054,6 +1054,32 @@ static void testTiming()
               "MIDI note restarts the LFO at its sample, without a click (Hz mode, retrigger on)",
               fmt("gain before %.3f, 21 ms after %.3f (expected %.3f), largest step %.4f", out[0][note - 1], out[0][later], expected, maxStep(out[0], note - 2, note + 400)));
     }
+    {
+        // Every note restarts the cycle, however many land in one block, so the block size never changes the result.
+        // The notes at 6244, 6544 and 10300 / 11900 share a block at the larger sizes; the note-offs must do nothing.
+        auto renderWith = [](int blockSize) {
+            Rig r(48000.0, 4096); r.param("mode", 1.f); r.param("hz", 2.f); r.param("retrigger", 1.f); r.param("smooth", 0.f); r.allCurves(triangleCurve());
+            return r.render(dc(24576, 1.f), std::vector<int> { blockSize }, {}, [blockSize](juce::MidiBuffer& m, int block) {
+                auto add = [&](int at, const juce::MidiMessage& msg) { if (at / blockSize == block) m.addEvent(msg, at % blockSize); };
+                for (int at : { 6244, 6544, 10300, 11900 }) add(at, juce::MidiMessage::noteOn(1, 60, (juce::uint8) 100));
+                add(14000, juce::MidiMessage::noteOff(1, 60));
+                add(14100, juce::MidiMessage::noteOn(1, 60, (juce::uint8) 0)); // a note-off written as velocity 0
+            })[0];
+        };
+        const auto small = renderWith(64);
+        for (int blockSize : { 512, 4096 })
+        {
+            const auto big = renderWith(blockSize);
+            float worst = 0.f;
+            for (size_t i = 0; i < small.size() && i < big.size(); ++i) worst = std::max(worst, std::fabs(small[i] - big[i]));
+            check(big.size() == small.size() && worst < 1e-4f, fmt("MIDI retrigger: several notes per block, %d sample blocks match 64", blockSize),
+                  fmt("largest difference %.5f", worst));
+        }
+        const auto big = renderWith(4096);
+        // an eighth of a second (a quarter of the 2 Hz cycle) after the last note, the triangle is at its peak
+        check(std::fabs(big[11900 + 6000] - 1.f) < 0.01f, "MIDI retrigger: the last note in a block sets the position",
+              fmt("gain %.3f, expected 1.000", big[11900 + 6000]));
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

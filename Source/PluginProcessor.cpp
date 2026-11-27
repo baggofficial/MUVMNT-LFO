@@ -710,14 +710,22 @@ void FreeLfoProcessor::processSingle(juce::AudioBuffer<float>& mainBuf, const Ho
     const float smoothMs = readParam(pSmooth, 0.f);
     const float coef = smoothMs < 0.01f ? 0.f : std::exp(-1.f / (smoothMs * 0.001f * (float) sr));
 
-    // First MIDI note-on inside this piece of the block (for Hz-mode retrigger)
-    int retrigAt = -1;
-    if (pRetrigger->load() > 0.5f && !syncMode)
-        for (const auto m : midi)
+    // Hz-mode retrigger: every note-on restarts the cycle at its own sample, however many fall in one block (so the
+    // result doesn't depend on the block size). retrigAt is the next one in this piece of the block, -1 = no more.
+    // The raw bytes are read because getMessage() would allocate for long messages (SysEx) on the audio thread.
+    auto nextEvent = midi.findNextSamplePosition(midiOffset);
+    auto nextNoteOn = [&](int after) {
+        for (; nextEvent != midi.cend(); ++nextEvent)
         {
+            const auto m = *nextEvent;
             const int rel = m.samplePosition - midiOffset;
-            if (rel >= 0 && rel < numSamples && m.getMessage().isNoteOn()) { retrigAt = rel; break; }
+            if (rel >= numSamples) break;
+            if (rel > after && m.numBytes >= 3 && (m.data[0] & 0xf0) == 0x90 && m.data[2] > 0) return rel; // velocity 0 = note off
         }
+        return -1;
+    };
+    int retrigAt = (pRetrigger->load() > 0.5f && !syncMode) ? nextNoteOn(-1) : -1;
+    int lastRetrig = -1;
 
     cycleSeconds.store(syncMode ? beats * 60.0 / juce::jmax(1.0, bpm) : 1.0 / juce::jmax(0.001, hz), std::memory_order_relaxed);
     const double freeInc = (syncMode ? (bpm / 60.0) / beats : hz) / sr;
@@ -755,7 +763,11 @@ void FreeLfoProcessor::processSingle(juce::AudioBuffer<float>& mainBuf, const Ho
         // pass 1: the gain curve for this chunk
         for (int i = 0; i < n; ++i)
         {
-            if (start + i == retrigAt) { p = fract(offset); declickLeft = declickLen; } // a MIDI restart glides in from its own sample
+            if (start + i == retrigAt) // a MIDI restart glides in from its own sample
+            {
+                p = fract(offset); declickLeft = declickLen;
+                lastRetrig = retrigAt; retrigAt = nextNoteOn(retrigAt);
+            }
 
             const double pos = p * Envelope::tableSize;
             const int ti = (int) pos;
@@ -848,8 +860,8 @@ void FreeLfoProcessor::processSingle(juce::AudioBuffer<float>& mainBuf, const Ho
 
     // free-running phase (fallback when the host isn't playing, and the Hz-mode oscillator)
     {
-        const int from = retrigAt >= 0 ? retrigAt : 0;
-        double fp = retrigAt >= 0 ? 0.0 : freePhase;
+        const int from = lastRetrig >= 0 ? lastRetrig : 0;
+        double fp = lastRetrig >= 0 ? 0.0 : freePhase;
         fp += (numSamples - from) * freeInc;
         freePhase = fract(fp);
     }
