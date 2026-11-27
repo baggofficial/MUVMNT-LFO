@@ -94,6 +94,52 @@ static bool handleNudgeRegression()
     return change < 0.02f;
 }
 
+// A smooth point at 100% or 0%: nudging one handle into the graph (the other one would have to leave it) must leave
+// the other handle lying flat at its own length, not wear it away bit by bit and then jump back.
+static bool edgeHandleRegression(const juce::File& dir)
+{
+    bool ok = true;
+    for (const float level : { 1.f, 0.f })
+        for (const bool dragOut : { false, true })
+        {
+            FreeLfoProcessor p;
+            p.setRateAndBufferSizeDetails(48000.0, 512);
+            p.prepareToPlay(48000.0, 512);
+            EnvelopeEditor ed(p, 0);
+            ed.setBounds(0, 0, 800, 400);
+            auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 386.f - y * 376.f); };
+
+            Envelope e; e.points = { { 0.f, 0.5f }, { 0.5f, level, -0.2f, 0.f, 0.15f, 0.f }, { 1.f, 0.5f } };
+            p.setEnvelope(e, 0);
+            p.apvts.getParameter("bezier")->setValueNotifyingHost(1.f);
+
+            MouseDriver m { ed };
+            const auto point = toScreen(0.5f, level);
+            m.down(point); m.up(point);
+
+            const auto start = toScreen(dragOut ? 0.65f : 0.3f, level);
+            const float into = level > 0.5f ? 1.f : -1.f; // screen direction that leads into the graph
+            const float length = dragOut ? 0.2f : 0.15f;  // of the handle that isn't being dragged
+            m.down(start);
+            float worst = 0.f;
+            for (int i = 1; i <= 240; ++i) // 120 one-pixel nudges into the graph, then back
+            {
+                m.drag(start + juce::Point<float>(0.f, into * (float) (i <= 120 ? i : 240 - i)));
+                const auto pt = p.getEnvelope(0).points[1];
+                const float ox = dragOut ? pt.inDx : pt.outDx, oy = dragOut ? pt.inDy : pt.outDy;
+                worst = std::max(worst, std::max(std::fabs(std::hypot(ox, oy) - length), std::fabs(oy)));
+                if (i == 120)
+                    save(ed.createComponentSnapshot(ed.getLocalBounds(), true, 2.f),
+                         dir.getChildFile(juce::String("handle_edge_") + (level > 0.5f ? "100" : "0") + (dragOut ? "_right_dragged.png" : "_left_dragged.png")));
+            }
+            m.up(start);
+            std::printf("handle at %3.0f%% regression, %s dragged: other handle strayed by %.6f (must stay tiny)\n",
+                        level * 100.f, dragOut ? "right" : "left ", worst);
+            ok = ok && worst < 1e-4f;
+        }
+    return ok;
+}
+
 // Click empty space: points and handles hide. Click the curve: they come back.
 static juce::String g_outDir;
 static bool hideShowRegression()
@@ -2046,7 +2092,7 @@ int main(int argc, char** argv)
         ed2.setBounds(0, 0, 400, 300);
         save(ed2.createComponentSnapshot(ed2.getLocalBounds(), true, 2.0f), dir.getChildFile("steep_end.png"));
     }
-    const bool a = handleNudgeRegression();
+    const bool a = handleNudgeRegression() && edgeHandleRegression(dir);
     const bool b = hideShowRegression();
     const bool c = newPointRegression();
     const bool d = endHandleRegression();

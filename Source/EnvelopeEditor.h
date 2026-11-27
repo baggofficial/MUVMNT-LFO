@@ -114,6 +114,7 @@ private:
     int dragPoint = -1;
     int dragSeg = -1;   // simple mode: segment whose handle is being dragged
     bool mirrorDrag = false; // this handle drag also moves the opposite handle (only for already-smooth points)
+    float mirrorLength = 0.f; // the opposite handle's length when that drag started
     bool controlsHidden = false; // click empty space: hide every point and handle to see the bare curve; click the curve to bring them back
     int dragKind = 0;  // 1 = dragging the selected point's in handle, 2 = out handle (grabbing a handle selects its point)
 

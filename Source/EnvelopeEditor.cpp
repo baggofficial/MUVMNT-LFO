@@ -728,6 +728,8 @@ void EnvelopeEditor::mouseDown(const juce::MouseEvent& e)
         const auto vo = handleScreen(selected, 2) - origin, vi = handleScreen(selected, 1) - origin;
         const float lo = vo.getDistanceFromOrigin(), li = vi.getDistanceFromOrigin();
         mirrorDrag = lo < 2.f || li < 2.f || (vo.x * vi.x + vo.y * vi.y) / (lo * li) < -0.985f; // within about 10 degrees
+        const auto& sp = env.points[(size_t) selected];
+        mirrorLength = dragKind == 2 ? std::hypot(sp.inDx, sp.inDy) : std::hypot(sp.outDx, sp.outDy);
     }
     dragSeg = (!e.mods.isPopupMenu() && !bezierMode()) ? hitSegment(pos) : -1;
     if (dragSeg >= 0)
@@ -804,23 +806,7 @@ void EnvelopeEditor::mouseDrag(const juce::MouseEvent& e)
         // Hold Shift to break the handles apart.
         const bool interior = selected > 0 && selected < (int) env.points.size() - 1;
         const bool mirror = interior && mirrorDrag && !e.mods.isShiftDown();
-        if (mirror)
-        {
-            const float len = std::hypot(dx, dy);
-            if (len > 1e-4f)
-            {
-                float& oppDx = dragKind == 2 ? p.inDx : p.outDx;
-                float& oppDy = dragKind == 2 ? p.inDy : p.outDy;
-                float oppLen = std::hypot(oppDx, oppDy);
-                if (oppLen < 1e-4f) oppLen = len;
-                const float k = oppLen / len;
-                // keep what's stored identical to what's drawn: x inside the neighbouring segment, y inside 0..1
-                const float room = dragKind == 2 ? p.x - env.points[(size_t) selected - 1].x
-                                                 : env.points[(size_t) selected + 1].x - p.x;
-                oppDx = dragKind == 2 ? juce::jlimit(-room, 0.f, -dx * k) : juce::jlimit(0.f, room, -dx * k);
-                oppDy = juce::jlimit(0.f, 1.f, p.y - dy * k) - p.y;
-            }
-        }
+        if (mirror) env.mirrorHandle((size_t) selected, dragKind == 2, mirrorLength);
 
         // Handles and the simple-mode bend are two ways to shape the same segment: using one clears the other
         const int draggedSeg = dragKind == 2 ? selected : selected - 1;

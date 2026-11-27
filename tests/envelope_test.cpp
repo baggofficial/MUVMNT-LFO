@@ -700,6 +700,41 @@ int main()
         assert(! savedtext::isSavedProject(nullptr, 10));
     }
 
+    // ---- a smooth point at 100% or 0%: nudging one handle off the graph's edge must not wear down the other one
+    for (float level : { 1.f, 0.f })
+        for (bool draggedOut : { false, true })
+        {
+            Envelope m;
+            m.points = { { 0.f, 0.5f }, { 0.5f, level, -0.2f, 0.f, 0.12f, 0.f }, { 1.f, 0.5f } };
+            auto& p = m.points[1];
+            const float into = level > 0.5f ? -1.f : 1.f, side = draggedOut ? 1.f : -1.f; // drag into the graph
+            auto drag = [&](float angle) {
+                (draggedOut ? p.outDx : p.inDx) = side * 0.25f * std::cos(angle);
+                (draggedOut ? p.outDy : p.inDy) = into * 0.25f * std::sin(angle);
+                m.mirrorHandle(1, draggedOut, draggedOut ? 0.2f : 0.12f);
+            };
+            const float length = draggedOut ? 0.2f : 0.12f;
+            for (int i = 1; i <= 400; ++i)
+            {
+                drag(1.5707963f * (float) std::min(i, 400 - i + 1) / 200.f); // down to straight down and back
+                assert(near(std::hypot(draggedOut ? p.inDx : p.outDx, draggedOut ? p.inDy : p.outDy), length, 1e-5f));
+                assert((draggedOut ? p.inDy : p.outDy) == 0.f);               // lies along the edge
+                assert((draggedOut ? p.inDx : p.outDx) * -side > 0.f);         // and stays on its own side
+            }
+        }
+    {
+        // away from the edges it still points exactly opposite, at the starting length
+        Envelope m;
+        m.points = { { 0.f, 0.f }, { 0.5f, 0.5f, -0.1f, 0.f, 0.1f, 0.f }, { 1.f, 0.f } };
+        m.points[1].inDx = -0.12f; m.points[1].inDy = -0.16f;
+        m.mirrorHandle(1, false, 0.1f);
+        assert(near(m.points[1].outDx, 0.06f, 1e-6f) && near(m.points[1].outDy, 0.08f, 1e-6f));
+        m.mirrorHandle(1, false, 0.f); // never set: matches the dragged handle's length
+        assert(near(m.points[1].outDx, 0.12f, 1e-6f) && near(m.points[1].outDy, 0.16f, 1e-6f));
+        m.mirrorHandle(1, false, 3.f); // never past the neighbouring point or off the graph
+        assert(m.points[1].outDx <= 0.5f && m.points[1].outDy <= 0.5f);
+    }
+
     std::puts("envelope tests passed");
     return 0;
 }

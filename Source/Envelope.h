@@ -102,6 +102,28 @@ public:
         return { p.x + std::clamp(p.inDx, -span, 0.f), std::clamp(p.y + p.inDy, 0.f, 1.f) };
     }
 
+    // Smooth points: point the other handle of point i away from the one being dragged (draggedOut says which that is).
+    // 'length' is how long the other handle was when the drag started (0 = it wasn't set: match the dragged one). It
+    // must not be read back while dragging: at 0% or 100% the handle can't leave the graph, and a length taken from
+    // the cut-off result would shrink on every mouse move. There it keeps its length and lies along the edge instead.
+    void mirrorHandle(size_t i, bool draggedOut, float length)
+    {
+        if (i == 0 || i + 1 >= points.size()) return; // the ends only have one handle
+        auto& p = points[i];
+        const float dx = draggedOut ? p.outDx : p.inDx, dy = draggedOut ? p.outDy : p.inDy;
+        const float dragged = std::hypot(dx, dy);
+        if (dragged <= 1e-4f) return;
+        if (length < 1e-4f) length = dragged;
+        const float k = length / dragged;
+        const float y = std::clamp(p.y - dy * k, 0.f, 1.f) - p.y;
+        float x = -dx * k;
+        if (std::fabs(y + dy * k) > 1e-6f) // cut off at the top or bottom: make up the length sideways
+            x = (draggedOut ? -1.f : 1.f) * std::sqrt(std::max(0.f, length * length - y * y));
+        // keep what's stored identical to what's drawn: x inside the neighbouring segment, y inside 0..1
+        if (draggedOut) { p.inDx = std::clamp(x, points[i - 1].x - p.x, 0.f); p.inDy = y; }
+        else            { p.outDx = std::clamp(x, 0.f, points[i + 1].x - p.x); p.outDy = y; }
+    }
+
     // Simple-mode bend shape: an exponential ease. lambda > 0 rises fast and settles (ease-out), lambda < 0 is
     // slow and then abrupt (ease-in), 0 is a straight line. Unlike a power curve its knee stays rounded and
     // grows sharper only gradually (about logarithmically) as you drag, which keeps smooth curves easy to make.
