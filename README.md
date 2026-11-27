@@ -40,7 +40,7 @@ A free VST3 volume shaper for sidechain-style pumping, gating, tremolo and rhyth
 
 **macOS (VST3, macOS 11 or newer, Apple Silicon and Intel)**
 
-The Mac version passes the automated tests but **has not been tried in a DAW yet**.
+The Mac version passes the automated tests, but has only been **tried a bit by hand**: in FL Studio on an Apple Silicon Mac.
 1. From [**Releases**](https://github.com/baggofficial/MUVMNT-LFO/releases), download the newest file ending in `macos-vst3.zip` and unzip it.
 2. Copy `MUVMNT LFO.vst3` to `~/Library/Audio/Plug-Ins/VST3/` (in Finder: **Go > Go to Folder**).
 3. Apple has not notarised the build, so macOS is likely to block it. If you trust the download, remove the block in Terminal:
@@ -226,7 +226,7 @@ Audio processing is light: on an Apple Silicon Mac at 48 kHz, Full Band uses abo
 
 ## Known limitations
 
-- **Tested by hand mainly in FL Studio on Windows.** Other DAWs (Ableton, Logic, Reaper, Bitwig) and other operating systems have not been tried by hand.
+- **Tested by hand primarily in FL Studio on Windows 10,** and a bit in FL Studio on an Apple Silicon Mac. Intel Macs and other DAWs (such as Ableton, Reaper and Bitwig) have not been tried by hand.
 - **The sidechain doesn't trigger the LFO.** It is only shown and read by Auto Curve. The LFO follows the host tempo, or MIDI in Hz mode.
 - **Auto Curve only knows recent audio** (one cycle of the kick, four of your sound for Detailed), and Simple only handles one fading hit per cycle.
 - **The overlap hatching is a guide.** It doesn't compare frequencies in Full Band or how loud the two are in your mix, and it gets patchier with low notes at very short cycles.
