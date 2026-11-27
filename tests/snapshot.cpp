@@ -140,6 +140,56 @@ static bool edgeHandleRegression(const juce::File& dir)
     return ok;
 }
 
+// Handles pulled apart: double-clicking one joins them again (it stays, the other lines up), and from then on a normal
+// drag moves both. The points must all survive, and one undo takes the rejoin back.
+static bool rejoinHandleRegression()
+{
+    bool ok = true;
+    for (const bool clickOut : { false, true })
+    {
+        FreeLfoProcessor p;
+        p.setRateAndBufferSizeDetails(48000.0, 512);
+        p.prepareToPlay(48000.0, 512);
+        EnvelopeEditor ed(p, 0);
+        ed.setBounds(0, 0, 800, 400);
+        auto toScreen = [](float x, float y) { return juce::Point<float>(10.f + x * 780.f, 386.f - y * 376.f); };
+
+        Envelope e; e.points = { { 0.f, 0.f }, { 0.5f, 0.5f, -0.15f, -0.2f, 0.15f, 0.f }, { 1.f, 0.f } };
+        p.setEnvelope(e, 0);
+        p.apvts.getParameter("bezier")->setValueNotifyingHost(1.f);
+
+        // how far from "exactly opposite" the two handles are (0 = in line)
+        auto bent = [&] {
+            const auto q = p.getEnvelope(0).points[1];
+            const float c = (q.inDx * q.outDx + q.inDy * q.outDy) / (std::hypot(q.inDx, q.inDy) * std::hypot(q.outDx, q.outDy));
+            return 1.f + c;
+        };
+        MouseDriver m { ed };
+        const auto h = clickOut ? p.getEnvelope(0).outHandle(1) : p.getEnvelope(0).inHandle(1);
+        const auto at = toScreen(h.first, h.second);
+        const auto before = p.getEnvelope(0).serialize();
+        m.down(at); m.up(at); m.down(at);
+        ed.mouseDoubleClick(m.make(at, false, juce::ModifierKeys::leftButtonModifier));
+        m.up(at);
+        const auto joined = p.getEnvelope(0);
+        const auto k = clickOut ? joined.outHandle(1) : joined.inHandle(1);
+        bool good = joined.points.size() == 3 && bent() < 1e-4f
+                    && std::fabs(k.first - h.first) < 1e-5f && std::fabs(k.second - h.second) < 1e-5f;
+
+        // an ordinary drag now carries the other handle along
+        const auto otherBefore = clickOut ? joined.inHandle(1) : joined.outHandle(1);
+        m.down(at); m.drag(at + juce::Point<float>(0.f, -30.f)); m.up(at + juce::Point<float>(0.f, -30.f));
+        const auto moved = clickOut ? p.getEnvelope(0).inHandle(1) : p.getEnvelope(0).outHandle(1);
+        good = good && bent() < 1e-4f && std::fabs(moved.second - otherBefore.second) > 0.02f;
+
+        p.undo(); p.undo();
+        good = good && p.getEnvelope(0).serialize() == before;
+        std::printf("rejoin by double-clicking the %s handle: %s\n", clickOut ? "right" : "left ", good ? "ok" : "FAILED");
+        ok = ok && good;
+    }
+    return ok;
+}
+
 // Click empty space: points and handles hide. Click the curve: they come back.
 static juce::String g_outDir;
 static bool hideShowRegression()
@@ -2092,7 +2142,7 @@ int main(int argc, char** argv)
         ed2.setBounds(0, 0, 400, 300);
         save(ed2.createComponentSnapshot(ed2.getLocalBounds(), true, 2.0f), dir.getChildFile("steep_end.png"));
     }
-    const bool a = handleNudgeRegression() && edgeHandleRegression(dir);
+    const bool a = handleNudgeRegression() && edgeHandleRegression(dir) && rejoinHandleRegression();
     const bool b = hideShowRegression();
     const bool c = newPointRegression();
     const bool d = endHandleRegression();

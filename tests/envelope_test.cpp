@@ -735,6 +735,37 @@ int main()
         assert(m.points[1].outDx <= 0.5f && m.points[1].outDy <= 0.5f);
     }
 
+    // ---- rejoining separated handles
+    for (bool keepOut : { false, true })
+    {
+        Envelope m;
+        m.points = { { 0.f, 0.f }, { 0.5f, 0.5f, -0.12f, 0.16f, 0.2f, 0.05f }, { 1.f, 0.f } };
+        const auto keptBefore = keepOut ? m.outHandle(1) : m.inHandle(1);
+        const auto otherBefore = keepOut ? m.inHandle(1) : m.outHandle(1);
+        const float len = std::hypot(otherBefore.first - 0.5f, otherBefore.second - 0.5f);
+        m.rejoinHandles(1, keepOut);
+        const auto kept = keepOut ? m.outHandle(1) : m.inHandle(1), other = keepOut ? m.inHandle(1) : m.outHandle(1);
+        assert(near(kept.first, keptBefore.first, 1e-6f) && near(kept.second, keptBefore.second, 1e-6f));
+        const float ax = kept.first - 0.5f, ay = kept.second - 0.5f, bx = other.first - 0.5f, by = other.second - 0.5f;
+        assert(near(ax * by - ay * bx, 0.f, 1e-6f) && ax * bx + ay * by < 0.f && near(std::hypot(bx, by), len, 1e-5f));
+    }
+    {
+        // a neighbour too close for the other handle's length: shorter, but still in line
+        Envelope m;
+        m.points = { { 0.f, 0.f }, { 0.5f, 0.5f, -0.1f, -0.1f, 0.05f, 0.3f }, { 0.55f, 0.5f }, { 1.f, 0.f } };
+        m.rejoinHandles(1, false);
+        assert(near(m.points[1].outDx, 0.05f, 1e-6f) && near(m.points[1].outDy, 0.05f, 1e-6f));
+        // never-set handles can be rejoined too, and the ends are left alone
+        Envelope n;
+        n.points = { { 0.f, 0.f }, { 0.5f, 0.5f }, { 1.f, 0.5f } };
+        const auto in = n.inHandle(1);
+        n.rejoinHandles(1, false);
+        assert(near(n.inHandle(1).first, in.first, 1e-6f) && n.points[1].outDy > 0.f);
+        const auto text = n.serialize();
+        n.rejoinHandles(0, true); n.rejoinHandles(2, false);
+        assert(n.serialize() == text);
+    }
+
     std::puts("envelope tests passed");
     return 0;
 }

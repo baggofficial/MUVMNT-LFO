@@ -830,6 +830,26 @@ void EnvelopeEditor::mouseDoubleClick(const juce::MouseEvent& e)
     const int hit = hitPoint(e.position);
     const int seg = bezierMode() ? -1 : hitSegment(e.position);
 
+    // Double-click a handle: join the point's two handles again. The clicked one stays, the other lines up with it.
+    // A short handle sits within reach of its point, so it only counts when the click is nearer the handle.
+    const auto handle = controlsHidden ? std::pair<int, int> { -1, 0 } : hitHandle(e.position);
+    if (handle.first >= 0
+        && (hit < 0 || handleScreen(handle.first, handle.second).getDistanceFrom(e.position)
+                           < toScreen(env.points[(size_t) hit].x, env.points[(size_t) hit].y).getDistanceFrom(e.position)))
+    {
+        const int i = handle.first;
+        selected = i;
+        if (i > 0 && i < (int) env.points.size() - 1) // the first and last points only have one handle
+        {
+            const auto before = env.serialize();
+            env.rejoinHandles((size_t) i, handle.second == 2);
+            for (int s : { i - 1, i }) { env.points[(size_t) s].bend = 0.f; env.points[(size_t) s].bendX = 0.5f; }
+            if (env.serialize() != before) commit(); // nothing to undo if they were already joined
+        }
+        repaint();
+        return;
+    }
+
     if (hit < 0 && seg >= 0)
     {
         // Simple mode: double-click a diamond to straighten that segment
@@ -860,7 +880,7 @@ void EnvelopeEditor::mouseDoubleClick(const juce::MouseEvent& e)
         }
         selected = hit;
     }
-    else if (hitHandle(e.position).first < 0)
+    else
     {
         auto n = toNorm(e.position);
         if (snapNow(e.mods)) n.x = std::round(n.x * gridX()) / gridX();

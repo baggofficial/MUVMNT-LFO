@@ -66,6 +66,7 @@ Double-click to add a point and drag to shape the curve. Open a section below fo
 | Double-click the first or last point | Toggle easy-ease (flat tangents) |
 | Drag a handle | Bend the curve; the opposite handle follows on smooth points |
 | Shift while dragging a handle | Break the handles apart |
+| Double-click a handle | Join the two handles again: the one you click stays, and the other lines up with it (as far as the graph allows) |
 | Option/Alt or Ctrl while dragging a handle | Snap the handle's tip to the grid |
 | Hold Option/Alt while dragging or adding a point | Snap to the grid (reversed if the **Snap** switch is on) |
 | Drag the number next to **Snap** | Set the number of grid lines (2 to 64) |

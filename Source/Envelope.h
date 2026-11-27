@@ -116,12 +116,29 @@ public:
         if (length < 1e-4f) length = dragged;
         const float k = length / dragged;
         const float y = std::clamp(p.y - dy * k, 0.f, 1.f) - p.y;
-        float x = -dx * k;
+        float x = -dx * k, yy = y;
         if (std::fabs(y + dy * k) > 1e-6f) // cut off at the top or bottom: make up the length sideways
             x = (draggedOut ? -1.f : 1.f) * std::sqrt(std::max(0.f, length * length - y * y));
-        // keep what's stored identical to what's drawn: x inside the neighbouring segment, y inside 0..1
-        if (draggedOut) { p.inDx = std::clamp(x, points[i - 1].x - p.x, 0.f); p.inDy = y; }
-        else            { p.outDx = std::clamp(x, 0.f, points[i + 1].x - p.x); p.outDy = y; }
+        // keep what's stored identical to what's drawn: x inside the neighbouring segment, y inside 0..1. A handle
+        // too long for its segment is shortened along its own direction, so the pair stays in line (and joined).
+        const float room = draggedOut ? p.x - points[i - 1].x : points[i + 1].x - p.x;
+        if (std::fabs(x) > room) { const float f = room / std::fabs(x); x *= f; yy *= f; }
+        if (draggedOut) { p.inDx = std::min(x, 0.f); p.inDy = yy; }
+        else            { p.outDx = std::max(x, 0.f); p.outDy = yy; }
+    }
+
+    // Make a point's two handles a smooth pair again: one of them (keepOut says which) stays exactly where it is drawn,
+    // the other is turned to point away from it and keeps its own drawn length.
+    void rejoinHandles(size_t i, bool keepOut)
+    {
+        if (i == 0 || i + 1 >= points.size()) return;
+        const auto in = inHandle(i), out = outHandle(i); // as drawn, including handles that were never set
+        auto& p = points[i];
+        const auto kept = keepOut ? out : in, other = keepOut ? in : out;
+        const float length = std::hypot(other.first - p.x, other.second - p.y);
+        (keepOut ? p.outDx : p.inDx) = kept.first - p.x;
+        (keepOut ? p.outDy : p.inDy) = kept.second - p.y;
+        mirrorHandle(i, keepOut, length);
     }
 
     // Simple-mode bend shape: an exponential ease. lambda > 0 rises fast and settles (ease-out), lambda < 0 is
