@@ -246,7 +246,7 @@ Audio processing is light: on an Apple Silicon Mac at 48 kHz, Full Band uses abo
 - **Block size doesn't change the result:** 8192-sample and 1-sample blocks give the same audio.
 - **Multiband is transparent.** With flat curves and band volumes at 0 dB, Crossover keeps the input's level within 0.001 dB (only phase shifts, and not at 6 dB). Dynamic EQ matches the input bit for bit (Clipper and Ø IN off).
 - **Damaged projects are refused.** Saved text is checked before it is read, and anything incomplete or unexpected changes nothing. This also protects JUCE 8.0.6's XML reader from text that can make it read past its end.
-- **It can't blow up.** The crossover is stable at every slope, split and sample rate (22 to 192 kHz). NaN and infinity are never accepted, including in the input audio, and an unstable filter is restarted.
+- **The filters stay stable.** The crossover is stable at every supported slope, split and sample rate (22 to 192 kHz). Invalid values (NaN and infinity) in the input audio are removed before they reach the filters, and if a filter does become unstable, it is detected and reset.
 - **Real-time safe:** no memory allocation on the audio thread, lock-free curve handover, and flush-to-zero against denormals.
 
 </details>
